@@ -190,6 +190,7 @@ int main(int argc, char* argv[])
         }
         else if (fsiCoupling == "integrated" || fsiCoupling == "implicit")
         {
+            pimpleControl pimple(mesh);
             while (pimple.loop())
             {
 #include "readDyMControls.H" // Updates standard flags
@@ -201,6 +202,7 @@ int main(int argc, char* argv[])
         }
         else
         {
+            pimpleControl pimple(mesh);
             while (pimple.loop())
             {
 #include "readDyMControls.H"

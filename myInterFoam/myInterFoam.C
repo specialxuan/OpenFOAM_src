@@ -108,6 +108,7 @@ int main(int argc, char *argv[])
 
         // --- Pressure-velocity PIMPLE corrector loop
 
+        // Read FSI controls
         IOdictionary dynamicMeshDict(
             IOobject(
                 "dynamicMeshDict",
@@ -117,11 +118,7 @@ int main(int argc, char *argv[])
                 IOobject::NO_WRITE
             )
         );
-        word fsiCoupling = "explicit";
-        if (dynamicMeshDict.found("fsiCoupling"))
-        {
-             dynamicMeshDict.lookup("fsiCoupling") >> fsiCoupling;
-        }
+        const word fsiCoupling = dynamicMeshDict.lookupOrDefault<word>("fsiCoupling", "explicit");
         const label maxFsiIter = dynamicMeshDict.lookupOrDefault<label>("maxFsiIter", 10);
         const scalar fsiTolerance = dynamicMeshDict.lookupOrDefault<scalar>("fsiTolerance", 1e-4);
 
@@ -134,38 +131,18 @@ int main(int argc, char *argv[])
             while (fsiIter < maxFsiIter && !fsiConverged)
             {
                 fsiIter++;
-                
-                // For partitioned, we need to manually move the mesh *before* the PIMPLE loop?
-                // Or does pimpleLoopBody handle it?
-                // Standard interFoam calls mesh.update() inside pimpleLoopBody.H if moveMeshOuterCorrectors is true.
-                
+
                 // Shadow pimple control for this FSI iteration
                 pimpleControl pimple(mesh);
 
+                // Update local controls based on new pimple dict
                 #include "readDyMControls.H"
-                moveMeshOuterCorrectors = false; // Disable standard mesh motion logic
+                moveMeshOuterCorrectors = false; // Force fixed mesh during PIMPLE sub-loop
 
-                // Manually move mesh at start of FSI iter?
-                // No, fastDynamicFvMesh::update() is called when mesh.update() is called.
-                // In partitioned, we want:
-                // 1. Solve Fluid (PIMPLE)
-                // 2. Solve Structure & Move Mesh
-                // 3. Repeat
-                
-                // So mesh motion should be OUTSIDE the pimple loop, or at the END of it?
-                // Actually, if we use standard pimpleLoopBody.H, it has:
-                // if (moveMeshOuterCorrectors) { mesh.update(); }
-                
-                // If we disable moveMeshOuterCorrectors, mesh.update() is NOT called inside pimpleLoopBody.
-                // So we must call it manually here after pimple.loop() finishes?
-                
                 while (pimple.loop())
                 {
                     #include "pimpleLoopBody.H"
                 }
-                
-                // Now update mesh based on new forces
-                mesh.update();
 
                 // Check convergence
                 const pointField& points = mesh.points();
@@ -175,26 +152,29 @@ int main(int argc, char *argv[])
                     fsiConverged = true;
                 }
                 points0 = points;
-                
+
                 Info << "FSI Iteration " << fsiIter << ": max displacement change = " << maxDiff << endl;
             }
         }
-        else if (fsiCoupling == "integrated" || fsiCoupling == "implicit")
+        else if (fsiCoupling == "integrated" || fsiCoupling == "implicit") // Option (3)
         {
-             // Integrated: Mesh moves INSIDE pimple loop
-             // Standard pimpleLoopBody does this if moveMeshOuterCorrectors is true.
-             
-             pimpleControl pimple(mesh);
-             while (pimple.loop())
-             {
-                 #include "readDyMControls.H"
-                 moveMeshOuterCorrectors = true;
-                 #include "pimpleLoopBody.H"
-             }
+            // Integrated implicit coupling: Move mesh on every PIMPLE outer corrector
+            // (or specific ones as per moveMeshOuterCorrectors).
+            // We force moveMeshOuterCorrectors = true so it moves every iteration.
+            
+            // Note: readDyMControls.H might overwrite this, so we set it AFTER or handle it.
+            // Standard readDyMControls reads from pimple dict. We want dynamicMeshDict to override.
+
+            while (pimple.loop())
+            {
+                #include "readDyMControls.H" // Updates standard flags
+                moveMeshOuterCorrectors = true; // Force mesh motion every PIMPLE loop
+
+                #include "pimpleLoopBody.H"
+            }
         }
-        else
+        else // "explicit" (Option 1) or default
         {
-            pimpleControl pimple(mesh);
             while (pimple.loop())
             {
                 #include "readDyMControls.H"
