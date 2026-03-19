@@ -10,7 +10,7 @@ Description
 
 \*---------------------------------------------------------------------------*/
 
-#ifndef fastDynamicFvMesh_H
+#ifndef fastDynamicFvMesh_H // Prevent Multiple Inclusions
 #define fastDynamicFvMesh_H
 
 #include "dynamicFvMesh.H"
@@ -25,7 +25,7 @@ namespace Foam
                        Class fastDynamicFvMesh Declaration
 \*---------------------------------------------------------------------------*/
 
-class fastDynamicFvMesh : public dynamicFvMesh
+class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
 {
     // Private Data
 
@@ -68,6 +68,7 @@ class fastDynamicFvMesh : public dynamicFvMesh
 
     //- Mode shapes (displacement field per mode)
     //  Stores full field for simplicity
+    //  modeShapes_[m][pI].x() gives x-displacement for mode m at point pI
     List<vectorField> modeShapes_;
 
     //- Wilson-Theta parameter
@@ -89,9 +90,6 @@ class fastDynamicFvMesh : public dynamicFvMesh
     //- FSI patch names
     wordRes fsiPatches_;
 
-    //- Write per-face modal-force diagnostics on the FSI interface
-    bool writeFaceDiagnostics_;
-
     //- Zero-based mode index for face diagnostics
     label faceDiagnosticsMode_;
 
@@ -112,6 +110,13 @@ class fastDynamicFvMesh : public dynamicFvMesh
     //- Read legacy runtime parameters from FluidPara.csv
     void readLegacyParameters(const fileName& modeDir);
 
+    //- Read mode files on master
+    void readModeFiles(
+        const fileName& modeDir,
+        List<point>& csvPoints,
+        List<List<vector>>& csvShapes,
+        label& nCsvNodes);
+
     //- Calculate modal forces from fluid pressure and shear stress
     void calcModalForces();
 
@@ -119,9 +124,8 @@ class fastDynamicFvMesh : public dynamicFvMesh
     tmp<scalarField> patchDensity(const label patchi, scalar defaultRho) const;
 
     //- Deviatoric effective stress tensor for wall shear evaluation
-    tmp<symmTensorField> devRhoReff(const tensorField& gradUp,
-                                    const label patchi,
-                                    scalar defaultRho) const;
+    tmp<symmTensorField> devRhoReff(
+        const tensorField& gradUp, const label patchi, scalar defaultRho) const;
 
     //- Solve structural dynamics using Wilson-Theta method
     void solveStructuralDynamics(scalar dt);
@@ -135,7 +139,7 @@ class fastDynamicFvMesh : public dynamicFvMesh
     //- Disallow default bitwise assignment
     void operator=(const fastDynamicFvMesh&);
 
-  public:
+public:
     //- Runtime type information
     TypeName("fastDynamicFvMesh");
 

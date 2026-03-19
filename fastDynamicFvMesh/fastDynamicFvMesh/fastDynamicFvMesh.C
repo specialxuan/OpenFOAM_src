@@ -53,8 +53,9 @@ addToRunTimeSelectionTable(dynamicFvMesh, fastDynamicFvMesh, IOobject);
 fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
     : dynamicFvMesh(io), nMode_(0), theta_(1.4), // Default Wilson-Theta
       mappingTolerance_(4e-6), couplingRelaxation_(1.0),
-      pressureFieldName_("p"), rhoRef_(-1.0), pRef_(0.0), writeFaceDiagnostics_(false),
-      faceDiagnosticsMode_(-1), startupStepCount_(0), lastUpdateTimeIndex_(-1)
+      pressureFieldName_("p"), rhoRef_(-1.0), pRef_(0.0),
+      faceDiagnosticsMode_(-1),
+      startupStepCount_(0), lastUpdateTimeIndex_(-1)
 {
     readControls();
     readModeShapes();
@@ -80,14 +81,14 @@ fastDynamicFvMesh::~fastDynamicFvMesh() {}
 //  patches.
 //  - Validate ranges (e.g., couplingRelaxation must be in (0,1], rhoRef
 //  positive if specified).
-//  - Handle face-level diagnostics settings (writeFaceDiagnostics and
-//  faceDiagnosticsMode conversion from 1-based to 0-based).
+//  - Handle face-level diagnostics settings (faceDiagnosticsMode
+//  conversion from 1-based to 0-based).
 void fastDynamicFvMesh::readControls()
 {
     // Read dictionary
     IOdictionary dynamicMeshDict(
         IOobject("dynamicMeshDict", this->time().constant(), *this,
-                 IOobject::MUST_READ_IF_MODIFIED, IOobject::NO_WRITE, false));
+            IOobject::MUST_READ_IF_MODIFIED, IOobject::NO_WRITE, false));
 
     if (!dynamicMeshDict.found(typeName + "Coeffs"))
     {
@@ -142,24 +143,9 @@ void fastDynamicFvMesh::readControls()
     }
 
     label faceDiagnosticsMode = -1;
-    const bool foundFaceDiagnosticsMode =
-        fdmDict.readIfPresent("faceDiagnosticsMode", faceDiagnosticsMode);
-
-    fdmDict.readIfPresent("writeFaceDiagnostics", writeFaceDiagnostics_);
-
-    if (foundFaceDiagnosticsMode)
+    if (fdmDict.readIfPresent("faceDiagnosticsMode", faceDiagnosticsMode))
     {
-        writeFaceDiagnostics_ = true;
         faceDiagnosticsMode_ = faceDiagnosticsMode - 1;
-    }
-
-    if (writeFaceDiagnostics_ && faceDiagnosticsMode_ < 0)
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "When 'writeFaceDiagnostics' is enabled, provide a positive "
-            << "'faceDiagnosticsMode' entry in sub-dictionary '" << typeName
-            << "Coeffs' of " << dynamicMeshDict.objectPath()
-            << exit(FatalIOError);
     }
 }
 
@@ -191,8 +177,7 @@ void fastDynamicFvMesh::readLegacyParameters(const fileName& modeDir)
         return;
     }
 
-    auto readCsvScalar = [&](scalar& value) -> bool
-    {
+    auto readCsvScalar = [&](scalar& value) -> bool {
         string line;
 
         while (std::getline(paraFile, line))
@@ -264,6 +249,197 @@ void fastDynamicFvMesh::readLegacyParameters(const fileName& modeDir)
 //  over asymptotic performance; mapping is done once at startup.
 //  - Mode frequency values read from files are stored in modeFreq_ and expected
 //  to be in Hz (omega computed later as 2*pi*freq).
+void fastDynamicFvMesh::readModeFiles(
+    const fileName& modeDir,
+    List<point>& csvPoints,
+    List<List<vector>>& csvShapes,
+    label& nCsvNodes)
+{
+    if (!Pstream::master())
+    {
+        return;
+    }
+
+    Info << "Reading mode coordinates..." << endl;
+
+    fileName coorPath = modeDir / "FluidNodeCoor.csv";
+    Info << "Trying to open: " << coorPath << endl;
+
+    std::ifstream file(coorPath);
+    if (!file.good())
+    {
+        FatalErrorInFunction
+            << "Cannot open required mode coordinate file " << coorPath << nl
+            << "Provide mode/FluidNodeCoor.csv in the case root before "
+            << "running fastDynamicFvMesh." << exit(FatalError);
+    }
+    else
+    {
+        scalar dummy, nNode, nMode;
+        // Add robust parsing for header
+        // Read line, replace commas with spaces, read numbers
+        string line;
+        std::getline(file, line);
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::stringstream ss(line);
+        if (!(ss >> dummy >> nNode >> nMode) || nNode <= 0 || nMode <= 0)
+        {
+            FatalErrorInFunction
+                << "Invalid FluidNodeCoor.csv header in " << coorPath << nl
+                << "Expected three comma-separated values with positive "
+                << "node and mode counts." << exit(FatalError);
+        }
+
+        nCsvNodes = label(nNode);
+        nMode_ = label(nMode);
+
+        Info << "  Found " << nCsvNodes << " nodes and " << nMode_
+             << " modes in CSV." << endl;
+
+        modeFreq_.setSize(nMode_); // Resize here on master
+        csvPoints.setSize(nCsvNodes);
+        csvShapes.setSize(nMode_);
+        forAll(csvShapes, m) csvShapes[m].setSize(nCsvNodes);
+
+        // Skip rest of first line (already read)
+        // std::getline(file, line);
+
+        for (label i = 0; i < nCsvNodes; ++i)
+        {
+            scalar x, y, z;
+            // Robust parsing for coordinates
+            // Read 3 numbers separated by commas
+            // file >> x >> c >> y >> c >> z;
+            // This fails if there are spaces around comma.
+            // Better: read line, replace commas, read numbers
+            if (!std::getline(file, line))
+            {
+                FatalErrorInFunction
+                    << "Unexpected end of file while reading node " << i
+                    << " from " << coorPath << exit(FatalError);
+            }
+            std::replace(line.begin(), line.end(), ',', ' ');
+            std::stringstream ss2(line);
+            if (!(ss2 >> x >> y >> z))
+            {
+                FatalErrorInFunction << "Invalid coordinate entry for node "
+                                     << i << " in " << coorPath
+                                     << exit(FatalError);
+            }
+
+            csvPoints[i] = point(x, y, z);
+        }
+
+        // Read mode shapes
+        for (label m = 0; m < nMode_; ++m)
+        {
+            fileName shapePath = modeDir /
+                ("FluidNodeDisp" + std::to_string(m + 1) + ".csv");
+            std::ifstream mFile(shapePath);
+
+            if (!mFile.good())
+            {
+                FatalErrorInFunction
+                    << "Cannot open required mode shape file " << shapePath
+                    << exit(FatalError);
+            }
+
+            string line;
+            if (!std::getline(mFile, line))
+            {
+                FatalErrorInFunction << "Missing frequency line in "
+                                     << shapePath << exit(FatalError);
+            }
+
+            std::replace(line.begin(), line.end(), ',', ' ');
+            std::stringstream ss(line);
+            scalar freq = 0.0;
+            scalar fileNodeCount = 0.0;
+            scalar fileModeCount = 0.0;
+
+            if (!(ss >> freq))
+            {
+                FatalErrorInFunction << "Failed to read frequency from "
+                                     << shapePath << exit(FatalError);
+            }
+
+            if ((ss >> fileNodeCount) && (ss >> fileModeCount))
+            {
+                if (label(fileNodeCount) != nCsvNodes ||
+                    label(fileModeCount) != nMode_)
+                {
+                    FatalErrorInFunction
+                        << "Mode file " << shapePath << " reports "
+                        << label(fileNodeCount) << " nodes and "
+                        << label(fileModeCount)
+                        << " modes, but FluidNodeCoor.csv reports "
+                        << nCsvNodes << " nodes and " << nMode_ << " modes."
+                        << exit(FatalError);
+                }
+            }
+
+            modeFreq_[m] = freq;
+            Info << "  Mode " << m << " Freq: " << freq << endl;
+
+            label dataRow = 0;
+
+            while (dataRow < nCsvNodes)
+            {
+                if (!std::getline(mFile, line))
+                {
+                    FatalErrorInFunction
+                        << "Unexpected end of file while reading node "
+                        << dataRow << " from " << shapePath
+                        << exit(FatalError);
+                }
+
+                std::replace(line.begin(), line.end(), ',', ' ');
+                std::stringstream ss2(line);
+
+                scalar dx = 0.0;
+                scalar dy = 0.0;
+                scalar dz = 0.0;
+
+                if (!(ss2 >> dx >> dy >> dz))
+                {
+                    if (dataRow == 0)
+                    {
+                        continue;
+                    }
+
+                    FatalErrorInFunction
+                        << "Invalid displacement entry for node " << dataRow
+                        << " in " << shapePath << exit(FatalError);
+                }
+
+                csvShapes[m][dataRow] = vector(dx, dy, dz);
+                ++dataRow;
+            }
+        }
+    }
+}
+
+// readModeShapes()
+// Purpose: load modal coordinates and modal displacement shapes from the case
+// 'mode' directory and map them to mesh points. High-level steps (master
+// process):
+//  1) Locate mode directory (time()/mode or parent time path when running in
+//  parallel). 2) Open FluidNodeCoor.csv and robustly parse the header (accepts
+//  comma or space separators). Header contains at least: dummy, nNode, nMode.
+//  3) Allocate containers csvPoints and csvShapes and read nCsvNodes
+//  coordinates. 4) For each mode m, open FluidNodeDisp(m).csv: read frequency
+//  (and optional node/mode counts), then read per-node dx,dy,dz displacements.
+//  Allow skip of a non-numeric leading line if needed. 5) Broadcast sizes and
+//  data to all processors, then allocate local modeShapes_ sized to localPoints
+//  and initialize to zero. 6) Map CSV nodes to local mesh points using a
+//  brute-force nearest-neighbor search within mappingTolerance_. 7) Report
+//  mapped counts and error out if zero mapped (user must check coordinates or
+//  mappingTolerance).
+// Notes:
+//  - The implementation favors correctness and simplicity (brute-force search)
+//  over asymptotic performance; mapping is done once at startup.
+//  - Mode frequency values read from files are stored in modeFreq_ and expected
+//  to be in Hz (omega computed later as 2*pi*freq).
 void fastDynamicFvMesh::readModeShapes()
 {
     // 1. Read files on master
@@ -277,167 +453,7 @@ void fastDynamicFvMesh::readModeShapes()
         modeDir = this->time().path().path() / "mode";
     }
 
-    if (Pstream::master())
-    {
-        Info << "Reading mode coordinates..." << endl;
-
-        fileName coorPath = modeDir / "FluidNodeCoor.csv";
-        Info << "Trying to open: " << coorPath << endl;
-
-        std::ifstream file(coorPath);
-        if (!file.good())
-        {
-            FatalErrorInFunction
-                << "Cannot open required mode coordinate file " << coorPath
-                << nl
-                << "Provide mode/FluidNodeCoor.csv in the case root before "
-                << "running fastDynamicFvMesh." << exit(FatalError);
-        }
-        else
-        {
-            scalar dummy, nNode, nMode;
-            // Add robust parsing for header
-            // Read line, replace commas with spaces, read numbers
-            string line;
-            std::getline(file, line);
-            std::replace(line.begin(), line.end(), ',', ' ');
-            std::stringstream ss(line);
-            if (!(ss >> dummy >> nNode >> nMode) || nNode <= 0 || nMode <= 0)
-            {
-                FatalErrorInFunction
-                    << "Invalid FluidNodeCoor.csv header in " << coorPath << nl
-                    << "Expected three comma-separated values with positive "
-                    << "node and mode counts." << exit(FatalError);
-            }
-
-            nCsvNodes = label(nNode);
-            nMode_ = label(nMode);
-
-            Info << "  Found " << nCsvNodes << " nodes and " << nMode_
-                 << " modes in CSV." << endl;
-
-            modeFreq_.setSize(nMode_); // Resize here on master
-            csvPoints.setSize(nCsvNodes);
-            csvShapes.setSize(nMode_);
-            forAll(csvShapes, m) csvShapes[m].setSize(nCsvNodes);
-
-            // Skip rest of first line (already read)
-            // std::getline(file, line);
-
-            for (label i = 0; i < nCsvNodes; ++i)
-            {
-                scalar x, y, z;
-                // Robust parsing for coordinates
-                // Read 3 numbers separated by commas
-                // file >> x >> c >> y >> c >> z;
-                // This fails if there are spaces around comma.
-                // Better: read line, replace commas, read numbers
-                if (!std::getline(file, line))
-                {
-                    FatalErrorInFunction
-                        << "Unexpected end of file while reading node " << i
-                        << " from " << coorPath << exit(FatalError);
-                }
-                std::replace(line.begin(), line.end(), ',', ' ');
-                std::stringstream ss2(line);
-                if (!(ss2 >> x >> y >> z))
-                {
-                    FatalErrorInFunction << "Invalid coordinate entry for node "
-                                         << i << " in " << coorPath
-                                         << exit(FatalError);
-                }
-
-                csvPoints[i] = point(x, y, z);
-            }
-
-            // Read mode shapes
-            for (label m = 0; m < nMode_; ++m)
-            {
-                fileName shapePath = modeDir / ("FluidNodeDisp" +
-                                                std::to_string(m + 1) + ".csv");
-                std::ifstream mFile(shapePath);
-
-                if (!mFile.good())
-                {
-                    FatalErrorInFunction
-                        << "Cannot open required mode shape file " << shapePath
-                        << exit(FatalError);
-                }
-
-                string line;
-                if (!std::getline(mFile, line))
-                {
-                    FatalErrorInFunction << "Missing frequency line in "
-                                         << shapePath << exit(FatalError);
-                }
-
-                std::replace(line.begin(), line.end(), ',', ' ');
-                std::stringstream ss(line);
-                scalar freq = 0.0;
-                scalar fileNodeCount = 0.0;
-                scalar fileModeCount = 0.0;
-
-                if (!(ss >> freq))
-                {
-                    FatalErrorInFunction << "Failed to read frequency from "
-                                         << shapePath << exit(FatalError);
-                }
-
-                if ((ss >> fileNodeCount) && (ss >> fileModeCount))
-                {
-                    if (label(fileNodeCount) != nCsvNodes ||
-                        label(fileModeCount) != nMode_)
-                    {
-                        FatalErrorInFunction
-                            << "Mode file " << shapePath << " reports "
-                            << label(fileNodeCount) << " nodes and "
-                            << label(fileModeCount)
-                            << " modes, but FluidNodeCoor.csv reports "
-                            << nCsvNodes << " nodes and " << nMode_ << " modes."
-                            << exit(FatalError);
-                    }
-                }
-
-                modeFreq_[m] = freq;
-                Info << "  Mode " << m << " Freq: " << freq << endl;
-
-                label dataRow = 0;
-
-                while (dataRow < nCsvNodes)
-                {
-                    if (!std::getline(mFile, line))
-                    {
-                        FatalErrorInFunction
-                            << "Unexpected end of file while reading node "
-                            << dataRow << " from " << shapePath
-                            << exit(FatalError);
-                    }
-
-                    std::replace(line.begin(), line.end(), ',', ' ');
-                    std::stringstream ss2(line);
-
-                    scalar dx = 0.0;
-                    scalar dy = 0.0;
-                    scalar dz = 0.0;
-
-                    if (!(ss2 >> dx >> dy >> dz))
-                    {
-                        if (dataRow == 0)
-                        {
-                            continue;
-                        }
-
-                        FatalErrorInFunction
-                            << "Invalid displacement entry for node " << dataRow
-                            << " in " << shapePath << exit(FatalError);
-                    }
-
-                    csvShapes[m][dataRow] = vector(dx, dy, dz);
-                    ++dataRow;
-                }
-            }
-        }
-    }
+    readModeFiles(modeDir, csvPoints, csvShapes, nCsvNodes);
 
     // Broadcast sizes
     Pstream::broadcast(nMode_);
@@ -455,7 +471,7 @@ void fastDynamicFvMesh::readModeShapes()
             << "present and valid." << exit(FatalError);
     }
 
-    if (writeFaceDiagnostics_ && faceDiagnosticsMode_ >= nMode_)
+    if (faceDiagnosticsMode_ >= 0 && faceDiagnosticsMode_ >= nMode_)
     {
         FatalErrorInFunction << "Requested faceDiagnosticsMode "
                              << (faceDiagnosticsMode_ + 1) << " but only "
@@ -564,8 +580,8 @@ void fastDynamicFvMesh::readModeShapes()
 //  equal to the number of faces in the patch.
 // Rationale: kinematic pressure fields (p/rho) require a density to convert
 // back to dimensional pressure for force computations.
-tmp<scalarField> fastDynamicFvMesh::patchDensity(const label patchi,
-                                                 const scalar defaultRho) const
+tmp<scalarField> fastDynamicFvMesh::patchDensity(
+    const label patchi, const scalar defaultRho) const
 {
     if (this->foundObject<volScalarField>("rho"))
     {
@@ -589,9 +605,8 @@ tmp<scalarField> fastDynamicFvMesh::patchDensity(const label patchi,
 //  i.e., the deviatoric viscous stress contribution per face.
 //  - This helper centralizes model queries so calcModalForces can obtain shear
 //  contributions regardless of solver setup.
-tmp<symmTensorField>
-fastDynamicFvMesh::devRhoReff(const tensorField& gradUp, const label patchi,
-                              const scalar defaultRho) const
+tmp<symmTensorField> fastDynamicFvMesh::devRhoReff(const tensorField& gradUp,
+    const label patchi, const scalar defaultRho) const
 {
     typedef incompressible::turbulenceModel icoTurbModel;
     typedef compressible::turbulenceModel cmpTurbModel;
@@ -636,7 +651,7 @@ fastDynamicFvMesh::devRhoReff(const tensorField& gradUp, const label patchi,
     {
         IOdictionary transportProperties(
             IOobject("transportProperties", this->time().constant(), *this,
-                     IOobject::MUST_READ, IOobject::NO_WRITE));
+                IOobject::MUST_READ, IOobject::NO_WRITE));
 
         const dimensionedScalar nu("nu", dimViscosity, transportProperties);
         tmp<scalarField> tRho = patchDensity(patchi, defaultRho);
@@ -706,7 +721,7 @@ void fastDynamicFvMesh::calcModalForces()
     {
         IOdictionary transportProperties(
             IOobject("transportProperties", this->time().constant(), *this,
-                     IOobject::MUST_READ, IOobject::NO_WRITE));
+                IOobject::MUST_READ, IOobject::NO_WRITE));
 
         if (transportProperties.found("rho"))
         {
@@ -729,7 +744,7 @@ void fastDynamicFvMesh::calcModalForces()
     bool writeFaceDiagHeader = false;
     bool haveFaceDiagFile = false;
 
-    if (writeFaceDiagnostics_)
+    if (faceDiagnosticsMode_ >= 0)
     {
         fileName diagnosticsRoot = this->time().path();
 
@@ -739,9 +754,9 @@ void fastDynamicFvMesh::calcModalForces()
         }
 
         const word modeLabel("mode" + Foam::name(faceDiagnosticsMode_ + 1));
-        fileName faceDiagnosticsPath =
-            diagnosticsRoot / ("faceDiagnostics_" + modeLabel + "_proc" +
-                               Foam::name(Pstream::myProcNo()) + ".csv");
+        fileName faceDiagnosticsPath = diagnosticsRoot /
+            ("faceDiagnostics_" + modeLabel + "_proc" +
+                Foam::name(Pstream::myProcNo()) + ".csv");
 
         std::ifstream check(faceDiagnosticsPath.c_str());
         writeFaceDiagHeader = !check.good();
@@ -800,8 +815,8 @@ void fastDynamicFvMesh::calcModalForces()
         {
             Info << "DEBUG: pressure field is kinematic; density comes from "
                  << (this->foundObject<volScalarField>("rho")
-                         ? "field rho"
-                         : "rhoRef/transportProperties")
+                            ? "field rho"
+                            : "rhoRef/transportProperties")
                  << endl;
         }
     }
@@ -837,8 +852,8 @@ void fastDynamicFvMesh::calcModalForces()
         if (gradUPtr)
         {
             const tensorField& gradPatch = gradUPtr->boundaryField()[patchID];
-            tDevStress = devRhoReff(gradPatch, patchID,
-                                    defaultRho > 0 ? defaultRho : 1.0);
+            tDevStress = devRhoReff(
+                gradPatch, patchID, defaultRho > 0 ? defaultRho : 1.0);
             devStressPtr = &tDevStress();
         }
 
@@ -977,13 +992,15 @@ void fastDynamicFvMesh::solveStructuralDynamics(scalar dt)
 
         // Ensure non-zero denominator logic
         scalar effectiveK = 6.0 * Mass / sqr(theta_ * dt) +
-                            3.0 * Damp / (theta_ * dt) + sqr(omega);
+            3.0 * Damp / (theta_ * dt) + sqr(omega);
 
         scalar load = F_last + theta_ * (F_this - F_last);
-        load += Mass * (6.0 / sqr(theta_ * dt) * disLast +
-                        6.0 / (theta_ * dt) * velLast + 2.0 * accLast);
-        load += Damp * (3.0 / (theta_ * dt) * disLast + 2.0 * velLast +
-                        0.5 * theta_ * dt * accLast);
+        load += Mass *
+            (6.0 / sqr(theta_ * dt) * disLast + 6.0 / (theta_ * dt) * velLast +
+                2.0 * accLast);
+        load += Damp *
+            (3.0 / (theta_ * dt) * disLast + 2.0 * velLast +
+                0.5 * theta_ * dt * accLast);
 
         scalar disTheta = load / effectiveK;
 
@@ -1226,15 +1243,17 @@ bool fastDynamicFvMesh::update()
         const vectorField& shape = modeShapes_[m];
 
         const scalar appliedDisp0 = appliedModeDisp_[m];
-        const scalar appliedDisp =
-            appliedDisp0 +
+        const scalar appliedDisp = appliedDisp0 +
             couplingRelaxation_ * (modeState_[m].x() - appliedDisp0);
 
         // Incremental displacement actually imposed on the mesh
         scalar dDisp = appliedDisp - appliedDisp0;
         appliedModeDisp_[m] = appliedDisp;
 
-        forAll(newPoints, pI) { newPoints[pI] += dDisp * shape[pI]; }
+        forAll(newPoints, pI)
+        {
+            newPoints[pI] += dDisp * shape[pI];
+        }
     }
 
     this->movePoints(newPoints);
