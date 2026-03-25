@@ -159,22 +159,45 @@ int main(int argc, char *argv[])
         else if (fsiCoupling == "integrated" || fsiCoupling == "implicit") // Option (3)
         {
             // Integrated implicit coupling: Move mesh on every PIMPLE outer corrector
-            // (or specific ones as per moveMeshOuterCorrectors).
-            // We force moveMeshOuterCorrectors = true so it moves every iteration.
             
-            // Note: readDyMControls.H might overwrite this, so we set it AFTER or handle it.
-            // Standard readDyMControls reads from pimple dict. We want dynamicMeshDict to override.
+            pimpleControl pimple(mesh);
+            pointField points0 = mesh.points();
+            bool fsiConverged = false;
+            label fsiIter = 0;
 
             while (pimple.loop())
             {
+                fsiIter++;
                 #include "readDyMControls.H" // Updates standard flags
                 moveMeshOuterCorrectors = true; // Force mesh motion every PIMPLE loop
 
                 #include "pimpleLoopBody.H"
+
+                const pointField& points = mesh.points();
+                scalar maxDiff = gMax(mag(points - points0));
+
+                Info << "FSI/PIMPLE Iteration " << fsiIter
+                     << ": max displacement change = " << maxDiff << endl;
+
+                // Check for FSI convergence (displacement change)
+                // Even if fluid forces (and thus target displacement) are constant,
+                // couplingRelaxation < 1.0 causes the mesh position to lag.
+                // We must iterate until the mesh position catches up to the force equilibrium.
+                if (maxDiff < fsiTolerance)
+                {
+                    fsiConverged = true;
+                }
+                points0 = points;
+            }
+
+            if (!fsiConverged)
+            {
+                 Info << "Warning: FSI displacement did not converge within PIMPLE iterations." << endl;
             }
         }
         else // "explicit" (Option 1) or default
         {
+            pimpleControl pimple(mesh);
             while (pimple.loop())
             {
                 #include "readDyMControls.H"

@@ -242,8 +242,13 @@ int main(int argc, char *argv[])
         else if (fsiCoupling == "integrated" || fsiCoupling == "implicit")
         {
              pimpleControl pimple(mesh);
+             pointField points0 = mesh.points();
+             bool fsiConverged = false;
+             label fsiIter = 0;
+
              while (pimple.loop())
              {
+                 fsiIter++;
                  #include "readDyMControls.H"
                  moveMeshOuterCorrectors = true;
 
@@ -307,6 +312,24 @@ int main(int argc, char *argv[])
                 {
                     turbulence->correct();
                 }
+
+                const pointField& points = mesh.points();
+                scalar maxDiff = gMax(mag(points - points0));
+                
+                Info << "FSI/PIMPLE Iteration " << fsiIter
+                     << ": max displacement change = " << maxDiff << endl;
+
+                // Check for FSI convergence (displacement change)
+                if (maxDiff < fsiTolerance)
+                {
+                    fsiConverged = true;
+                }
+                points0 = points;
+             }
+
+             if (!fsiConverged)
+             {
+                  Info << "Warning: FSI displacement did not converge within PIMPLE iterations." << endl;
              }
         }
         else
