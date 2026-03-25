@@ -35,6 +35,9 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     //- Modal frequencies
     scalarField modeFreq_;
 
+    //- Modal mass
+    scalarField modeMass_;
+
     //- Modal damping ratios
     scalarField modeDamp_;
 
@@ -90,14 +93,14 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     //- FSI patch names
     wordRes fsiPatches_;
 
-    //- Zero-based mode index for face diagnostics
-    label faceDiagnosticsMode_;
-
     //- Number of startup calls already treated as Wilson-theta initialisation
     label startupStepCount_;
 
     //- Last physical time index already processed by update()
     label lastUpdateTimeIndex_;
+
+    //- Count of updates within current time step
+    label updateCount_;
 
     // Private Member Functions
 

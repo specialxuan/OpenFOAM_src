@@ -54,8 +54,7 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
     : dynamicFvMesh(io), nMode_(0), theta_(1.4), // Default Wilson-Theta
       mappingTolerance_(4e-6), couplingRelaxation_(1.0),
       pressureFieldName_("p"), rhoRef_(-1.0), pRef_(0.0),
-      faceDiagnosticsMode_(-1),
-      startupStepCount_(0), lastUpdateTimeIndex_(-1)
+      startupStepCount_(0), lastUpdateTimeIndex_(-1), updateCount_(0)
 {
     readControls();
     readModeShapes();
@@ -126,6 +125,16 @@ void fastDynamicFvMesh::readControls()
     const bool foundRhoRef = fdmDict.readIfPresent("rhoRef", rhoRef_);
     fdmDict.readIfPresent("pRef", pRef_);
 
+    if (fdmDict.found("modalMass"))
+    {
+        fdmDict.lookup("modalMass") >> modeMass_;
+    }
+
+    if (fdmDict.found("modalDamp"))
+    {
+        fdmDict.lookup("modalDamp") >> modeDamp_;
+    }
+
     if (couplingRelaxation_ <= 0 || couplingRelaxation_ > 1)
     {
         FatalIOErrorInFunction(dynamicMeshDict)
@@ -142,11 +151,6 @@ void fastDynamicFvMesh::readControls()
             << exit(FatalIOError);
     }
 
-    label faceDiagnosticsMode = -1;
-    if (fdmDict.readIfPresent("faceDiagnosticsMode", faceDiagnosticsMode))
-    {
-        faceDiagnosticsMode_ = faceDiagnosticsMode - 1;
-    }
 }
 
 // readLegacyParameters(modeDir)
@@ -463,20 +467,34 @@ void fastDynamicFvMesh::readModeShapes()
     if (!Pstream::master())
         modeFreq_.setSize(nMode_); // Only slaves need resize now
 
+    if (modeMass_.size() == 0)
+    {
+        modeMass_.setSize(nMode_, 1.0);
+    }
+    else if (modeMass_.size() != nMode_)
+    {
+        FatalErrorInFunction << "modalMass size (" << modeMass_.size()
+                             << ") does not match number of modes (" << nMode_
+                             << ")" << exit(FatalError);
+    }
+
+    if (modeDamp_.size() == 0)
+    {
+        modeDamp_.setSize(nMode_, 0.0);
+    }
+    else if (modeDamp_.size() != nMode_)
+    {
+        FatalErrorInFunction << "modalDamp size (" << modeDamp_.size()
+                             << ") does not match number of modes (" << nMode_
+                             << ")" << exit(FatalError);
+    }
+
     if (nMode_ <= 0)
     {
         FatalErrorInFunction
             << "No fluid modes were loaded from " << modeDir << nl
             << "Ensure mode/FluidNodeCoor.csv and mode/FluidNodeDisp*.csv are "
             << "present and valid." << exit(FatalError);
-    }
-
-    if (faceDiagnosticsMode_ >= 0 && faceDiagnosticsMode_ >= nMode_)
-    {
-        FatalErrorInFunction << "Requested faceDiagnosticsMode "
-                             << (faceDiagnosticsMode_ + 1) << " but only "
-                             << nMode_ << " modes were loaded."
-                             << exit(FatalError);
     }
 
     modeForce_.setSize(nMode_, 0.0);
@@ -740,52 +758,7 @@ void fastDynamicFvMesh::calcModalForces()
             << exit(FatalError);
     }
 
-    std::ofstream faceDiagFile;
-    bool writeFaceDiagHeader = false;
-    bool haveFaceDiagFile = false;
 
-    if (faceDiagnosticsMode_ >= 0)
-    {
-        fileName diagnosticsRoot = this->time().path();
-
-        if (Pstream::parRun())
-        {
-            diagnosticsRoot = this->time().path().path();
-        }
-
-        const word modeLabel("mode" + Foam::name(faceDiagnosticsMode_ + 1));
-        fileName faceDiagnosticsPath = diagnosticsRoot /
-            ("faceDiagnostics_" + modeLabel + "_proc" +
-                Foam::name(Pstream::myProcNo()) + ".csv");
-
-        std::ifstream check(faceDiagnosticsPath.c_str());
-        writeFaceDiagHeader = !check.good();
-        check.close();
-
-        faceDiagFile.open(faceDiagnosticsPath.c_str(), std::ios::app);
-
-        if (!faceDiagFile.good())
-        {
-            WarningInFunction << "Unable to open " << faceDiagnosticsPath
-                              << " for face-level diagnostics." << endl;
-        }
-        else
-        {
-            haveFaceDiagFile = true;
-            faceDiagFile << std::setprecision(12);
-
-            if (writeFaceDiagHeader)
-            {
-                faceDiagFile << "Processor,Time,Patch,PatchFace,MeshFace,"
-                             << "Cx,Cy,Cz," << "AreaX,AreaY,AreaZ,"
-                             << "ShapeX,ShapeY,ShapeZ,"
-                             << "PressureForceX,PressureForceY,PressureForceZ,"
-                             << "ShearForceX,ShearForceY,ShearForceZ,"
-                             << "PressureContribution,ShearContribution,"
-                                "TotalContribution\n";
-            }
-        }
-    }
 
     tmp<volTensorField> tGradU;
     const volTensorField* gradUPtr = nullptr;
@@ -803,23 +776,8 @@ void fastDynamicFvMesh::calcModalForces()
             << "to modal forces will be skipped." << endl;
     }
 
-    // Debug p range
-    scalar pMin = gMin(p);
-    scalar pMax = gMax(p);
-    if (Pstream::master())
-    {
-        Info << "DEBUG: " << pressureFieldName_ << " range [" << pMin << ", "
-             << pMax << "]" << endl;
 
-        if (kinematicPressure)
-        {
-            Info << "DEBUG: pressure field is kinematic; density comes from "
-                 << (this->foundObject<volScalarField>("rho")
-                            ? "field rho"
-                            : "rhoRef/transportProperties")
-                 << endl;
-        }
-    }
+
 
     // Iterate over FSI patches
     forAll(fsiPatches_, i)
@@ -900,24 +858,7 @@ void fastDynamicFvMesh::calcModalForces()
                 modeShearForce_[m] += shearModeForce;
                 modeForce_[m] += pressureModeForce + shearModeForce;
 
-                if (haveFaceDiagFile && m == faceDiagnosticsMode_)
-                {
-                    const point& faceCentre = faceCentres[faceI];
 
-                    faceDiagFile
-                        << Pstream::myProcNo() << ',' << this->time().value()
-                        << ',' << pp.name() << ',' << faceI << ','
-                        << (pp.start() + faceI) << ',' << faceCentre.x() << ','
-                        << faceCentre.y() << ',' << faceCentre.z() << ','
-                        << areaVec.x() << ',' << areaVec.y() << ','
-                        << areaVec.z() << ',' << shapeFace.x() << ','
-                        << shapeFace.y() << ',' << shapeFace.z() << ','
-                        << pressureForce.x() << ',' << pressureForce.y() << ','
-                        << pressureForce.z() << ',' << shearForce.x() << ','
-                        << shearForce.y() << ',' << shearForce.z() << ','
-                        << pressureModeForce << ',' << shearModeForce << ','
-                        << (pressureModeForce + shearModeForce) << '\n';
-                }
             }
         }
     }
@@ -930,16 +871,7 @@ void fastDynamicFvMesh::calcModalForces()
     Pstream::broadcast(modePressureForce_);
     Pstream::broadcast(modeShearForce_);
 
-    if (Pstream::master())
-    {
-        Info << "DEBUG: Mode Forces p/shear/total (0-4): ";
-        for (label i = 0; i < min(5, nMode_); ++i)
-        {
-            Info << '[' << modePressureForce_[i] << ',' << modeShearForce_[i]
-                 << ',' << modeForce_[i] << "] ";
-        }
-        Info << endl;
-    }
+
 }
 
 // solveStructuralDynamics(dt)
@@ -949,9 +881,8 @@ void fastDynamicFvMesh::calcModalForces()
 //  C*x_d + K*x = F.
 //  - Current implementation uses Wilson-Theta single-step integration with
 //  theta_ (default 1.4) for stability.
-//  - Mass and damping are currently hard-coded as Mass=1.0 and Damp=0.0 (legacy
-//  assumption). These should be replaced by modalMass_/modalDamp_ when
-//  available.
+//  - Mass and damping are read from dynamicMeshDict as modalMass and modalDamp.
+//  - If not provided, Mass defaults to 1.0 and Damp to 0.0.
 //  - Steps per mode:
 //      * Extract last-step state (disLast, velLast, accLast) and
 //      current/previous modal forces (F_this, F_last).
@@ -964,11 +895,14 @@ void fastDynamicFvMesh::calcModalForces()
 //  - Results are stored in modeState_[i] as (disp, vel, acc).
 void fastDynamicFvMesh::solveStructuralDynamics(scalar dt)
 {
-    const scalar Mass = 1.0;
-    const scalar Damp = 0.0;
+    // const scalar Mass = 1.0;
+    // const scalar Damp = 0.0;
 
     for (label i = 0; i < nMode_; ++i)
     {
+        scalar Mass = modeMass_[i];
+        scalar Damp = modeDamp_[i];
+
         scalar dis = 0, vel = 0, acc = 0;
 
         scalar disLast = modeState0_[i].x();
@@ -992,7 +926,7 @@ void fastDynamicFvMesh::solveStructuralDynamics(scalar dt)
 
         // Ensure non-zero denominator logic
         scalar effectiveK = 6.0 * Mass / sqr(theta_ * dt) +
-            3.0 * Damp / (theta_ * dt) + sqr(omega);
+            3.0 * Damp / (theta_ * dt) + Mass * sqr(omega);
 
         scalar load = F_last + theta_ * (F_this - F_last);
         load += Mass *
@@ -1154,12 +1088,18 @@ void fastDynamicFvMesh::writeDiagnostics() const
 bool fastDynamicFvMesh::update()
 {
     if (Pstream::master())
-        Info << "DEBUG: Starting update()" << endl;
+        Info << "Fast Dynamic Mesh Update" << endl;
 
     const label currentTimeIndex = this->time().timeIndex();
     bool firstIter = (currentTimeIndex != lastUpdateTimeIndex_);
 
     lastUpdateTimeIndex_ = currentTimeIndex;
+
+    if (firstIter)
+    {
+        updateCount_ = 0;
+    }
+    updateCount_++;
 
     // 1. Calculate time step
     scalar dt = this->time().deltaTValue();
@@ -1172,11 +1112,7 @@ bool fastDynamicFvMesh::update()
     }
 
     // 2. Calculate forces
-    if (Pstream::master())
-        Info << "DEBUG: Calling calcModalForces()" << endl;
     calcModalForces();
-    if (Pstream::master())
-        Info << "DEBUG: Finished calcModalForces()" << endl;
 
     if (startupStepCount_ < 2)
     {
@@ -1206,11 +1142,7 @@ bool fastDynamicFvMesh::update()
         ++startupStepCount_;
         writeDiagnostics();
 
-        if (Pstream::master())
-        {
-            Info << "DEBUG: Skipping mesh motion during startup initialisation"
-                 << endl;
-        }
+
 
         return true;
     }
@@ -1218,16 +1150,20 @@ bool fastDynamicFvMesh::update()
     // 3. Solve dynamics
     if (nMode_ > 0)
     {
-        if (Pstream::master())
-            Info << "DEBUG: Calling solveStructuralDynamics()" << endl;
         solveStructuralDynamics(dt);
         if (Pstream::master())
-            Info << "DEBUG: Finished solveStructuralDynamics()" << endl;
+        {
+            Info << "Time: " << this->time().value()
+                 << " Iter: " << updateCount_
+                 << " Mode 0 Force: " << modeForce_[0]
+                 << " Disp: " << modeState_[0].x()
+                 << " Vel: " << modeState_[0].y()
+                 << " Acc: " << modeState_[0].z()
+                 << endl;
+        }
     }
 
     // 4. Update mesh points
-    if (Pstream::master())
-        Info << "DEBUG: Updating mesh points" << endl;
     pointField newPoints = this->points();
 
     // Debug output:
