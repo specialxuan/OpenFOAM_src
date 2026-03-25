@@ -190,14 +190,44 @@ int main(int argc, char* argv[])
         }
         else if (fsiCoupling == "integrated" || fsiCoupling == "implicit")
         {
+            // Use custom PIMPLE loop to enforce FSI convergence
             pimpleControl pimple(mesh);
+            pointField points0 = mesh.points();
+            bool fsiConverged = false;
+            label fsiIter = 0;
+
             while (pimple.loop())
             {
-#include "readDyMControls.H" // Updates standard flags
-                moveMeshOuterCorrectors =
-                    true; // Force mesh motion every PIMPLE loop
+                fsiIter++;
+#include "readDyMControls.H"
+                moveMeshOuterCorrectors = true;
 
 #include "pimpleLoopBody.H"
+
+                const pointField& points = mesh.points();
+                scalar maxDiff = gMax(mag(points - points0));
+
+                Info << "FSI/PIMPLE Iteration " << fsiIter
+                     << ": max displacement change = " << maxDiff << endl;
+
+                // Check for FSI convergence (displacement change)
+                // Even if fluid forces (and thus target displacement) are constant,
+                // couplingRelaxation < 1.0 causes the mesh position to lag.
+                // We must iterate until the mesh position catches up to the force equilibrium.
+                if (maxDiff < fsiTolerance)
+                {
+                    fsiConverged = true;
+                }
+                else
+                {
+                    fsiConverged = false;
+                }
+                points0 = points;
+            }
+
+            if (!fsiConverged)
+            {
+                 Info << "Warning: FSI displacement did not converge within PIMPLE iterations." << endl;
             }
         }
         else
