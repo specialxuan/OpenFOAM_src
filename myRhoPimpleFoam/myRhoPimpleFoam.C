@@ -315,12 +315,19 @@ int main(int argc, char *argv[])
 
                 const pointField& points = mesh.points();
                 scalar maxDiff = gMax(mag(points - points0));
+
+                scalar fsiRes = 1.0;
+                if (mesh.foundObject<uniformDimensionedScalarField>("fsiResidual"))
+                {
+                    fsiRes = mesh.lookupObject<uniformDimensionedScalarField>("fsiResidual").value();
+                }
                 
                 Info << "FSI/PIMPLE Iteration " << fsiIter
-                     << ": max displacement change = " << maxDiff << endl;
+                     << ": max displacement change = " << maxDiff 
+                     << ", FSI Force Residual = " << fsiRes << endl;
 
-                // Check for FSI convergence (displacement change)
-                if (maxDiff < fsiTolerance)
+                // Check for FSI convergence (using force residual)
+                if (fsiRes < fsiTolerance)
                 {
                     fsiConverged = true;
                 }

@@ -15,6 +15,7 @@ Description
 
 #include "dynamicFvMesh.H"
 #include "fieldTypes.H"
+#include "uniformDimensionedFields.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -68,6 +69,12 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
 
     //- Relaxed modal displacement actually imposed on the mesh
     scalarField appliedModeDisp_;
+
+    //- Relaxed modal force from previous inner iteration
+    scalarField appliedModeForce_;
+
+    //- Relative residual of modal force convergence
+    scalar fsiResidual_;
 
     //- Mode shapes (displacement field per mode)
     //  Stores full field for simplicity

@@ -175,15 +175,19 @@ int main(int argc, char *argv[])
 
                 const pointField& points = mesh.points();
                 scalar maxDiff = gMax(mag(points - points0));
+                
+                scalar fsiRes = 1.0;
+                if (mesh.foundObject<uniformDimensionedScalarField>("fsiResidual"))
+                {
+                    fsiRes = mesh.lookupObject<uniformDimensionedScalarField>("fsiResidual").value();
+                }
 
                 Info << "FSI/PIMPLE Iteration " << fsiIter
-                     << ": max displacement change = " << maxDiff << endl;
+                     << ": max displacement change = " << maxDiff 
+                     << ", FSI Force Residual = " << fsiRes << endl;
 
-                // Check for FSI convergence (displacement change)
-                // Even if fluid forces (and thus target displacement) are constant,
-                // couplingRelaxation < 1.0 causes the mesh position to lag.
-                // We must iterate until the mesh position catches up to the force equilibrium.
-                if (maxDiff < fsiTolerance)
+                // Check for FSI convergence (using force residual)
+                if (fsiRes < fsiTolerance)
                 {
                     fsiConverged = true;
                 }
