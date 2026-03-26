@@ -54,10 +54,11 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
     : dynamicFvMesh(io), nMode_(0), theta_(1.4), // Default Wilson-Theta
       mappingTolerance_(4e-6), couplingRelaxation_(1.0),
       pressureFieldName_("p"), rhoRef_(-1.0), pRef_(0.0),
-      startupStepCount_(0), lastUpdateTimeIndex_(-1), updateCount_(0)
+      startupStepCount_(0), lastUpdateTimeIndex_(-1), updateCount_(0), fsiResidual_(1.0)
 {
     readControls();
     readModeShapes();
+    appliedModeForce_.setSize(nMode_, 0.0);
 }
 
 // * * * * * * * * * * * * * * * * Destructor  * * * * * * * * * * * * * * * //
@@ -1114,6 +1115,61 @@ bool fastDynamicFvMesh::update()
     // 2. Calculate forces
     calcModalForces();
 
+    // Force relaxation and residual calculation
+    if (firstIter)
+    {
+        // On first iteration, the "previous" force guess is the force from previous time step
+        appliedModeForce_ = modeForce0_;
+    }
+
+    fsiResidual_ = 0.0;
+    
+    // Temporary storage for next iteration forces
+    scalarField nextAppliedForce(nMode_);
+
+    for (label i = 0; i < nMode_; ++i)
+    {
+        scalar rawFluidForce = modeForce_[i];
+        scalar prevRelaxedForce = appliedModeForce_[i];
+        
+        // Relax: F_new = F_old + alpha * (F_fluid - F_old)
+        // Here F_fluid is the new target, F_old is where we were.
+        scalar newRelaxedForce = prevRelaxedForce + couplingRelaxation_ * (rawFluidForce - prevRelaxedForce);
+        
+        // Calculate residual relative to the NEW force magnitude
+        // Convergence is when F_fluid matches F_old (correction goes to zero)
+        // or when F_new matches F_old (change is zero).
+        scalar diff = mag(newRelaxedForce - prevRelaxedForce);
+        scalar magForce = mag(newRelaxedForce) + 1e-12; // Avoid div by zero
+        scalar res = diff / magForce;
+        
+        if (res > fsiResidual_) fsiResidual_ = res;
+        
+        // Store for next step
+        nextAppliedForce[i] = newRelaxedForce;
+    }
+    
+    // Update state
+    appliedModeForce_ = nextAppliedForce;
+    modeForce_ = nextAppliedForce; // Use relaxed force for structural dynamics
+
+    // Store FSI residual in object registry for solvers to read
+    if (this->foundObject<uniformDimensionedScalarField>("fsiResidual"))
+    {
+         const_cast<uniformDimensionedScalarField&>(
+             this->lookupObject<uniformDimensionedScalarField>("fsiResidual")
+         ).value() = fsiResidual_;
+    }
+    else
+    {
+         uniformDimensionedScalarField* fsiResPtr = new uniformDimensionedScalarField(
+             IOobject("fsiResidual", this->time().constant(), *this, 
+                      IOobject::NO_READ, IOobject::NO_WRITE), 
+             dimless, 
+             fsiResidual_);
+         fsiResPtr->store();
+    }
+
     if (startupStepCount_ < 2)
     {
         if (Pstream::master())
@@ -1178,9 +1234,14 @@ bool fastDynamicFvMesh::update()
     {
         const vectorField& shape = modeShapes_[m];
 
+        // Old displacement applied to the mesh
         const scalar appliedDisp0 = appliedModeDisp_[m];
-        const scalar appliedDisp = appliedDisp0 +
-            couplingRelaxation_ * (modeState_[m].x() - appliedDisp0);
+        
+        // New displacement from structural solver (using relaxed forces)
+        const scalar targetDisp = modeState_[m].x();
+
+        // No displacement relaxation here - force was already relaxed
+        const scalar appliedDisp = targetDisp;
 
         // Incremental displacement actually imposed on the mesh
         scalar dDisp = appliedDisp - appliedDisp0;
