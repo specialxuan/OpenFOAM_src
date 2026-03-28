@@ -84,6 +84,22 @@ Note
 #include "localEulerDdtScheme.H"
 #include "fvcSmooth.H"
 
+// Custom PIMPLE control to enforce FSI convergence
+class fsiPimpleControl : public pimpleControl
+{
+    const bool& fsiConverged_;
+public:
+    fsiPimpleControl(fvMesh& mesh, const bool& fsiConverged, const word& dictName="PIMPLE")
+    : pimpleControl(mesh, dictName), fsiConverged_(fsiConverged)
+    {}
+
+protected:
+    virtual bool criteriaSatisfied()
+    {
+        return pimpleControl::criteriaSatisfied() && fsiConverged_;
+    }
+};
+
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 int main(int argc, char* argv[])
@@ -191,10 +207,11 @@ int main(int argc, char* argv[])
         else if (fsiCoupling == "integrated" || fsiCoupling == "implicit")
         {
             // Use custom PIMPLE loop to enforce FSI convergence
-            pimpleControl pimple(mesh);
-            pointField points0 = mesh.points();
             bool fsiConverged = false;
             label fsiIter = 0;
+            fsiPimpleControl pimple(mesh, fsiConverged);
+            
+            pointField points0 = mesh.points();
 
             while (pimple.loop())
             {
@@ -204,20 +221,20 @@ int main(int argc, char* argv[])
 
 #include "pimpleLoopBody.H"
 
-                const pointField& points = mesh.points();
-                scalar maxDiff = gMax(mag(points - points0));
-
                 scalar fsiRes = 1.0;
                 if (mesh.foundObject<uniformDimensionedScalarField>("fsiResidual"))
                 {
                     fsiRes = mesh.lookupObject<uniformDimensionedScalarField>("fsiResidual").value();
                 }
+                
+                const pointField& points = mesh.points();
+                scalar maxDiff = gMax(mag(points - points0));
+                points0 = points;
 
                 Info << "FSI/PIMPLE Iteration " << fsiIter
                      << ": max displacement change = " << maxDiff 
                      << ", FSI Force Residual = " << fsiRes << endl;
 
-                // Check for FSI convergence (using force residual)
                 if (fsiRes < fsiTolerance)
                 {
                     fsiConverged = true;
@@ -226,12 +243,11 @@ int main(int argc, char* argv[])
                 {
                     fsiConverged = false;
                 }
-                points0 = points;
             }
 
             if (!fsiConverged)
             {
-                 Info << "Warning: FSI displacement did not converge within PIMPLE iterations." << endl;
+                 Info << "Warning: FSI force residual did not converge within PIMPLE iterations." << endl;
             }
         }
         else

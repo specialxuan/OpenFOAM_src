@@ -51,14 +51,106 @@ addToRunTimeSelectionTable(dynamicFvMesh, fastDynamicFvMesh, IOobject);
 //    between CSV node coordinates and local mesh points. This mapping is
 //    intentionally brute-force for correctness.
 fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
-    : dynamicFvMesh(io), nMode_(0), theta_(1.4), // Default Wilson-Theta
-      mappingTolerance_(4e-6), couplingRelaxation_(1.0),
-      pressureFieldName_("p"), rhoRef_(-1.0), pRef_(0.0),
-      startupStepCount_(0), lastUpdateTimeIndex_(-1), updateCount_(0), fsiResidual_(1.0)
+    : dynamicFvMesh(io),
+      nMode_(0),
+      // Initialize IOFields to read if present, and auto-write
+      modeForce_(
+          IOobject("modeForce", io.time().timeName(), *this, 
+                   IOobject::READ_IF_PRESENT, IOobject::AUTO_WRITE)),
+      modeState_(
+          IOobject("modeState", io.time().timeName(), *this, 
+                   IOobject::READ_IF_PRESENT, IOobject::AUTO_WRITE)),
+      initVelocity_(0),
+      appliedModeDisp_(
+          IOobject("appliedModeDisp", io.time().timeName(), *this, 
+                   IOobject::READ_IF_PRESENT, IOobject::AUTO_WRITE)),
+      appliedModeForce_(
+          IOobject("appliedModeForce", io.time().timeName(), *this, 
+                   IOobject::READ_IF_PRESENT, IOobject::AUTO_WRITE)),
+      fsiResidual_(1.0),
+      theta_(1.4), // Default Wilson-Theta
+      mappingTolerance_(4e-6),
+      couplingRelaxation_(1.0),
+      pressureFieldName_("p"),
+      rhoRef_(-1.0),
+      pRef_(0.0),
+      maxDispChange_(1.0),
+      startupStepCount_(0),
+      lastUpdateTimeIndex_(-1),
+      updateCount_(0),
+      writeDiagnosticsEnabled_(false)
 {
     readControls();
     readModeShapes();
-    appliedModeForce_.setSize(nMode_, 0.0);
+    
+    // Check if we have restarted from a valid state
+    bool stateRead = (modeState_.size() > 0);
+    
+    if (stateRead && modeState_.size() == nMode_)
+    {
+        Info << "Restarting fastDynamicFvMesh with " << nMode_ << " modes from time " 
+             << io.time().timeName() << endl;
+             
+        // If we have a valid state, skip startup initialization
+        // Set startupStepCount_ to 2 to bypass the initial 2-step setup logic
+        startupStepCount_ = 2;
+        
+        // Ensure other fields are sized correctly if not read (unlikely if modeState is present)
+        if (modeForce_.size() != nMode_) modeForce_.setSize(nMode_, 0.0);
+        
+        // Critical for restart stability: 
+        // If appliedModeDisp was not read (e.g. file missing), assume the mesh 
+        // is ALREADY deformed according to the read modeState.
+        // Otherwise, dDisp = modeState - 0 will re-apply the full deformation 
+        // on top of the existing deformation.
+        if (appliedModeDisp_.size() != nMode_) 
+        {
+            Info << "  appliedModeDisp not read or wrong size; initializing from modeState displacement." << endl;
+            appliedModeDisp_.setSize(nMode_);
+            for (label i=0; i<nMode_; ++i)
+            {
+                appliedModeDisp_[i] = modeState_[i].x();
+            }
+        }
+        
+        if (appliedModeForce_.size() != nMode_) 
+        {
+            Info << "  appliedModeForce not read; initializing from modeForce." << endl;
+            // Similar logic for force relaxation: assume last applied force was the fluid force
+            if (modeForce_.size() == nMode_) appliedModeForce_ = modeForce_;
+            else appliedModeForce_.setSize(nMode_, 0.0);
+        }
+        
+        // Initialize "old" state for time integration from the read state
+        // On a restart, we assume the read state IS the starting state for this run.
+        modeState0_ = modeState_;
+        modeForce0_ = modeForce_; 
+        
+        // Ensure appliedModeForce_ is consistent with modeForce0_ if not read
+        // This prevents a sudden jump in relaxed force if appliedModeForce_ was 0
+        if (mag(appliedModeForce_[0]) < VSMALL && mag(modeForce0_[0]) > VSMALL)
+        {
+            Info << "  Initializing appliedModeForce from modeForce0 to avoid relaxation shock." << endl;
+            appliedModeForce_ = modeForce0_;
+        }
+    }
+    else
+    {
+        // Fresh start
+        if (stateRead)
+        {
+             WarningInFunction << "Read modeState size " << modeState_.size() 
+                               << " does not match nMode " << nMode_ 
+                               << ". Resetting state." << endl;
+        }
+        
+        modeForce_.setSize(nMode_, 0.0);
+        modeState_.setSize(nMode_, vector::zero);
+        appliedModeDisp_.setSize(nMode_, 0.0);
+        appliedModeForce_.setSize(nMode_, 0.0);
+        
+        startupStepCount_ = 0;
+    }
 }
 
 // * * * * * * * * * * * * * * * * Destructor  * * * * * * * * * * * * * * * //
@@ -125,6 +217,8 @@ void fastDynamicFvMesh::readControls()
     fdmDict.readIfPresent("pressureField", pressureFieldName_);
     const bool foundRhoRef = fdmDict.readIfPresent("rhoRef", rhoRef_);
     fdmDict.readIfPresent("pRef", pRef_);
+    fdmDict.readIfPresent("maxDispChange", maxDispChange_);
+    fdmDict.readIfPresent("writeDiagnostics", writeDiagnosticsEnabled_);
 
     if (fdmDict.found("modalMass"))
     {
@@ -520,11 +614,84 @@ void fastDynamicFvMesh::readModeShapes()
     forAll(csvShapes, m) Pstream::broadcast(csvShapes[m]);
 
     // Map to local mesh points
-    const pointField& localPoints = this->points();
+    // CRITICAL: We must map to the UNDEFORMED (base) points, even on restart.
+    // If we use this->points() on restart, we are mapping to the DEFORMED points.
+    // If the deformation > mappingTolerance, the mapping will fail or map to wrong points.
+    
+    pointField basePoints;
+    
+    // Try to read points from constant/polyMesh (or processor*/constant/polyMesh)
+    // Note: in parallel, the polyMesh directory is inside the processor directory.
+    // IOobject will handle processor path automatically if we use NO_WRITE.
+    
+    // We construct an IOobject to look for "points" in the constant instance.
+    IOobject ioPoints(
+        "points",
+        this->time().constant(),
+        polyMesh::meshSubDir,
+        *this,
+        IOobject::MUST_READ,
+        IOobject::NO_WRITE,
+        false // register
+    );
+
+    // Custom wrapper to force expecting "vectorField" class name
+    // regardless of what Field<vector>::typeName is defined as.
+    class vectorFieldIO : public IOField<vector>
+    {
+    public:
+        // Force the type name to match the file header
+        virtual const word& type() const 
+        { 
+            static const word typeName_val("vectorField");
+            return typeName_val; 
+        }
+        
+        vectorFieldIO(const IOobject& io) : IOField<vector>(io) {}
+    };
+
+    // Attempt to read with the custom wrapper
+    bool readOk = false;
+    try 
+    {
+        // Don't check header via typeHeaderOk as it might check the wrong type
+        // Just verify it exists (MUST_READ handles this usually, but we want to catch it)
+        if (ioPoints.headerClassName() == "vectorField")
+        {
+             vectorFieldIO pIO(ioPoints);
+             basePoints = pIO;
+             readOk = true;
+        }
+        else if (ioPoints.typeHeaderOk<vectorFieldIO>(true))
+        {
+             vectorFieldIO pIO(ioPoints);
+             basePoints = pIO;
+             readOk = true;
+        }
+    }
+    catch (...) {}
+    
+    if (readOk && Pstream::master())
+    {
+         Info << "  Read " << basePoints.size() << " base points for mapping from " << ioPoints.objectPath() << endl;
+    }
+
+    if (!readOk)
+    {
+        // Fallback: use current points (dangerous on restart but maybe only option)
+        basePoints = this->points();
+        if (Pstream::master())
+        {
+             Info << "  Warning: Could not read base points from constant/polyMesh (expected class vectorField). Using current points for mapping." << endl;
+        }
+    }
+
+    const pointField& mappingPoints = basePoints;
+    
     modeShapes_.setSize(nMode_);
     forAll(modeShapes_, m)
     {
-        modeShapes_[m].setSize(localPoints.size());
+        modeShapes_[m].setSize(mappingPoints.size());
         modeShapes_[m] = vector::zero;
     }
 
@@ -535,9 +702,9 @@ void fastDynamicFvMesh::readModeShapes()
     {
         scalar tolSqr = sqr(mappingTolerance_);
 
-        forAll(localPoints, pI)
+        forAll(mappingPoints, pI)
         {
-            const point& p = localPoints[pI];
+            const point& p = mappingPoints[pI];
             scalar minDistSqr = GREAT;
             label nearestIdx = -1;
 
@@ -564,7 +731,7 @@ void fastDynamicFvMesh::readModeShapes()
 
     const label totalMapped = returnReduce(mappedCount, sumOp<label>());
     const label totalPoints =
-        returnReduce(label(localPoints.size()), sumOp<label>());
+        returnReduce(label(mappingPoints.size()), sumOp<label>());
 
     if (Pstream::master())
     {
@@ -980,6 +1147,11 @@ void fastDynamicFvMesh::solveStructuralDynamics(scalar dt)
 //  post-processing comparisons.
 void fastDynamicFvMesh::writeDiagnostics() const
 {
+    if (!writeDiagnosticsEnabled_)
+    {
+        return;
+    }
+
     if (!Pstream::master())
     {
         return;
@@ -1088,9 +1260,6 @@ void fastDynamicFvMesh::writeDiagnostics() const
 //  divergence/stability issues.
 bool fastDynamicFvMesh::update()
 {
-    if (Pstream::master())
-        Info << "Fast Dynamic Mesh Update" << endl;
-
     const label currentTimeIndex = this->time().timeIndex();
     bool firstIter = (currentTimeIndex != lastUpdateTimeIndex_);
 
@@ -1118,8 +1287,15 @@ bool fastDynamicFvMesh::update()
     // Force relaxation and residual calculation
     if (firstIter)
     {
-        // On first iteration, the "previous" force guess is the force from previous time step
-        appliedModeForce_ = modeForce0_;
+        // On the very first iteration of a time step, we are predicting the force.
+        // If we just use modeForce0_, we are assuming force doesn't change.
+        // But appliedModeForce_ holds the LAST applied force from the PREVIOUS time step's convergence.
+        
+        // HOWEVER, on a restart, appliedModeForce_ might be stale or just read.
+        // We should ensure that we don't relax against a zero vector if the force is large.
+        
+        // Let's rely on the constructor/initialization logic for restart cases.
+        // For normal running, appliedModeForce_ carries over.
     }
 
     fsiResidual_ = 0.0;
@@ -1135,6 +1311,21 @@ bool fastDynamicFvMesh::update()
         // Relax: F_new = F_old + alpha * (F_fluid - F_old)
         // Here F_fluid is the new target, F_old is where we were.
         scalar newRelaxedForce = prevRelaxedForce + couplingRelaxation_ * (rawFluidForce - prevRelaxedForce);
+        
+        // If this is the first iteration of the time step, and we are RESTARTING (or startup),
+        // we might want to trust the computed force more if the previous force is suspiciously zero
+        // while the new force is large.
+        if (firstIter && mag(prevRelaxedForce) < VSMALL && mag(rawFluidForce) > 1.0)
+        {
+             // Likely a bad initialization on restart or startup
+             newRelaxedForce = rawFluidForce;
+             
+             if (Pstream::master() && i==0)
+             {
+                 Info << "  First iter override: using raw force " << rawFluidForce 
+                      << " instead of relaxed " << newRelaxedForce << endl;
+             }
+        }
         
         // Calculate residual relative to the NEW force magnitude
         // Convergence is when F_fluid matches F_old (correction goes to zero)
@@ -1175,7 +1366,7 @@ bool fastDynamicFvMesh::update()
         if (Pstream::master())
         {
             Info << "Initializing Fast Dynamic Mesh state (startup step "
-                 << (startupStepCount_ + 1) << " of 2)..." << endl;
+                 << (startupStepCount_ + 1) << " of 2)." << endl;
         }
 
         for (label i = 0; i < nMode_; ++i)
@@ -1207,28 +1398,10 @@ bool fastDynamicFvMesh::update()
     if (nMode_ > 0)
     {
         solveStructuralDynamics(dt);
-        if (Pstream::master())
-        {
-            Info << "Time: " << this->time().value()
-                 << " Iter: " << updateCount_
-                 << " Mode 0 Force: " << modeForce_[0]
-                 << " Disp: " << modeState_[0].x()
-                 << " Vel: " << modeState_[0].y()
-                 << " Acc: " << modeState_[0].z()
-                 << endl;
-        }
     }
 
     // 4. Update mesh points
     pointField newPoints = this->points();
-
-    // Debug output:
-    if (Pstream::master() && nMode_ > 0)
-    {
-        Info << "Time: " << this->time().value()
-             << " First Mode Disp: " << modeState_[0].x()
-             << " Applied: " << appliedModeDisp_[0] << endl;
-    }
 
     for (label m = 0; m < nMode_; ++m)
     {
@@ -1240,11 +1413,27 @@ bool fastDynamicFvMesh::update()
         // New displacement from structural solver (using relaxed forces)
         const scalar targetDisp = modeState_[m].x();
 
-        // No displacement relaxation here - force was already relaxed
-        const scalar appliedDisp = targetDisp;
-
-        // Incremental displacement actually imposed on the mesh
-        scalar dDisp = appliedDisp - appliedDisp0;
+        // Calculate increment
+        scalar dDisp = targetDisp - appliedDisp0;
+        
+        // Apply limiter
+        if (mag(dDisp) > maxDispChange_)
+        {
+            if (Pstream::master() && updateCount_ == 1 && m == 0) // Log once per step
+            {
+                WarningInFunction << "Limiting displacement change for Mode " << m 
+                                  << " from " << dDisp << " to " 
+                                  << (dDisp > 0 ? maxDispChange_ : -maxDispChange_) << endl;
+            }
+            dDisp = (dDisp > 0) ? maxDispChange_ : -maxDispChange_;
+        }
+        
+        // Final applied displacement
+        const scalar appliedDisp = appliedDisp0 + dDisp;
+        
+        // Update the physics state to be consistent with the applied displacement
+        // This effectively adds a constraint force implicitly
+        modeState_[m].x() = appliedDisp;
         appliedModeDisp_[m] = appliedDisp;
 
         forAll(newPoints, pI)
@@ -1255,6 +1444,48 @@ bool fastDynamicFvMesh::update()
 
     this->movePoints(newPoints);
     writeDiagnostics();
+
+    // In parallel runs, reconstructPar does not automatically reconstruct IOFields registered on mesh.
+    // To enable restarts from reconstructed cases, we force-write the global modal state files
+    // to the case root directory on the master processor.
+    if (Pstream::master() && this->time().writeTime())
+    {
+        fileName globalPath = this->time().globalPath()/this->time().timeName();
+        mkDir(globalPath);
+
+        auto writeGlobalField = [&](const word& name, const auto& field, const word& className)
+        {
+            OFstream os(globalPath/name);
+            
+            os << "/*--------------------------------*- C++ -*----------------------------------*\\" << nl;
+            os << "| =========                 |                                                 |" << nl;
+            os << "| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |" << nl;
+            os << "|  \\\\    /   O peration     | Version:  " << OPENFOAM << "                                  |" << nl;
+            os << "|   \\\\  /    A nd           | Website:  www.openfoam.com                      |" << nl;
+            os << "|    \\\\/     M anipulation  |                                                 |" << nl;
+            os << "\\*---------------------------------------------------------------------------*/" << nl;
+            os << "FoamFile" << nl;
+            os << "{" << nl;
+            os << "    version     2.0;" << nl;
+            os << "    format      ascii;" << nl;
+            os << "    class       " << className << ";" << nl;
+            os << "    location    \"" << this->time().timeName() << "\";" << nl;
+            os << "    object      " << name << ";" << nl;
+            os << "}" << nl;
+            os << "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //" << nl << nl;
+            
+            os << field;
+            
+            os << nl << "// ************************************************************************* //" << nl;
+        };
+
+        writeGlobalField("modeState", modeState_, "vectorField");
+        writeGlobalField("modeForce", modeForce_, "scalarField");
+        writeGlobalField("appliedModeDisp", appliedModeDisp_, "scalarField");
+        writeGlobalField("appliedModeForce", appliedModeForce_, "scalarField");
+        
+        Info << "Wrote global modal state files at t=" << this->time().timeName() << endl;
+    }
 
     return true;
 }

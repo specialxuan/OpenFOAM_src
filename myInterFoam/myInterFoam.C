@@ -53,6 +53,22 @@ Description
 #include "CorrectPhi.H"
 #include "fvcSmooth.H"
 
+// Custom PIMPLE control to enforce FSI convergence
+class fsiPimpleControl : public pimpleControl
+{
+    const bool& fsiConverged_;
+public:
+    fsiPimpleControl(fvMesh& mesh, const bool& fsiConverged, const word& dictName="PIMPLE")
+    : pimpleControl(mesh, dictName), fsiConverged_(fsiConverged)
+    {}
+
+protected:
+    virtual bool criteriaSatisfied()
+    {
+        return pimpleControl::criteriaSatisfied() && fsiConverged_;
+    }
+};
+
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 int main(int argc, char *argv[])
@@ -160,10 +176,10 @@ int main(int argc, char *argv[])
         {
             // Integrated implicit coupling: Move mesh on every PIMPLE outer corrector
             
-            pimpleControl pimple(mesh);
             pointField points0 = mesh.points();
             bool fsiConverged = false;
             label fsiIter = 0;
+            fsiPimpleControl pimple(mesh, fsiConverged);
 
             while (pimple.loop())
             {

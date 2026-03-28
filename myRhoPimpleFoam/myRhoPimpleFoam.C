@@ -55,6 +55,22 @@ Note
 #include "localEulerDdtScheme.H"
 #include "fvcSmooth.H"
 
+// Custom PIMPLE control to enforce FSI convergence
+class fsiPimpleControl : public pimpleControl
+{
+    const bool& fsiConverged_;
+public:
+    fsiPimpleControl(fvMesh& mesh, const bool& fsiConverged, const word& dictName="PIMPLE")
+    : pimpleControl(mesh, dictName), fsiConverged_(fsiConverged)
+    {}
+
+protected:
+    virtual bool criteriaSatisfied()
+    {
+        return pimpleControl::criteriaSatisfied() && fsiConverged_;
+    }
+};
+
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 int main(int argc, char *argv[])
@@ -241,10 +257,10 @@ int main(int argc, char *argv[])
         }
         else if (fsiCoupling == "integrated" || fsiCoupling == "implicit")
         {
-             pimpleControl pimple(mesh);
              pointField points0 = mesh.points();
              bool fsiConverged = false;
              label fsiIter = 0;
+             fsiPimpleControl pimple(mesh, fsiConverged);
 
              while (pimple.loop())
              {
