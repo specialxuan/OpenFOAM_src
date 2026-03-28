@@ -118,6 +118,30 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     //- Enable/disable modal diagnostics CSV output (disabled by default)
     bool writeDiagnosticsEnabled_;
 
+    //- Enable/disable timing profiler for fluid/mesh CPU usage
+    bool trackTimingEnabled_;
+
+    //- CPU time at end of previous update() call
+    scalar timingLastUpdateCpuTime_;
+
+    //- Whether timingLastUpdateCpuTime_ is initialized
+    bool timingHasLastUpdate_;
+
+    //- Accumulated estimated fluid-solver CPU time
+    scalar timingFluidCpuAccum_;
+
+    //- Accumulated mesh-update CPU time
+    scalar timingMeshCpuAccum_;
+
+    //- Snapshot of accumulated fluid time at previous writeTime
+    scalar timingFluidCpuAtLastWrite_;
+
+    //- Snapshot of accumulated mesh time at previous writeTime
+    scalar timingMeshCpuAtLastWrite_;
+
+    //- Last physical time index for which global modal files were written
+    label lastGlobalWriteTimeIndex_;
+
     // Private Member Functions
 
     //- Read modal properties from dictionary and files
@@ -151,6 +175,9 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
 
     //- Write modal force/displacement diagnostics (optional)
     void writeDiagnostics() const;
+
+    //- Write timing report (optional)
+    void writeTimingReport();
 
     //- Disallow default bitwise copy construct
     fastDynamicFvMesh(const fastDynamicFvMesh&);
