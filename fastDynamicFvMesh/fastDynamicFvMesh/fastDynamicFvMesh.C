@@ -21,6 +21,7 @@ Description
 #include "transportModel.H"
 #include "turbulentFluidThermoModel.H"
 #include "turbulentTransportModel.H"
+#include "Time.H"
 #include "volFields.H"
 #include <algorithm>
 #include <fstream>
@@ -78,7 +79,15 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       startupStepCount_(0),
       lastUpdateTimeIndex_(-1),
       updateCount_(0),
-      writeDiagnosticsEnabled_(false)
+      writeDiagnosticsEnabled_(false),
+      trackTimingEnabled_(false),
+      timingLastUpdateCpuTime_(0.0),
+      timingHasLastUpdate_(false),
+      timingFluidCpuAccum_(0.0),
+      timingMeshCpuAccum_(0.0),
+      timingFluidCpuAtLastWrite_(0.0),
+      timingMeshCpuAtLastWrite_(0.0),
+      lastGlobalWriteTimeIndex_(-1)
 {
     readControls();
     readModeShapes();
@@ -219,6 +228,7 @@ void fastDynamicFvMesh::readControls()
     fdmDict.readIfPresent("pRef", pRef_);
     fdmDict.readIfPresent("maxDispChange", maxDispChange_);
     fdmDict.readIfPresent("writeDiagnostics", writeDiagnosticsEnabled_);
+    fdmDict.readIfPresent("trackTiming", trackTimingEnabled_);
 
     if (fdmDict.found("modalMass"))
     {
@@ -1237,6 +1247,39 @@ void fastDynamicFvMesh::writeDiagnostics() const
     diagFile << "\n";
 }
 
+
+void fastDynamicFvMesh::writeTimingReport()
+{
+    if (!trackTimingEnabled_ || !Pstream::master())
+    {
+        return;
+    }
+
+    const scalar totalFluid = timingFluidCpuAccum_;
+    const scalar totalMesh = timingMeshCpuAccum_;
+    const scalar totalAll = totalFluid + totalMesh;
+
+    const scalar deltaFluid = totalFluid - timingFluidCpuAtLastWrite_;
+    const scalar deltaMesh = totalMesh - timingMeshCpuAtLastWrite_;
+    const scalar deltaAll = deltaFluid + deltaMesh;
+
+    const scalar totalFluidPct = totalAll > VSMALL ? 100.0*totalFluid/totalAll : 0.0;
+    const scalar totalMeshPct = totalAll > VSMALL ? 100.0*totalMesh/totalAll : 0.0;
+    const scalar deltaFluidPct = deltaAll > VSMALL ? 100.0*deltaFluid/deltaAll : 0.0;
+    const scalar deltaMeshPct = deltaAll > VSMALL ? 100.0*deltaMesh/deltaAll : 0.0;
+
+    Info << "FSI timing [CPU s] at t=" << this->time().timeName()
+         << "  step{fluid=" << deltaFluid << " (" << deltaFluidPct << "%)"
+         << ", mesh=" << deltaMesh << " (" << deltaMeshPct << "%)"
+         << ", total=" << deltaAll << "}"
+         << "  cumulative{fluid=" << totalFluid << " (" << totalFluidPct << "%)"
+         << ", mesh=" << totalMesh << " (" << totalMeshPct << "%)"
+         << ", total=" << totalAll << "}" << endl;
+
+    timingFluidCpuAtLastWrite_ = totalFluid;
+    timingMeshCpuAtLastWrite_ = totalMesh;
+}
+
 // update()
 // Purpose: main update hook called by OpenFOAM each timestep to compute modal
 // forces, solve structural dynamics, and move the mesh. Sequence:
@@ -1260,6 +1303,24 @@ void fastDynamicFvMesh::writeDiagnostics() const
 //  divergence/stability issues.
 bool fastDynamicFvMesh::update()
 {
+    const scalar updateStartCpuTime = this->time().elapsedCpuTime();
+
+    if (trackTimingEnabled_)
+    {
+        if (timingHasLastUpdate_)
+        {
+            const scalar fluidCpu = updateStartCpuTime - timingLastUpdateCpuTime_;
+            if (fluidCpu > 0)
+            {
+                timingFluidCpuAccum_ += fluidCpu;
+            }
+        }
+        else
+        {
+            timingHasLastUpdate_ = true;
+        }
+    }
+
     const label currentTimeIndex = this->time().timeIndex();
     bool firstIter = (currentTimeIndex != lastUpdateTimeIndex_);
 
@@ -1389,6 +1450,17 @@ bool fastDynamicFvMesh::update()
         ++startupStepCount_;
         writeDiagnostics();
 
+        if (trackTimingEnabled_)
+        {
+            const scalar updateEndCpuTime = this->time().elapsedCpuTime();
+            const scalar meshCpu = updateEndCpuTime - updateStartCpuTime;
+            if (meshCpu > 0)
+            {
+                timingMeshCpuAccum_ += meshCpu;
+            }
+            timingLastUpdateCpuTime_ = updateEndCpuTime;
+        }
+
 
 
         return true;
@@ -1445,11 +1517,31 @@ bool fastDynamicFvMesh::update()
     this->movePoints(newPoints);
     writeDiagnostics();
 
+    if (trackTimingEnabled_)
+    {
+        const scalar updateEndCpuTime = this->time().elapsedCpuTime();
+        const scalar meshCpu = updateEndCpuTime - updateStartCpuTime;
+        if (meshCpu > 0)
+        {
+            timingMeshCpuAccum_ += meshCpu;
+        }
+        timingLastUpdateCpuTime_ = updateEndCpuTime;
+    }
+
     // In parallel runs, reconstructPar does not automatically reconstruct IOFields registered on mesh.
     // To enable restarts from reconstructed cases, we force-write the global modal state files
     // to the case root directory on the master processor.
-    if (Pstream::master() && this->time().writeTime())
+    if
+    (
+        Pstream::master()
+     && this->time().writeTime()
+     && currentTimeIndex != lastGlobalWriteTimeIndex_
+    )
     {
+        lastGlobalWriteTimeIndex_ = currentTimeIndex;
+
+        writeTimingReport();
+
         fileName globalPath = this->time().globalPath()/this->time().timeName();
         mkDir(globalPath);
 
