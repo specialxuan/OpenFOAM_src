@@ -17,6 +17,11 @@ Description
 #include "fieldTypes.H"
 #include "uniformDimensionedFields.H"
 #include "IOField.H"
+#include "fluidThermo.H"
+#include "transportModel.H"
+#include "turbulentFluidThermoModel.H"
+#include "turbulentTransportModel.H"
+#include "polyPatch.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -142,6 +147,31 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     //- Last physical time index for which global modal files were written
     label lastGlobalWriteTimeIndex_;
 
+    //- Cached FSI patch ids for faster access during force assembly
+    List<label> fsiPatchIDs_;
+
+    //- Cached FSI patch references
+    List<const polyPatch*> fsiPolyPatches_;
+
+    //- Cached face-mode projection coefficients [patch][mode][face]
+    List<List<vectorField>> faceModeProjection_;
+
+    //- Reused storage of pressure scaling per cached patch
+    List<scalarField> pressureScaleCache_;
+
+    //- Whether pressure scale cache is initialized for each cached patch
+    List<bool> pressureScaleInitialized_;
+
+    //- Cache writeDiagnostics header status to avoid file existence checks
+    bool diagnosticsHeaderWritten_;
+
+    //- Cached model pointers for shear evaluation
+    bool modelPointersCached_;
+    const incompressible::turbulenceModel* icoTurbPtr_;
+    const compressible::turbulenceModel* cmpTurbPtr_;
+    const fluidThermo* fluidThermoPtr_;
+    const transportModel* laminarTransportPtr_;
+
     // Private Member Functions
 
     //- Read modal properties from dictionary and files
@@ -160,6 +190,12 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
         List<List<vector>>& csvShapes,
         label& nCsvNodes);
 
+    //- Build cached patch IDs, face-mode projection and pressure scale storage
+    void buildForceProjectionCaches();
+
+    //- Cache turbulence/thermo/transport pointers from object registry
+    void cacheModelPointers();
+
     //- Calculate modal forces from fluid pressure and shear stress
     void calcModalForces();
 
@@ -174,7 +210,7 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     void solveStructuralDynamics(scalar dt);
 
     //- Write modal force/displacement diagnostics (optional)
-    void writeDiagnostics() const;
+    void writeDiagnostics();
 
     //- Write timing report (optional)
     void writeTimingReport();

@@ -87,7 +87,18 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       timingMeshCpuAccum_(0.0),
       timingFluidCpuAtLastWrite_(0.0),
       timingMeshCpuAtLastWrite_(0.0),
-      lastGlobalWriteTimeIndex_(-1)
+      lastGlobalWriteTimeIndex_(-1),
+      fsiPatchIDs_(0),
+      fsiPolyPatches_(0),
+      faceModeProjection_(0),
+      pressureScaleCache_(0),
+      pressureScaleInitialized_(0),
+      diagnosticsHeaderWritten_(false),
+      modelPointersCached_(false),
+      icoTurbPtr_(nullptr),
+      cmpTurbPtr_(nullptr),
+      fluidThermoPtr_(nullptr),
+      laminarTransportPtr_(nullptr)
 {
     readControls();
     readModeShapes();
@@ -764,6 +775,98 @@ void fastDynamicFvMesh::readModeShapes()
             << "Mapped " << totalMapped << " of " << totalPoints
             << " mesh points. Unmapped points will remain stationary." << endl;
     }
+
+    buildForceProjectionCaches();
+}
+
+
+void fastDynamicFvMesh::buildForceProjectionCaches()
+{
+    const polyBoundaryMesh& pbm = this->boundaryMesh();
+
+    fsiPatchIDs_.setSize(fsiPatches_.size(), -1);
+    fsiPolyPatches_.setSize(fsiPatches_.size(), nullptr);
+    faceModeProjection_.setSize(fsiPatches_.size());
+    pressureScaleCache_.setSize(fsiPatches_.size());
+    pressureScaleInitialized_.setSize(fsiPatches_.size(), false);
+
+    forAll(fsiPatches_, i)
+    {
+        const label patchID = pbm.findPatchID(fsiPatches_[i]);
+        if (patchID == -1)
+        {
+            FatalErrorInFunction << "Configured FSI patch '" << fsiPatches_[i]
+                                 << "' was not found in boundaryMesh."
+                                 << exit(FatalError);
+        }
+
+        fsiPatchIDs_[i] = patchID;
+        fsiPolyPatches_[i] = &pbm[patchID];
+
+        const polyPatch& pp = *fsiPolyPatches_[i];
+        const label nFaces = pp.size();
+
+        pressureScaleCache_[i].setSize(nFaces, 1.0);
+        faceModeProjection_[i].setSize(nMode_);
+
+        for (label m = 0; m < nMode_; ++m)
+        {
+            vectorField& coeff = faceModeProjection_[i][m];
+            coeff.setSize(nFaces, vector::zero);
+
+            forAll(pp, faceI)
+            {
+                const labelList& fPoints = pp[faceI];
+                vector shapeFace = vector::zero;
+
+                forAll(fPoints, fp)
+                {
+                    shapeFace += modeShapes_[m][fPoints[fp]];
+                }
+
+                if (fPoints.size() > 0)
+                {
+                    shapeFace /= fPoints.size();
+                }
+
+                coeff[faceI] = shapeFace;
+            }
+        }
+    }
+}
+
+
+void fastDynamicFvMesh::cacheModelPointers()
+{
+    if (modelPointersCached_)
+    {
+        return;
+    }
+
+    typedef incompressible::turbulenceModel icoTurbModel;
+    typedef compressible::turbulenceModel cmpTurbModel;
+
+    if (this->foundObject<icoTurbModel>(icoTurbModel::propertiesName))
+    {
+        icoTurbPtr_ = &this->lookupObject<icoTurbModel>(icoTurbModel::propertiesName);
+    }
+
+    if (this->foundObject<cmpTurbModel>(cmpTurbModel::propertiesName))
+    {
+        cmpTurbPtr_ = &this->lookupObject<cmpTurbModel>(cmpTurbModel::propertiesName);
+    }
+
+    if (this->foundObject<fluidThermo>(fluidThermo::dictName))
+    {
+        fluidThermoPtr_ = &this->lookupObject<fluidThermo>(fluidThermo::dictName);
+    }
+
+    if (this->foundObject<transportModel>("transportProperties"))
+    {
+        laminarTransportPtr_ = &this->lookupObject<transportModel>("transportProperties");
+    }
+
+    modelPointersCached_ = true;
 }
 
 // patchDensity(patchi, defaultRho)
@@ -807,36 +910,32 @@ tmp<symmTensorField> fastDynamicFvMesh::devRhoReff(const tensorField& gradUp,
     typedef incompressible::turbulenceModel icoTurbModel;
     typedef compressible::turbulenceModel cmpTurbModel;
 
-    if (this->foundObject<icoTurbModel>(icoTurbModel::propertiesName))
+    if (icoTurbPtr_)
     {
-        const auto& turb =
-            this->lookupObject<icoTurbModel>(icoTurbModel::propertiesName);
+        const auto& turb = *icoTurbPtr_;
 
         tmp<scalarField> tRho = patchDensity(patchi, defaultRho);
 
         return tmp<symmTensorField>(new symmTensorField(
             -tRho() * turb.nuEff(patchi) * devTwoSymm(gradUp)));
     }
-    else if (this->foundObject<cmpTurbModel>(cmpTurbModel::propertiesName))
+    else if (cmpTurbPtr_)
     {
-        const auto& turb =
-            this->lookupObject<cmpTurbModel>(cmpTurbModel::propertiesName);
+        const auto& turb = *cmpTurbPtr_;
 
         return tmp<symmTensorField>(
             new symmTensorField(-turb.muEff(patchi) * devTwoSymm(gradUp)));
     }
-    else if (this->foundObject<fluidThermo>(fluidThermo::dictName))
+    else if (fluidThermoPtr_)
     {
-        const auto& thermo =
-            this->lookupObject<fluidThermo>(fluidThermo::dictName);
+        const auto& thermo = *fluidThermoPtr_;
 
         return tmp<symmTensorField>(
             new symmTensorField(-thermo.mu(patchi) * devTwoSymm(gradUp)));
     }
-    else if (this->foundObject<transportModel>("transportProperties"))
+    else if (laminarTransportPtr_)
     {
-        const auto& laminarT =
-            this->lookupObject<transportModel>("transportProperties");
+        const auto& laminarT = *laminarTransportPtr_;
 
         tmp<scalarField> tRho = patchDensity(patchi, defaultRho);
 
@@ -882,6 +981,8 @@ tmp<symmTensorField> fastDynamicFvMesh::devRhoReff(const tensorField& gradUp,
 //  and (on master) print debug ranges.
 void fastDynamicFvMesh::calcModalForces()
 {
+    cacheModelPointers();
+
     // Initialize forces
     modeForce_ = 0.0;
     modePressureForce_ = 0.0;
@@ -957,30 +1058,24 @@ void fastDynamicFvMesh::calcModalForces()
 
 
 
-    // Iterate over FSI patches
-    forAll(fsiPatches_, i)
+    // Iterate over cached FSI patches
+    forAll(fsiPatchIDs_, i)
     {
-        label patchID = this->boundaryMesh().findPatchID(fsiPatches_[i]);
-        if (patchID == -1)
-        {
-            FatalErrorInFunction << "Configured FSI patch '" << fsiPatches_[i]
-                                 << "' was not found in boundaryMesh."
-                                 << exit(FatalError);
-        }
-
-        const polyPatch& pp = this->boundaryMesh()[patchID];
+        const label patchID = fsiPatchIDs_[i];
+        const polyPatch& pp = *fsiPolyPatches_[i];
         const fvPatchScalarField& pPatch = p.boundaryField()[patchID];
         const vectorField faceAreas(pp.faceAreas());
-        const vectorField faceCentres(pp.faceCentres());
-
-        tmp<scalarField> tPressureScale(new scalarField(pp.size(), 1.0));
-
+        scalarField& pressureScale = pressureScaleCache_[i];
         if (kinematicPressure)
         {
-            tPressureScale = patchDensity(patchID, defaultRho);
+            pressureScale = patchDensity(patchID, defaultRho);
+            pressureScaleInitialized_[i] = true;
         }
-
-        const scalarField& pressureScale = tPressureScale();
+        else if (!pressureScaleInitialized_[i])
+        {
+            pressureScale = 1.0;
+            pressureScaleInitialized_[i] = true;
+        }
 
         const symmTensorField* devStressPtr = nullptr;
         tmp<symmTensorField> tDevStress;
@@ -1013,21 +1108,9 @@ void fastDynamicFvMesh::calcModalForces()
                 }
             }
 
-            // Get face points to interpolate mode shape
-            const labelList& fPoints = pp[faceI];
-
             for (label m = 0; m < nMode_; ++m)
             {
-                // Average mode shape at face center
-                vector shapeFace = vector::zero;
-                forAll(fPoints, fp)
-                {
-                    shapeFace += modeShapes_[m][fPoints[fp]];
-                }
-                if (fPoints.size() > 0)
-                {
-                    shapeFace /= fPoints.size();
-                }
+                const vector& shapeFace = faceModeProjection_[i][m][faceI];
 
                 const scalar pressureModeForce = pressureForce & shapeFace;
                 const scalar shearModeForce = shearForce & shapeFace;
@@ -1041,13 +1124,13 @@ void fastDynamicFvMesh::calcModalForces()
         }
     }
 
-    // Parallel reduction
-    Pstream::listCombineGather(modeForce_, plusEqOp<scalar>());
-    Pstream::listCombineGather(modePressureForce_, plusEqOp<scalar>());
-    Pstream::listCombineGather(modeShearForce_, plusEqOp<scalar>());
-    Pstream::broadcast(modeForce_);
-    Pstream::broadcast(modePressureForce_);
-    Pstream::broadcast(modeShearForce_);
+    // Parallel reduction (all-reduce style)
+    forAll(modeForce_, i)
+    {
+        reduce(modeForce_[i], sumOp<scalar>());
+        reduce(modePressureForce_[i], sumOp<scalar>());
+        reduce(modeShearForce_[i], sumOp<scalar>());
+    }
 
 
 }
@@ -1155,7 +1238,7 @@ void fastDynamicFvMesh::solveStructuralDynamics(scalar dt)
 //  appliedModeDisp_.
 //  - Use high precision formatting to preserve numeric fidelity for
 //  post-processing comparisons.
-void fastDynamicFvMesh::writeDiagnostics() const
+void fastDynamicFvMesh::writeDiagnostics()
 {
     if (!writeDiagnosticsEnabled_)
     {
@@ -1175,15 +1258,6 @@ void fastDynamicFvMesh::writeDiagnostics() const
     }
 
     std::ofstream diagFile;
-    bool writeHeader = false;
-
-    std::ifstream check(diagnosticsPath.c_str());
-    if (!check.good())
-    {
-        writeHeader = true;
-    }
-    check.close();
-
     diagFile.open(diagnosticsPath.c_str(), std::ios::app);
 
     if (!diagFile.good())
@@ -1193,7 +1267,7 @@ void fastDynamicFvMesh::writeDiagnostics() const
         return;
     }
 
-    if (writeHeader)
+    if (!diagnosticsHeaderWritten_)
     {
         diagFile << "Time";
         for (label i = 0; i < nMode_; ++i)
@@ -1218,6 +1292,7 @@ void fastDynamicFvMesh::writeDiagnostics() const
         }
 
         diagFile << "\n";
+        diagnosticsHeaderWritten_ = true;
     }
 
     diagFile << std::setprecision(12);
