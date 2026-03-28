@@ -16,6 +16,7 @@ Description
 #include "dynamicFvMesh.H"
 #include "fieldTypes.H"
 #include "uniformDimensionedFields.H"
+#include "IOField.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -46,7 +47,8 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     scalarField modeStiff_;
 
     //- Modal force (current time step)
-    scalarField modeForce_;
+    //  Now an IOField for restart capability
+    IOField<scalar> modeForce_;
 
     //- Pressure contribution to modal force
     scalarField modePressureForce_;
@@ -59,7 +61,8 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
 
     //- Modal displacement (current time step)
     //  Layout: [disp, vel, acc] per mode
-    List<vector> modeState_;
+    //  Now an IOField for restart capability
+    IOField<vector> modeState_;
 
     //- Modal displacement (previous time step)
     List<vector> modeState0_;
@@ -68,10 +71,12 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     scalarField initVelocity_;
 
     //- Relaxed modal displacement actually imposed on the mesh
-    scalarField appliedModeDisp_;
+    //  Now an IOField for restart capability
+    IOField<scalar> appliedModeDisp_;
 
     //- Relaxed modal force from previous inner iteration
-    scalarField appliedModeForce_;
+    //  Now an IOField for restart capability
+    IOField<scalar> appliedModeForce_;
 
     //- Relative residual of modal force convergence
     scalar fsiResidual_;
@@ -96,6 +101,7 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     //- Reference density for kinematic pressure fields
     scalar rhoRef_;
     scalar pRef_;
+    scalar maxDispChange_;
 
     //- FSI patch names
     wordRes fsiPatches_;
@@ -108,6 +114,9 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
 
     //- Count of updates within current time step
     label updateCount_;
+
+    //- Enable/disable modal diagnostics CSV output (disabled by default)
+    bool writeDiagnosticsEnabled_;
 
     // Private Member Functions
 
@@ -140,7 +149,7 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     //- Solve structural dynamics using Wilson-Theta method
     void solveStructuralDynamics(scalar dt);
 
-    //- Write modal force/displacement diagnostics
+    //- Write modal force/displacement diagnostics (optional)
     void writeDiagnostics() const;
 
     //- Disallow default bitwise copy construct
