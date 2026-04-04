@@ -24,6 +24,7 @@ Description
 #include "Time.H"
 #include "volFields.H"
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -98,7 +99,20 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       icoTurbPtr_(nullptr),
       cmpTurbPtr_(nullptr),
       fluidThermoPtr_(nullptr),
-      laminarTransportPtr_(nullptr)
+      laminarTransportPtr_(nullptr),
+      structuralForceEnabled_(false),
+      nStructuralForces_(0),
+      structuralForceFilePrefix_("StructForce"),
+      structuralTargetTolerance_(1e-8),
+      structNodeCoorFile_("StructNodeCoor.csv"),
+      structNodeDispPrefix_("StructNodeDisp"),
+      structNodeCoords_(0),
+      structModeShapes_(0),
+      structuralForceNodeIDs_(0),
+      structuralForceTimes_(0),
+      structuralForceValues_(0),
+      structuralModeForce_(0),
+      structuralForceSignal_(0.0)
 {
     readControls();
     readModeShapes();
@@ -240,6 +254,12 @@ void fastDynamicFvMesh::readControls()
     fdmDict.readIfPresent("maxDispChange", maxDispChange_);
     fdmDict.readIfPresent("writeDiagnostics", writeDiagnosticsEnabled_);
     fdmDict.readIfPresent("trackTiming", trackTimingEnabled_);
+    fdmDict.readIfPresent("structuralForceEnabled", structuralForceEnabled_);
+    fdmDict.readIfPresent("nStructuralForces", nStructuralForces_);
+    fdmDict.readIfPresent("structuralForceFilePrefix", structuralForceFilePrefix_);
+    fdmDict.readIfPresent("structuralTargetTolerance", structuralTargetTolerance_);
+    fdmDict.readIfPresent("structNodeCoorFile", structNodeCoorFile_);
+    fdmDict.readIfPresent("structNodeDispPrefix", structNodeDispPrefix_);
 
     if (fdmDict.found("modalMass"))
     {
@@ -265,6 +285,33 @@ void fastDynamicFvMesh::readControls()
             << "Entry 'rhoRef' must be positive in sub-dictionary '" << typeName
             << "Coeffs' of " << dynamicMeshDict.objectPath()
             << exit(FatalIOError);
+    }
+
+    if (structuralTargetTolerance_ <= 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'structuralTargetTolerance' must be positive in "
+            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (structuralForceEnabled_)
+    {
+        if (nStructuralForces_ <= 0)
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'nStructuralForces' must be > 0 in "
+                << "sub-dictionary '" << typeName << "Coeffs' of "
+                << dynamicMeshDict.objectPath() << exit(FatalIOError);
+        }
+
+        if (structuralForceFilePrefix_.empty())
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'structuralForceFilePrefix' cannot be empty in "
+                << "sub-dictionary '" << typeName << "Coeffs' of "
+                << dynamicMeshDict.objectPath() << exit(FatalIOError);
+        }
     }
 
 }
@@ -539,6 +586,397 @@ void fastDynamicFvMesh::readModeFiles(
     }
 }
 
+
+void fastDynamicFvMesh::readStructuralModeFiles(
+    const fileName& modeDir,
+    pointField& structPoints,
+    List<vectorField>& structShapes,
+    label& nStructNodes,
+    label& nStructModes)
+{
+    if (!Pstream::master())
+    {
+        return;
+    }
+
+    const fileName coorPath = modeDir / structNodeCoorFile_;
+    std::ifstream coorFile(coorPath);
+
+    if (!coorFile.good())
+    {
+        FatalErrorInFunction
+            << "Cannot open required structural coordinate file " << coorPath
+            << nl
+            << "Set 'structNodeCoorFile' correctly in dynamicMeshDict."
+            << exit(FatalError);
+    }
+
+    string line;
+    if (!std::getline(coorFile, line))
+    {
+        FatalErrorInFunction
+            << "Missing header line in structural coordinate file " << coorPath
+            << exit(FatalError);
+    }
+
+    std::replace(line.begin(), line.end(), ',', ' ');
+    std::stringstream hs(line);
+    scalar dummy = 0.0;
+    scalar nNode = 0.0;
+    scalar nMode = 0.0;
+
+    if (!(hs >> dummy >> nNode >> nMode) || nNode <= 0 || nMode <= 0)
+    {
+        FatalErrorInFunction
+            << "Invalid header in structural coordinate file " << coorPath
+            << ". Expected: dummy, nNode, nMode with positive counts."
+            << exit(FatalError);
+    }
+
+    nStructNodes = label(nNode);
+    nStructModes = label(nMode);
+
+    if (nStructModes != nMode_)
+    {
+        FatalErrorInFunction
+            << "Structural mode count (" << nStructModes
+            << ") does not match fluid mode count (" << nMode_ << ")."
+            << exit(FatalError);
+    }
+
+    structPoints.setSize(nStructNodes);
+    for (label i = 0; i < nStructNodes; ++i)
+    {
+        if (!std::getline(coorFile, line))
+        {
+            FatalErrorInFunction
+                << "Unexpected end of file while reading structural node " << i
+                << " from " << coorPath << exit(FatalError);
+        }
+
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::stringstream ls(line);
+        scalar x = 0.0;
+        scalar y = 0.0;
+        scalar z = 0.0;
+
+        if (!(ls >> x >> y >> z))
+        {
+            FatalErrorInFunction
+                << "Invalid structural coordinate entry for node " << i
+                << " in " << coorPath << exit(FatalError);
+        }
+
+        structPoints[i] = point(x, y, z);
+    }
+
+    structShapes.setSize(nStructModes);
+
+    for (label m = 0; m < nStructModes; ++m)
+    {
+        const fileName shapePath =
+            modeDir / (structNodeDispPrefix_ + std::to_string(m + 1) + ".csv");
+        std::ifstream shapeFile(shapePath);
+
+        if (!shapeFile.good())
+        {
+            FatalErrorInFunction
+                << "Cannot open required structural mode shape file "
+                << shapePath << exit(FatalError);
+        }
+
+        if (!std::getline(shapeFile, line))
+        {
+            FatalErrorInFunction
+                << "Missing frequency line in " << shapePath << exit(FatalError);
+        }
+
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::stringstream hShape(line);
+        scalar freq = 0.0;
+        scalar fileNodeCount = 0.0;
+        scalar fileModeCount = 0.0;
+
+        if (!(hShape >> freq))
+        {
+            FatalErrorInFunction
+                << "Failed to read frequency from " << shapePath
+                << exit(FatalError);
+        }
+
+        if ((hShape >> fileNodeCount) && (hShape >> fileModeCount))
+        {
+            if (label(fileNodeCount) != nStructNodes ||
+                label(fileModeCount) != nStructModes)
+            {
+                FatalErrorInFunction
+                    << "Structural mode file " << shapePath << " reports "
+                    << label(fileNodeCount) << " nodes and "
+                    << label(fileModeCount) << " modes, but "
+                    << structNodeCoorFile_ << " reports " << nStructNodes
+                    << " nodes and " << nStructModes << " modes."
+                    << exit(FatalError);
+            }
+        }
+
+        structShapes[m].setSize(nStructNodes, vector::zero);
+
+        label dataRow = 0;
+        while (dataRow < nStructNodes)
+        {
+            if (!std::getline(shapeFile, line))
+            {
+                FatalErrorInFunction
+                    << "Unexpected end of file while reading structural node "
+                    << dataRow << " from " << shapePath
+                    << exit(FatalError);
+            }
+
+            std::replace(line.begin(), line.end(), ',', ' ');
+            std::stringstream ds(line);
+            scalar dx = 0.0;
+            scalar dy = 0.0;
+            scalar dz = 0.0;
+
+            if (!(ds >> dx >> dy >> dz))
+            {
+                if (dataRow == 0)
+                {
+                    continue;
+                }
+
+                FatalErrorInFunction
+                    << "Invalid structural displacement entry for node "
+                    << dataRow << " in " << shapePath
+                    << exit(FatalError);
+            }
+
+            structShapes[m][dataRow] = vector(dx, dy, dz);
+            ++dataRow;
+        }
+    }
+}
+
+
+void fastDynamicFvMesh::readStructuralForceFiles(const fileName& modeDir)
+{
+    if (!structuralForceEnabled_)
+    {
+        structuralForceNodeIDs_.clear();
+        structuralForceTimes_.clear();
+        structuralForceValues_.clear();
+        return;
+    }
+
+    if (structNodeCoords_.size() == 0)
+    {
+        FatalErrorInFunction
+            << "Structural nodes must be loaded before reading structural "
+            << "force files." << exit(FatalError);
+    }
+
+    if (Pstream::master())
+    {
+        structuralForceNodeIDs_.setSize(nStructuralForces_);
+        structuralForceTimes_.setSize(nStructuralForces_);
+        structuralForceValues_.setSize(nStructuralForces_);
+
+        for (label forceI = 0; forceI < nStructuralForces_; ++forceI)
+        {
+            const fileName forcePath =
+                modeDir / (structuralForceFilePrefix_ + std::to_string(forceI + 1) + ".csv");
+            std::ifstream in(forcePath);
+
+            if (!in.good())
+            {
+                FatalErrorInFunction
+                    << "Cannot open structural force file " << forcePath
+                    << exit(FatalError);
+            }
+
+            string line;
+
+            auto nextDataLine = [&](string& out) -> bool
+            {
+                while (std::getline(in, out))
+                {
+                    if (out.empty())
+                    {
+                        continue;
+                    }
+
+                    const char c0 = out[0];
+                    if (c0 == '#')
+                    {
+                        continue;
+                    }
+
+                    bool hasDigit = false;
+                    for (const char c : out)
+                    {
+                        if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.')
+                        {
+                            hasDigit = true;
+                            break;
+                        }
+                    }
+
+                    if (hasDigit)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            };
+
+            if (!nextDataLine(line))
+            {
+                FatalErrorInFunction
+                    << "Missing coordinate-count line in " << forcePath
+                    << exit(FatalError);
+            }
+
+            std::replace(line.begin(), line.end(), ',', ' ');
+            std::stringstream ssN(line);
+            label nCoords = -1;
+            if (!(ssN >> nCoords) || nCoords <= 0)
+            {
+                FatalErrorInFunction
+                    << "First numeric line in " << forcePath
+                    << " must be positive coordinate count."
+                    << exit(FatalError);
+            }
+
+            DynamicList<label> nodeIDs;
+            nodeIDs.reserve(nCoords);
+
+            for (label cI = 0; cI < nCoords; ++cI)
+            {
+                if (!nextDataLine(line))
+                {
+                    FatalErrorInFunction
+                        << "Expected " << nCoords << " coordinate lines in "
+                        << forcePath << ", but file ended early."
+                        << exit(FatalError);
+                }
+
+                std::replace(line.begin(), line.end(), ',', ' ');
+                std::stringstream cs(line);
+                scalar x = 0.0;
+                scalar y = 0.0;
+                scalar z = 0.0;
+
+                if (!(cs >> x >> y >> z))
+                {
+                    FatalErrorInFunction
+                        << "Invalid coordinate line in " << forcePath
+                        << ": " << line << exit(FatalError);
+                }
+
+                const point target(x, y, z);
+                scalar minDistSqr = GREAT;
+                label nearest = -1;
+
+                forAll(structNodeCoords_, nodeI)
+                {
+                    const scalar d2 = magSqr(structNodeCoords_[nodeI] - target);
+                    if (d2 < minDistSqr)
+                    {
+                        minDistSqr = d2;
+                        nearest = nodeI;
+                    }
+                }
+
+                if (nearest < 0 || minDistSqr > sqr(structuralTargetTolerance_))
+                {
+                    FatalErrorInFunction
+                        << "Cannot map structural force coordinate " << target
+                        << " in " << forcePath
+                        << " within structuralTargetTolerance="
+                        << structuralTargetTolerance_ << "."
+                        << exit(FatalError);
+                }
+
+                bool duplicate = false;
+                forAll(nodeIDs, idI)
+                {
+                    if (nodeIDs[idI] == nearest)
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+
+                if (!duplicate)
+                {
+                    nodeIDs.append(nearest);
+                }
+            }
+
+            DynamicList<scalar> tList;
+            DynamicList<vector> fList;
+
+            while (nextDataLine(line))
+            {
+                std::replace(line.begin(), line.end(), ',', ' ');
+                std::stringstream ts(line);
+                scalar tt = 0.0;
+                scalar fx = 0.0;
+                scalar fy = 0.0;
+                scalar fz = 0.0;
+
+                if (!(ts >> tt >> fx >> fy >> fz))
+                {
+                    FatalErrorInFunction
+                        << "Invalid time-force row in " << forcePath
+                        << ": " << line << exit(FatalError);
+                }
+
+                if (!tList.empty() && tt < tList.last())
+                {
+                    FatalErrorInFunction
+                        << "Force times in " << forcePath
+                        << " must be non-decreasing."
+                        << exit(FatalError);
+                }
+
+                tList.append(tt);
+                fList.append(vector(fx, fy, fz));
+            }
+
+            if (tList.empty())
+            {
+                FatalErrorInFunction
+                    << "No force time-series rows found in " << forcePath
+                    << exit(FatalError);
+            }
+
+            structuralForceNodeIDs_[forceI].transfer(nodeIDs);
+            structuralForceTimes_[forceI].setSize(tList.size());
+            structuralForceValues_[forceI].setSize(fList.size());
+
+            forAll(tList, i)
+            {
+                structuralForceTimes_[forceI][i] = tList[i];
+                structuralForceValues_[forceI][i] = fList[i];
+            }
+
+            if (structuralForceNodeIDs_[forceI].size() == 0)
+            {
+                FatalErrorInFunction
+                    << "Structural force file " << forcePath
+                    << " did not map to any unique structural nodes."
+                    << exit(FatalError);
+            }
+        }
+    }
+
+    Pstream::broadcast(structuralForceNodeIDs_);
+    Pstream::broadcast(structuralForceTimes_);
+    Pstream::broadcast(structuralForceValues_);
+}
+
 // readModeShapes()
 // Purpose: load modal coordinates and modal displacement shapes from the case
 // 'mode' directory and map them to mesh points. High-level steps (master
@@ -777,6 +1215,58 @@ void fastDynamicFvMesh::readModeShapes()
     }
 
     buildForceProjectionCaches();
+
+    if (structuralForceEnabled_)
+    {
+        pointField structPoints;
+        List<vectorField> structShapes;
+        label nStructNodes = 0;
+        label nStructModes = 0;
+
+        readStructuralModeFiles(
+            modeDir, structPoints, structShapes, nStructNodes, nStructModes);
+
+        Pstream::broadcast(nStructNodes);
+        Pstream::broadcast(nStructModes);
+        Pstream::broadcast(structPoints);
+
+        if (!Pstream::master())
+        {
+            structShapes.setSize(nStructModes);
+        }
+
+        forAll(structShapes, m)
+        {
+            Pstream::broadcast(structShapes[m]);
+        }
+
+        structNodeCoords_.transfer(structPoints);
+        structModeShapes_.transfer(structShapes);
+        structuralModeForce_.setSize(nMode_, 0.0);
+        readStructuralForceFiles(modeDir);
+
+        if (Pstream::master())
+        {
+            label totalNodes = 0;
+            forAll(structuralForceNodeIDs_, fi)
+            {
+                totalNodes += structuralForceNodeIDs_[fi].size();
+            }
+
+            Info << "Loaded " << nStructuralForces_
+                 << " structural force files with mapped node references="
+                 << totalNodes << endl;
+        }
+    }
+    else
+    {
+        structuralModeForce_.setSize(nMode_, 0.0);
+        structuralForceNodeIDs_.clear();
+        structuralForceTimes_.clear();
+        structuralForceValues_.clear();
+        structNodeCoords_.clear();
+        structModeShapes_.clear();
+    }
 }
 
 
@@ -867,6 +1357,48 @@ void fastDynamicFvMesh::cacheModelPointers()
     }
 
     modelPointersCached_ = true;
+}
+
+
+vector fastDynamicFvMesh::interpolateStructuralForce(
+    const scalarField& times,
+    const vectorField& values,
+    const scalar t) const
+{
+    if (times.size() == 1)
+    {
+        return values[0];
+    }
+
+    if (t <= times.first())
+    {
+        return values.first();
+    }
+
+    if (t >= times.last())
+    {
+        return values.last();
+    }
+
+    for (label i = 0; i < times.size() - 1; ++i)
+    {
+        const scalar t0 = times[i];
+        const scalar t1 = times[i + 1];
+
+        if (t >= t0 && t <= t1)
+        {
+            const scalar dt = t1 - t0;
+            if (dt <= VSMALL)
+            {
+                return values[i + 1];
+            }
+
+            const scalar w = (t - t0)/dt;
+            return (1.0 - w)*values[i] + w*values[i + 1];
+        }
+    }
+
+    return values.last();
 }
 
 // patchDensity(patchi, defaultRho)
@@ -1135,6 +1667,54 @@ void fastDynamicFvMesh::calcModalForces()
 
 }
 
+
+void fastDynamicFvMesh::calcStructuralModalForces()
+{
+    structuralModeForce_ = 0.0;
+    structuralForceSignal_ = 0.0;
+
+    if (!structuralForceEnabled_ || structuralForceNodeIDs_.size() == 0)
+    {
+        return;
+    }
+
+    if (Pstream::master())
+    {
+        const scalar t = this->time().value();
+
+        forAll(structuralForceNodeIDs_, forceI)
+        {
+            const vector nodalForce =
+                interpolateStructuralForce(
+                    structuralForceTimes_[forceI],
+                    structuralForceValues_[forceI],
+                    t);
+
+            structuralForceSignal_ += mag(nodalForce);
+
+            const label nTarget = structuralForceNodeIDs_[forceI].size();
+            if (nTarget == 0)
+            {
+                continue;
+            }
+
+            forAll(structuralForceNodeIDs_[forceI], localI)
+            {
+                const label nodeI = structuralForceNodeIDs_[forceI][localI];
+
+                for (label modeI = 0; modeI < nMode_; ++modeI)
+                {
+                    structuralModeForce_[modeI] +=
+                        nodalForce & structModeShapes_[modeI][nodeI];
+                }
+            }
+        }
+    }
+
+    Pstream::broadcast(structuralModeForce_);
+    Pstream::broadcast(structuralForceSignal_);
+}
+
 // solveStructuralDynamics(dt)
 // Purpose: integrate modal equations of motion and update modeState_ for
 // displacement, velocity, and acceleration. Method and notes:
@@ -1270,6 +1850,7 @@ void fastDynamicFvMesh::writeDiagnostics()
     if (!diagnosticsHeaderWritten_)
     {
         diagFile << "Time";
+
         for (label i = 0; i < nMode_; ++i)
         {
             diagFile << ",Force_" << (i + 1);
@@ -1287,8 +1868,14 @@ void fastDynamicFvMesh::writeDiagnostics()
 
         for (label i = 0; i < nMode_; ++i)
         {
+            diagFile << ",StructuralForce_" << (i + 1);
+        }
+
+        for (label i = 0; i < nMode_; ++i)
+        {
             diagFile << ",Disp_" << (i + 1) << ",Vel_" << (i + 1) << ",Acc_"
-                     << (i + 1) << ",AppliedDisp_" << (i + 1);
+                     << (i + 1) << ",AppliedDisp_" << (i + 1)
+                     << ",StructuralScale_" << (i + 1);
         }
 
         diagFile << "\n";
@@ -1315,8 +1902,17 @@ void fastDynamicFvMesh::writeDiagnostics()
 
     for (label i = 0; i < nMode_; ++i)
     {
+        diagFile << "," << structuralModeForce_[i];
+    }
+
+    const scalar structuralScale =
+        structuralForceEnabled_ ? structuralForceSignal_ : 0.0;
+
+    for (label i = 0; i < nMode_; ++i)
+    {
         diagFile << "," << modeState_[i].x() << "," << modeState_[i].y() << ","
-                 << modeState_[i].z() << "," << appliedModeDisp_[i];
+                 << modeState_[i].z() << "," << appliedModeDisp_[i]
+                 << "," << structuralScale;
     }
 
     diagFile << "\n";
@@ -1417,8 +2013,14 @@ bool fastDynamicFvMesh::update()
         modeState0_ = modeState_;
     }
 
-    // 2. Calculate forces
+    // 2. Calculate fluid forces and optional structural external loading
     calcModalForces();
+    calcStructuralModalForces();
+
+    forAll(modeForce_, modeI)
+    {
+        modeForce_[modeI] += structuralModeForce_[modeI];
+    }
 
     // Force relaxation and residual calculation
     if (firstIter)
@@ -1503,6 +2105,18 @@ bool fastDynamicFvMesh::update()
         {
             Info << "Initializing Fast Dynamic Mesh state (startup step "
                  << (startupStepCount_ + 1) << " of 2)." << endl;
+            if (structuralForceEnabled_)
+            {
+                label totalTargets = 0;
+                forAll(structuralForceNodeIDs_, fi)
+                {
+                    totalTargets += structuralForceNodeIDs_[fi].size();
+                }
+
+                Info << "  Structural load files: " << nStructuralForces_
+                     << ", mapped target nodes(total unique-per-file): "
+                     << totalTargets << endl;
+            }
         }
 
         for (label i = 0; i < nMode_; ++i)
@@ -1591,6 +2205,13 @@ bool fastDynamicFvMesh::update()
 
     this->movePoints(newPoints);
     writeDiagnostics();
+
+    if (Pstream::master() && structuralForceEnabled_ && updateCount_ == 1 && nMode_ > 0)
+    {
+        Info << "Structural modal load summary at t=" << this->time().timeName()
+             << ": mode0=" << structuralModeForce_[0]
+             << ", signal=" << structuralForceSignal_ << endl;
+    }
 
     if (trackTimingEnabled_)
     {

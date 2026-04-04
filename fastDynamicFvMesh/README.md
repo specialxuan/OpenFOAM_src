@@ -30,6 +30,13 @@ At each mesh `update()`:
 - Optional diagnostics and timing:
   - `writeDiagnostics` controls `modal_diagnostics.csv` output (default `false`),
   - `trackTiming` prints fluid-vs-mesh CPU timing at `writeTime()` (default `false`).
+- Optional structural forcing:
+  - enable by `structuralForceEnabled true`,
+  - reads `StructNodeCoor.csv` and `StructNodeDisp1..N.csv` for structure modes,
+  - reads `nStructuralForces` files from `structuralForceFilePrefix` (e.g., `StructForce1.csv`),
+  - each force file provides target node coordinates and force time-series rows `(time, Fx, Fy, Fz)`,
+  - maps listed coordinates to structural nodes using `structuralTargetTolerance`,
+  - linearly interpolates force vectors in time and projects them to modal forces.
 
 ## Build
 
@@ -70,6 +77,12 @@ fastDynamicFvMeshCoeffs
     rhoRef             1000;    // optional; required only for kinematic p when rho is unavailable
     pRef               0;
     maxDispChange      1.0;
+    structuralForceEnabled   true;
+    nStructuralForces        1;
+    structuralForceFilePrefix StructForce;
+    structuralTargetTolerance 1e-8;
+    structNodeCoorFile      StructNodeCoor.csv;
+    structNodeDispPrefix    StructNodeDisp;
 
     // Optional; size must equal number of modes
     modalMass          (1 1 1 1 1 1 1 1 1 1);
@@ -90,11 +103,13 @@ Required:
 Optional:
 
 - `FluidPara.csv` (legacy initial modal velocities; zero if missing)
+- `StructNodeCoor.csv`, `StructNodeDisp1.csv ... StructNodeDispN.csv` (required when `structuralForceEnabled true`)
+- `StructForce1.csv ... StructForceN.csv` (required when `structuralForceEnabled true`; `N = nStructuralForces`)
 
 ## Outputs
 
 - `modal_diagnostics.csv` (only when `writeDiagnostics true`)
-  - columns: `Time`, `Force_i`, `PressureForce_i`, `ShearForce_i`, `Disp_i`, `Vel_i`, `Acc_i`, `AppliedDisp_i`
+  - columns: `Time`, `Force_i`, `PressureForce_i`, `ShearForce_i`, `StructuralForce_i`, `Disp_i`, `Vel_i`, `Acc_i`, `AppliedDisp_i`, `StructuralScale_i`
 - restart modal state files written at output times:
   - `modeState`
   - `modeForce`
