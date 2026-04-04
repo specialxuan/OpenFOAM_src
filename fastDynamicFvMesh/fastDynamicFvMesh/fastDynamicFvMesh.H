@@ -172,6 +172,41 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     const fluidThermo* fluidThermoPtr_;
     const transportModel* laminarTransportPtr_;
 
+    //- Enable/disable prescribed structural nodal loading
+    bool structuralForceEnabled_;
+
+    //- Number of structural force files to read
+    label nStructuralForces_;
+
+    //- Structural force file prefix (e.g., StructForce -> StructForce1.csv)
+    word structuralForceFilePrefix_;
+
+    //- Geometric tolerance for mapping force-file coordinates to structure nodes
+    scalar structuralTargetTolerance_;
+
+    //- Structural mode files in mode/ directory
+    word structNodeCoorFile_;
+    word structNodeDispPrefix_;
+
+    //- Structural nodes and mode shapes loaded from StructNode*.csv
+    pointField structNodeCoords_;
+    List<vectorField> structModeShapes_;
+
+    //- Mapped structure node ids per force file
+    List<labelList> structuralForceNodeIDs_;
+
+    //- Time series (seconds) per force file
+    List<scalarField> structuralForceTimes_;
+
+    //- Nodal force vectors per force file (same indexing as structuralForceTimes_)
+    List<vectorField> structuralForceValues_;
+
+    //- Structural contribution to modal force (before relaxation)
+    scalarField structuralModeForce_;
+
+    //- Current force signal for diagnostics/logging
+    scalar structuralForceSignal_;
+
     // Private Member Functions
 
     //- Read modal properties from dictionary and files
@@ -190,6 +225,17 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
         List<List<vector>>& csvShapes,
         label& nCsvNodes);
 
+    //- Read structural node coordinates and mode shapes from StructNode*.csv
+    void readStructuralModeFiles(
+        const fileName& modeDir,
+        pointField& structPoints,
+        List<vectorField>& structShapes,
+        label& nStructNodes,
+        label& nStructModes);
+
+    //- Read structural force files, map coordinates to structure nodes, cache series
+    void readStructuralForceFiles(const fileName& modeDir);
+
     //- Build cached patch IDs, face-mode projection and pressure scale storage
     void buildForceProjectionCaches();
 
@@ -198,6 +244,15 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
 
     //- Calculate modal forces from fluid pressure and shear stress
     void calcModalForces();
+
+    //- Calculate structural modal force from prescribed nodal loading
+    void calcStructuralModalForces();
+
+    //- Linear interpolation of force time-series
+    vector interpolateStructuralForce(
+        const scalarField& times,
+        const vectorField& values,
+        const scalar t) const;
 
     //- Return patch density used for shear calculations
     tmp<scalarField> patchDensity(const label patchi, scalar defaultRho) const;
