@@ -162,7 +162,18 @@ int main(int argc, char *argv[])
 
                 // Check convergence
                 const pointField& points = mesh.points();
-                scalar maxDiff = gMax(mag(points - points0));
+                scalar maxDiff = 0.0;
+                if (points.size() == points0.size())
+                {
+                    maxDiff = max(mag(points - points0));
+                }
+                else if (Pstream::master())
+                {
+                    Info << "FSI Iteration " << fsiIter
+                         << ": topology change detected on at least one rank"
+                         << "; reset displacement-change reference." << endl;
+                }
+                reduce(maxDiff, maxOp<scalar>());
                 if (maxDiff < fsiTolerance)
                 {
                     fsiConverged = true;
@@ -190,7 +201,18 @@ int main(int argc, char *argv[])
                 #include "pimpleLoopBody.H"
 
                 const pointField& points = mesh.points();
-                scalar maxDiff = gMax(mag(points - points0));
+                scalar maxDiff = 0.0;
+                if (points.size() == points0.size())
+                {
+                    maxDiff = max(mag(points - points0));
+                }
+                else if (Pstream::master())
+                {
+                    Info << "FSI/PIMPLE Iteration " << fsiIter
+                         << ": topology change detected on at least one rank"
+                         << "; reset displacement-change reference." << endl;
+                }
+                reduce(maxDiff, maxOp<scalar>());
                 
                 scalar fsiRes = 1.0;
                 if (mesh.foundObject<uniformDimensionedScalarField>("fsiResidual"))

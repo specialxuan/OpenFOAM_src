@@ -13,7 +13,7 @@ Description
 #ifndef fastDynamicFvMesh_H // Prevent Multiple Inclusions
 #define fastDynamicFvMesh_H
 
-#include "dynamicFvMesh.H"
+#include "dynamicRefineFvMesh.H"
 #include "fieldTypes.H"
 #include "uniformDimensionedFields.H"
 #include "IOField.H"
@@ -28,11 +28,13 @@ Description
 namespace Foam
 {
 
+class mapPolyMesh;
+
 /*---------------------------------------------------------------------------*\
                        Class fastDynamicFvMesh Declaration
 \*---------------------------------------------------------------------------*/
 
-class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
+class fastDynamicFvMesh : public dynamicRefineFvMesh
 {
     // Private Data
 
@@ -207,6 +209,36 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     //- Current force signal for diagnostics/logging
     scalar structuralForceSignal_;
 
+    //- Enable refinement-aware modal interpolation and FSI force aggregation
+    bool meshRefinementSupport_;
+
+    //- Enable runtime topology refinement (dynamicRefineFvMeshCoeffs present)
+    bool runtimeRefinementEnabled_;
+
+    //- Geometric tolerance for refinement interpolation classification
+    scalar refinementInterpTolerance_;
+
+    //- Optional runtime-AMR minimum child-cell volume floor (<=0 disables)
+    scalar refinementMinCellVolume_;
+
+    //- Optional runtime-AMR minimum child-edge length floor (<=0 disables)
+    scalar refinementMinEdgeLength_;
+
+    //- Whether reference FSI face cache has been initialized
+    bool referenceFsiBuilt_;
+
+    //- Reference face-mode projection coefficients [patch][mode][referenceFace]
+    List<List<vectorField>> referenceFaceModeProjection_;
+
+    //- Mapping from current FSI patch faces to represented reference faces
+    List<List<labelList>> fsiFaceToReferenceFaces_;
+
+    //- Area weights per current face for represented reference faces
+    List<List<scalarField>> fsiFaceToReferenceWeights_;
+
+    //- Reference face areas captured on initial FSI topology
+    List<scalarField> referenceFsiFaceAreas_;
+
     // Private Member Functions
 
     //- Read modal properties from dictionary and files
@@ -236,11 +268,51 @@ class fastDynamicFvMesh : public dynamicFvMesh // Inherit from dynamicFvMesh
     //- Read structural force files, map coordinates to structure nodes, cache series
     void readStructuralForceFiles(const fileName& modeDir);
 
-    //- Build cached patch IDs, face-mode projection and pressure scale storage
-    void buildForceProjectionCaches();
+    //- Build cached patch IDs, projection and topology-consistent face mapping
+    void buildForceProjectionCaches(const mapPolyMesh* mpmPtr = nullptr);
+
+    //- Synchronize mapped modal values on shared points (parallel consistency)
+    void syncMappedModeShapes(boolList& mappedMask);
+
+    //- Synchronize moved point positions on shared points (parallel consistency)
+    void syncSharedPointPositions(pointField& pointValues) const;
+
+    //- Interpolate mode shapes for currently-unknown points from known corners
+    label interpolateModeShapesFromKnown(
+        boolList& knownMask,
+        const boolList& sourceKnownMask,
+        const label cornerCount,
+        const bool distanceWeighted,
+        const word& context);
+
+    //- Keep mode-shape storage consistent with current mesh topology
+    void ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm);
+
+    //- Per-cell minimum edge length (used by runtime refinement size floor)
+    scalar cellMinEdgeLength(const label celli) const;
+
+    //- Whether a candidate parent cell satisfies refinement size-floor controls
+    bool cellPassesRefinementSizeFloor(const label celli) const;
 
     //- Cache turbulence/thermo/transport pointers from object registry
     void cacheModelPointers();
+
+    //- Select refinement candidates with optional child-size floor constraints
+    virtual void selectRefineCandidates
+    (
+        const scalar lowerRefineLevel,
+        const scalar upperRefineLevel,
+        const scalarField& vFld,
+        bitSet& candidateCell
+    ) const;
+
+    //- Select refinement cells with optional child-size floor constraints
+    virtual labelList selectRefineCells
+    (
+        const label maxCells,
+        const label maxRefinement,
+        const bitSet& candidateCell
+    ) const;
 
     //- Calculate modal forces from fluid pressure and shear stress
     void calcModalForces();
@@ -290,8 +362,14 @@ public:
 
     // Member Functions
 
+    //- Initialise all non-demand-driven data
+    virtual bool init(const bool doInit);
+
     //- Update the mesh for both mesh motion and topology change
     virtual bool update();
+
+    //- Update custom caches/shapes after topology changes
+    virtual void updateMesh(const mapPolyMesh& mpm);
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

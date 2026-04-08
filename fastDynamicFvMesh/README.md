@@ -20,7 +20,8 @@ At each mesh `update()`:
   - `fsiResidual` is computed from force update magnitude.
 - Restart support:
   - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`),
-  - maps shapes against base points from `constant/polyMesh/points` (fallback: current points),
+  - startup modal mapping now uses current mesh points by default, and only uses `constant/polyMesh/points` when its point count matches the current mesh (prevents `latestTime`+AMR point-count mismatch on restart),
+  - with `meshRefinementSupport=true`, startup mapping now synchronizes mapped modal values across shared points in parallel before refinement interpolation, preventing processor-boundary geometry mismatch on continuation runs,
   - writes global modal state files at output times.
 - Performance-oriented implementation:
   - precomputed face-mode projection cache,
@@ -37,6 +38,31 @@ At each mesh `update()`:
   - each force file provides target node coordinates and force time-series rows `(time, Fx, Fy, Fz)`,
   - maps listed coordinates to structural nodes using `structuralTargetTolerance`,
   - linearly interpolates force vectors in time and projects them to modal forces.
+- Optional refinement-aware FSI coupling:
+  - enable by `meshRefinementSupport true`,
+  - if `dynamicRefineFvMeshCoeffs` exists in `constant/dynamicMeshDict`, runtime AMR is executed in `fastDynamicFvMesh::update()` before modal-force/mesh-motion steps (same keys as OpenFOAM `dynamicRefineFvMesh`),
+  - optional refinement-size floors can be enforced before AMR split selection:
+    - `refinementMinCellVolume` (minimum estimated child-cell volume),
+    - `refinementMinEdgeLength` (minimum estimated child-edge length),
+    - any candidate violating either threshold is removed at refine-candidate stage, so it is excluded from both refine selection and unrefine-protection marking,
+    - remaining candidates then follow the normal `dynamicRefineFvMesh` 2:1-consistency expansion,
+  - in integrated/implicit FSI loops, topology changes can alter mesh point count within a PIMPLE iteration; solver-side displacement-change checks must guard against `points.size()` changes before computing `gMax(mag(points - points0))`,
+- startup mapping supports refined meshes with strict topology interpolation:
+  - when a refined startup mesh is detected (`pointLevel>0` exists), geometric CSV mapping is restricted to level-0 points only,
+  - AMR-generated points must be recovered by topology rules only (no geometric nearest-neighbour fallback),
+  - edge midpoint from 2 endpoint corners (distance weighted),
+  - face midpoint from 4 face corners,
+  - cell midpoint from 8 cell corners,
+    - startup/restart interpolation runs multiple 2/4/8 passes (bounded) so points that become classifiable after neighboring points are filled can also be recovered,
+  - when enabled, split FSI-face forces are aggregated back to reference (pre-refine) faces before modal projection,
+  - topology-change updates call internal remap/interpolation to keep `modeShapes_` consistent with current mesh points, using bounded multi-pass 2/4/8 interpolation for refinement-added points,
+  - parallel topology updates now enforce a globally consistent number of interpolation/synchronization passes (including mixed refine+unrefine steps) to avoid MPI collective call mismatches,
+  - modal-force projection is always evaluated on initial reference FSI faces loaded at startup:
+    - refine: child-face forces are aggregated to initial reference faces,
+    - unrefine: merged-face forces are converted to traction and redistributed to represented initial reference faces using topology-derived area weights,
+  - topology mapping uses `mapPolyMesh` connectivity lineage (not geometric nearest-face fallback) for force redistribution.
+  - compatibility note: `refinementFaceMapTolerance` is accepted only for backward-compatible dictionaries, validated as `>=0`, emits a deprecation warning, and is otherwise ignored.
+  - internal cleanup note: AMR reference-face bookkeeping now keeps only actively used data (reference-face areas, projections, and topology weights); removed unused reference centre/normal cache with no behavior change.
 
 ## Build
 
@@ -83,6 +109,15 @@ fastDynamicFvMeshCoeffs
     structuralTargetTolerance 1e-8;
     structNodeCoorFile      StructNodeCoor.csv;
     structNodeDispPrefix    StructNodeDisp;
+    meshRefinementSupport   false;
+    refinementInterpTolerance 1e-8;
+    refinementFaceMapTolerance 0; // deprecated compatibility key; ignored
+    refinementMinCellVolume 0;    // optional; 0 disables child-volume floor
+    refinementMinEdgeLength 0;    // optional; 0 disables child-edge floor
+
+    // Optional runtime AMR controls (same as dynamicRefineFvMesh)
+    // Add dynamicRefineFvMeshCoeffs in the same dynamicMeshDict to enable
+    // in-run topology refinement.
 
     // Optional; size must equal number of modes
     modalMass          (1 1 1 1 1 1 1 1 1 1);
@@ -162,6 +197,13 @@ Conclusion:
 - pressure field not found: set `pressureField` correctly.
 - kinematic pressure with no density: provide `rhoRef`, `transportProperties/rho`, or `rho` field.
 - zero mapped points: check coordinate frame/units and increase `mappingTolerance`.
+- refinement startup interpolation failure (`...points remain unmapped...`):
+  - ensure the refined mesh is generated from the same base topology as the mode files,
+  - check refinement is hex-like for 2/4/8 corner classification,
+  - increase `refinementInterpTolerance` moderately.
+- `refinementFaceMapTolerance` warning:
+  - this key is deprecated and ignored,
+  - topology mapping uses `mapPolyMesh` lineage only (no geometric face-match fallback).
 
 ## Commit-by-commit change log
 
