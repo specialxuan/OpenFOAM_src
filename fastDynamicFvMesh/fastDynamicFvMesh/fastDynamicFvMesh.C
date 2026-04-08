@@ -23,6 +23,7 @@ Description
 #include "turbulentFluidThermoModel.H"
 #include "turbulentTransportModel.H"
 #include "Time.H"
+#include "regIOobject.H"
 #include "volFields.H"
 #include <algorithm>
 #include <cmath>
@@ -56,20 +57,21 @@ addToRunTimeSelectionTable(dynamicFvMesh, fastDynamicFvMesh, IOobject);
 fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
     : dynamicRefineFvMesh(io, false),
       nMode_(0),
-      // Initialize IOFields to read if present, and auto-write
+      // Initialize restart containers; dedicated restart I/O is handled explicitly
+      // in readRestartStateStore()/writeRestartStateStore().
       modeForce_(
-          IOobject("modeForce", io.time().timeName(), *this, 
-                   IOobject::READ_IF_PRESENT, IOobject::AUTO_WRITE)),
+          IOobject("modeForce", io.time().constant()/fileName("fsiRestart"), *this,
+                   IOobject::NO_READ, IOobject::NO_WRITE)),
       modeState_(
-          IOobject("modeState", io.time().timeName(), *this, 
-                   IOobject::READ_IF_PRESENT, IOobject::AUTO_WRITE)),
+          IOobject("modeState", io.time().constant()/fileName("fsiRestart"), *this,
+                   IOobject::NO_READ, IOobject::NO_WRITE)),
       initVelocity_(0),
       appliedModeDisp_(
-          IOobject("appliedModeDisp", io.time().timeName(), *this, 
-                   IOobject::READ_IF_PRESENT, IOobject::AUTO_WRITE)),
+          IOobject("appliedModeDisp", io.time().constant()/fileName("fsiRestart"), *this,
+                   IOobject::NO_READ, IOobject::NO_WRITE)),
       appliedModeForce_(
-          IOobject("appliedModeForce", io.time().timeName(), *this, 
-                   IOobject::READ_IF_PRESENT, IOobject::AUTO_WRITE)),
+          IOobject("appliedModeForce", io.time().constant()/fileName("fsiRestart"), *this,
+                   IOobject::NO_READ, IOobject::NO_WRITE)),
       fsiResidual_(1.0),
       theta_(1.4), // Default Wilson-Theta
       mappingTolerance_(4e-6),
@@ -154,8 +156,8 @@ bool fastDynamicFvMesh::init(const bool doInit)
     readControls();
     readModeShapes();
 
-    // Check if we have restarted from a valid state
-    bool stateRead = (modeState_.size() > 0);
+    const bool restartStateRead = readRestartStateStore();
+    const bool stateRead = restartStateRead && (modeState_.size() > 0);
 
     if (stateRead && modeState_.size() == nMode_)
     {
@@ -203,7 +205,7 @@ bool fastDynamicFvMesh::init(const bool doInit)
     }
     else
     {
-        if (stateRead)
+        if (restartStateRead)
         {
             WarningInFunction
                 << "Read modeState size " << modeState_.size()
@@ -220,6 +222,176 @@ bool fastDynamicFvMesh::init(const bool doInit)
     }
 
     return true;
+}
+
+
+fileName fastDynamicFvMesh::restartStateInstance() const
+{
+    return this->time().constant()/fileName("fsiRestart");
+}
+
+
+bool fastDynamicFvMesh::readRestartStateStore()
+{
+    // Fresh starts at t=0 should not pick up stale restart state files.
+    // Only non-zero-time starts (continuations/restarts) are allowed to read
+    // dedicated or legacy restart modal state.
+    if (this->time().value() <= SMALL)
+    {
+        return false;
+    }
+
+    const fileName restartInstance = restartStateInstance();
+    bool loadedAny = false;
+
+    auto readScalarFieldIfPresent = [&](const word& name, IOField<scalar>& target) -> bool
+    {
+        IOobject io
+        (
+            name,
+            restartInstance,
+            *this,
+            IOobject::READ_IF_PRESENT,
+            IOobject::NO_WRITE,
+            false
+        );
+
+        if (!isFile(io.objectPath()))
+        {
+            return false;
+        }
+
+        IOField<scalar> fld(io);
+        target = fld;
+        return true;
+    };
+
+    auto readVectorFieldIfPresent = [&](const word& name, IOField<vector>& target) -> bool
+    {
+        IOobject io
+        (
+            name,
+            restartInstance,
+            *this,
+            IOobject::READ_IF_PRESENT,
+            IOobject::NO_WRITE,
+            false
+        );
+
+        if (!isFile(io.objectPath()))
+        {
+            return false;
+        }
+
+        IOField<vector> fld(io);
+        target = fld;
+        return true;
+    };
+
+    loadedAny = readScalarFieldIfPresent("modeForce", modeForce_) || loadedAny;
+    loadedAny = readVectorFieldIfPresent("modeState", modeState_) || loadedAny;
+    loadedAny = readScalarFieldIfPresent("appliedModeDisp", appliedModeDisp_) || loadedAny;
+    loadedAny = readScalarFieldIfPresent("appliedModeForce", appliedModeForce_) || loadedAny;
+
+    if (!loadedAny)
+    {
+        const fileName legacyInstance = this->time().timeName();
+
+        auto readLegacyScalar = [&](const word& name, IOField<scalar>& target) -> bool
+        {
+            IOobject io
+            (
+                name,
+                legacyInstance,
+                *this,
+                IOobject::READ_IF_PRESENT,
+                IOobject::NO_WRITE,
+                false
+            );
+
+            if (!isFile(io.objectPath()))
+            {
+                return false;
+            }
+
+            IOField<scalar> fld(io);
+            target = fld;
+            return true;
+        };
+
+        auto readLegacyVector = [&](const word& name, IOField<vector>& target) -> bool
+        {
+            IOobject io
+            (
+                name,
+                legacyInstance,
+                *this,
+                IOobject::READ_IF_PRESENT,
+                IOobject::NO_WRITE,
+                false
+            );
+
+            if (!isFile(io.objectPath()))
+            {
+                return false;
+            }
+
+            IOField<vector> fld(io);
+            target = fld;
+            return true;
+        };
+
+        loadedAny = readLegacyScalar("modeForce", modeForce_) || loadedAny;
+        loadedAny = readLegacyVector("modeState", modeState_) || loadedAny;
+        loadedAny = readLegacyScalar("appliedModeDisp", appliedModeDisp_) || loadedAny;
+        loadedAny = readLegacyScalar("appliedModeForce", appliedModeForce_) || loadedAny;
+
+        if (loadedAny && Pstream::master())
+        {
+            Info << "Loaded legacy restart modal state from time directory "
+                 << legacyInstance << endl;
+        }
+    }
+
+    return loadedAny;
+}
+
+
+void fastDynamicFvMesh::writeRestartStateStore() const
+{
+    const fileName restartDir = this->time().globalPath()/restartStateInstance();
+    mkDir(restartDir);
+
+    auto writeGlobalField = [&](const word& name, const auto& field, const word& className)
+    {
+        OFstream os(restartDir/name);
+
+        os << "/*--------------------------------*- C++ -*----------------------------------*\\" << nl;
+        os << "| =========                 |                                                 |" << nl;
+        os << "| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |" << nl;
+        os << "|  \\\\    /   O peration     | Version:  " << OPENFOAM << "                                  |" << nl;
+        os << "|   \\\\  /    A nd           | Website:  www.openfoam.com                      |" << nl;
+        os << "|    \\\\/     M anipulation  |                                                 |" << nl;
+        os << "\\*---------------------------------------------------------------------------*/" << nl;
+        os << "FoamFile" << nl;
+        os << "{" << nl;
+        os << "    version     2.0;" << nl;
+        os << "    format      ascii;" << nl;
+        os << "    class       " << className << ";" << nl;
+        os << "    location    \"" << restartStateInstance() << "\";" << nl;
+        os << "    object      " << name << ";" << nl;
+        os << "}" << nl;
+        os << "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //" << nl << nl;
+
+        os << field;
+
+        os << nl << "// ************************************************************************* //" << nl;
+    };
+
+    writeGlobalField("modeState", modeState_, "vectorField");
+    writeGlobalField("modeForce", modeForce_, "scalarField");
+    writeGlobalField("appliedModeDisp", appliedModeDisp_, "scalarField");
+    writeGlobalField("appliedModeForce", appliedModeForce_, "scalarField");
 }
 
 // * * * * * * * * * * * * * * * * Destructor  * * * * * * * * * * * * * * * //
@@ -3400,9 +3572,8 @@ bool fastDynamicFvMesh::update()
         timingLastUpdateCpuTime_ = updateEndCpuTime;
     }
 
-    // In parallel runs, reconstructPar does not automatically reconstruct IOFields registered on mesh.
-    // To enable restarts from reconstructed cases, we force-write the global modal state files
-    // to the case root directory on the master processor.
+    // Persist restart modal states in a dedicated channel under constant/fsiRestart
+    // to avoid mixing restart metadata with reconstructed field time directories.
     if
     (
         Pstream::master()
@@ -3414,41 +3585,9 @@ bool fastDynamicFvMesh::update()
 
         writeTimingReport();
 
-        fileName globalPath = this->time().globalPath()/this->time().timeName();
-        mkDir(globalPath);
-
-        auto writeGlobalField = [&](const word& name, const auto& field, const word& className)
-        {
-            OFstream os(globalPath/name);
-            
-            os << "/*--------------------------------*- C++ -*----------------------------------*\\" << nl;
-            os << "| =========                 |                                                 |" << nl;
-            os << "| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |" << nl;
-            os << "|  \\\\    /   O peration     | Version:  " << OPENFOAM << "                                  |" << nl;
-            os << "|   \\\\  /    A nd           | Website:  www.openfoam.com                      |" << nl;
-            os << "|    \\\\/     M anipulation  |                                                 |" << nl;
-            os << "\\*---------------------------------------------------------------------------*/" << nl;
-            os << "FoamFile" << nl;
-            os << "{" << nl;
-            os << "    version     2.0;" << nl;
-            os << "    format      ascii;" << nl;
-            os << "    class       " << className << ";" << nl;
-            os << "    location    \"" << this->time().timeName() << "\";" << nl;
-            os << "    object      " << name << ";" << nl;
-            os << "}" << nl;
-            os << "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //" << nl << nl;
-            
-            os << field;
-            
-            os << nl << "// ************************************************************************* //" << nl;
-        };
-
-        writeGlobalField("modeState", modeState_, "vectorField");
-        writeGlobalField("modeForce", modeForce_, "scalarField");
-        writeGlobalField("appliedModeDisp", appliedModeDisp_, "scalarField");
-        writeGlobalField("appliedModeForce", appliedModeForce_, "scalarField");
-        
-        Info << "Wrote global modal state files at t=" << this->time().timeName() << endl;
+        writeRestartStateStore();
+        Info << "Wrote restart modal state files to " << restartStateInstance()
+             << " at t=" << this->time().timeName() << endl;
     }
 
     return runtimeRefinementEnabled_ || this->moving() || this->topoChanging();

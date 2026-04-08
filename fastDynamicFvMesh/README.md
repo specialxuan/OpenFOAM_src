@@ -19,7 +19,7 @@ At each mesh `update()`:
   - relaxed force is used for structural solve,
   - `fsiResidual` is computed from force update magnitude.
 - Restart support:
-  - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`),
+  - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`) for non-zero-time continuation/restart only,
   - startup modal mapping now uses current mesh points by default, and only uses `constant/polyMesh/points` when its point count matches the current mesh (prevents `latestTime`+AMR point-count mismatch on restart),
   - with `meshRefinementSupport=true`, startup mapping now synchronizes mapped modal values across shared points in parallel before refinement interpolation, preventing processor-boundary geometry mismatch on continuation runs,
   - writes global modal state files at output times.
@@ -151,7 +151,15 @@ Optional:
   - `appliedModeDisp`
   - `appliedModeForce`
 
-In parallel runs, global modal state files are written to the case-root time directory by master.
+In parallel runs, restart modal state files are written by master to:
+
+- `constant/fsiRestart/modeState`
+- `constant/fsiRestart/modeForce`
+- `constant/fsiRestart/appliedModeDisp`
+- `constant/fsiRestart/appliedModeForce`
+
+This keeps restart metadata out of root time directories and avoids AMR/unrefine
+`reconstructPar` readUpdate conflicts.
 
 ## Timing output
 
@@ -284,6 +292,15 @@ This section maps each repository commit to concrete code/document changes.
   - `writeDiagnostics` (switchable diagnostics CSV output).
 - Added displacement-increment limiter and reduced noisy `Info` output.
 - Solver-side integrated/implicit control changed to a custom `fsiPimpleControl` (`criteriaSatisfied() = pimpleCriteria && fsiConverged`).
+
+### `v1.8.0` — restart I/O channel split and force-based convergence unification (2026-04-08)
+
+- `fastDynamicFvMesh` restart persistence no longer writes modal state files into root time directories.
+- Restart state is now written/read via `constant/fsiRestart/` to avoid polluting reconstruct targets in AMR+unrefine workflows.
+- Legacy fallback remains: if dedicated restart files are absent, startup can still read modal state from current time directory when present.
+- `myInterFoam`, `myPimpleFoam`, `myRhoPimpleFoam` FSI convergence decision is unified to force residual:
+  - `fsiConverged = (fsiResidual < fsiTolerance)`.
+- Displacement change can still be logged diagnostically, but is no longer used as the FSI convergence criterion.
 
 ### `0340bff` — v1.4.1 add time tracker (2026-03-28)
 

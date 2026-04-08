@@ -246,13 +246,17 @@ int main(int argc, char *argv[])
                 // Check convergence
                 const pointField& points = mesh.points();
                 scalar maxDiff = gMax(mag(points - points0));
-                if (maxDiff < fsiTolerance)
+                scalar fsiRes = 1.0;
+                if (mesh.foundObject<uniformDimensionedScalarField>("fsiResidual"))
                 {
-                    fsiConverged = true;
+                    fsiRes = mesh.lookupObject<uniformDimensionedScalarField>("fsiResidual").value();
                 }
+                fsiConverged = (fsiRes < fsiTolerance);
                 points0 = points;
 
-                Info << "FSI Iteration " << fsiIter << ": max displacement change = " << maxDiff << endl;
+                Info << "FSI Iteration " << fsiIter
+                     << ": FSI Force Residual = " << fsiRes
+                     << ", max displacement change = " << maxDiff << endl;
             }
         }
         else if (fsiCoupling == "integrated" || fsiCoupling == "implicit")
@@ -343,16 +347,13 @@ int main(int argc, char *argv[])
                      << ", FSI Force Residual = " << fsiRes << endl;
 
                 // Check for FSI convergence (using force residual)
-                if (fsiRes < fsiTolerance)
-                {
-                    fsiConverged = true;
-                }
+                fsiConverged = (fsiRes < fsiTolerance);
                 points0 = points;
              }
 
              if (!fsiConverged)
              {
-                  Info << "Warning: FSI displacement did not converge within PIMPLE iterations." << endl;
+                  Info << "Warning: FSI force residual did not converge within PIMPLE iterations." << endl;
              }
         }
         else

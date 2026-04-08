@@ -342,6 +342,15 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Write timing report (optional)
     void writeTimingReport();
 
+    //- Return instance path used for restart modal state persistence
+    fileName restartStateInstance() const;
+
+    //- Load modal restart state from dedicated restart store
+    bool readRestartStateStore();
+
+    //- Write modal restart state into dedicated restart store
+    void writeRestartStateStore() const;
+
     //- Disallow default bitwise copy construct
     fastDynamicFvMesh(const fastDynamicFvMesh&);
 

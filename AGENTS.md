@@ -1,5 +1,20 @@
 # Repository Agent Notes
 
+## Workspace baseline case policy
+
+1. Workspace root path: `/root/Workspace`.
+2. Baseline case archives in Workspace:
+   - `case_damfailure.zip`
+   - `case_transient.zip`
+3. For any new testing/analysis task:
+   - default to these two baselines,
+   - create a copied new case directory for experiments (do not modify baselines directly),
+   - compare analysis results against both baseline cases.
+4. For long-running analysis:
+   - run monitoring in the background,
+   - report status and estimated remaining time every 30 minutes,
+   - keep foreground interaction responsive for normal communication.
+
 ## fastDynamicFvMesh change policy
 
 When making **any code change** under:
