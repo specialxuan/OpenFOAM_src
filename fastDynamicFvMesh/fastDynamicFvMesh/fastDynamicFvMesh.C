@@ -2178,30 +2178,86 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
             }
         );
 
-        if (cornerCount == 2 && order.size() > 2)
-        {
-            const scalar d2 = dist[order[1]];
-            const scalar d3 = dist[order[2]];
-            if (d3 <= d2 + refinementInterpTolerance_)
-            {
-                continue;
-            }
-        }
-
-        if (cornerCount == 4 && order.size() > 4)
-        {
-            const scalar d4 = dist[order[3]];
-            const scalar d5 = dist[order[4]];
-            if (d5 <= d4 + refinementInterpTolerance_)
-            {
-                continue;
-            }
-        }
+        // Select corners by minimizing geometric centroid mismatch at this
+        // point (within nearest local candidates), which is more robust than
+        // blindly taking the first N nearest corners on distorted AMR meshes.
+        const label maxSearchCandidates =
+            std::min<label>(order.size(), cornerCount == 2 ? 16 : 12);
 
         DynamicList<label> corners;
-        for (label pickI = 0; pickI < cornerCount; ++pickI)
+        scalar bestCentroidErr = GREAT;
+        scalar bestAvgDist = GREAT;
+
+        if (maxSearchCandidates >= cornerCount)
         {
-            corners.append(candidates[order[pickI]]);
+            DynamicList<label> trial(cornerCount);
+
+            auto updateBest = [&](const DynamicList<label>& labels)
+            {
+                point centroid = point::zero;
+                scalar avgDist = 0.0;
+
+                forAll(labels, li)
+                {
+                    const label corner = labels[li];
+                    centroid += pts[corner];
+                    avgDist += mag(pts[pointI] - pts[corner]);
+                }
+
+                centroid /= scalar(labels.size());
+                avgDist /= scalar(labels.size());
+
+                const scalar centroidErr = mag(pts[pointI] - centroid);
+
+                if
+                (
+                    centroidErr < bestCentroidErr - SMALL
+                 || (
+                        mag(centroidErr - bestCentroidErr) <= SMALL
+                     && avgDist < bestAvgDist
+                    )
+                )
+                {
+                    bestCentroidErr = centroidErr;
+                    bestAvgDist = avgDist;
+                    corners.clear();
+                    forAll(labels, li)
+                    {
+                        corners.append(labels[li]);
+                    }
+                }
+            };
+
+            auto chooseCorners =
+                [&](const auto& self, const label start, const label need) -> void
+            {
+                if (need == 0)
+                {
+                    updateBest(trial);
+                    return;
+                }
+
+                const label maxI = maxSearchCandidates - need;
+                for (label rankI = start; rankI <= maxI; ++rankI)
+                {
+                    trial.append(candidates[order[rankI]]);
+                    self(self, rankI + 1, need - 1);
+                    trial.remove();
+                }
+            };
+
+            chooseCorners(chooseCorners, 0, cornerCount);
+        }
+
+        // Safety fallback: retain legacy nearest-corner selection if no
+        // valid combination was found in the bounded search.
+        if (corners.size() != cornerCount)
+        {
+            corners.clear();
+            for (label pickI = 0; pickI < cornerCount; ++pickI)
+            {
+                corners.append(candidates[order[pickI]]);
+            }
         }
 
         if (corners.size() != cornerCount)
@@ -2227,6 +2283,12 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
                 weights[0] = 0.5;
                 weights[1] = 0.5;
             }
+        }
+        else if (cornerCount == 4 || cornerCount == 8)
+        {
+            // For hex-like AMR topology (face/cell midpoint creation), equal
+            // corner weights preserve straight-line/plane consistency better.
+            weights = 1.0/scalar(cornerCount);
         }
         else
         {
@@ -2297,6 +2359,7 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
         returnReduce(label(newNPoints > oldNPoints), sumOp<label>()) > 0;
 
     const labelList& pointMap = mpm.pointMap();
+    const labelList& reversePointMap = mpm.reversePointMap();
 
     if (pointMap.size() != newNPoints)
     {
@@ -2315,6 +2378,7 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
     }
 
     boolList knownMask(newNPoints, false);
+    label localDeferredAddedPoints = 0;
 
     for (label pointI = 0; pointI < newNPoints; ++pointI)
     {
@@ -2324,12 +2388,114 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
             continue;
         }
 
+        if (anyRefinement)
+        {
+            if (oldPoint >= reversePointMap.size())
+            {
+                FatalErrorInFunction
+                    << "reversePointMap size (" << reversePointMap.size()
+                    << ") cannot address old point " << oldPoint << "."
+                    << exit(FatalError);
+            }
+
+            // During refinement, pointMap can assign newly-created points to
+            // a single master old point. Those entries must not be treated as
+            // fully mapped values; defer them to topology interpolation.
+            if (reversePointMap[oldPoint] != pointI)
+            {
+                ++localDeferredAddedPoints;
+                continue;
+            }
+        }
+
         for (label modeI = 0; modeI < nMode_; ++modeI)
         {
             modeShapes_[modeI][pointI] = oldModeShapes[modeI][oldPoint];
         }
 
         knownMask[pointI] = true;
+    }
+
+    const label globalDeferredAddedPoints =
+        returnReduce(localDeferredAddedPoints, sumOp<label>());
+    if (Pstream::master() && globalDeferredAddedPoints > 0)
+    {
+        Info << "Deferred " << globalDeferredAddedPoints
+             << " refinement-added points from pointMap master labels to "
+             << "topology interpolation." << endl;
+    }
+
+    // Prefer direct topology lineage for refinement-added points.
+    // mapPolyMesh stores source old points for new points in pointsFromPointsMap.
+    // Averaging source modal values preserves geometric continuity better than
+    // a generic nearest-corner search.
+    label localLineageMapped = 0;
+    const List<objectMap>& pointsFromPoints = mpm.pointsFromPointsMap();
+
+    forAll(pointsFromPoints, mapI)
+    {
+        const objectMap& pointMapEntry = pointsFromPoints[mapI];
+        const label newPoint = pointMapEntry.index();
+
+        if
+        (
+            newPoint < 0
+         || newPoint >= newNPoints
+         || knownMask[newPoint]
+        )
+        {
+            continue;
+        }
+
+        const labelList& masterPoints = pointMapEntry.masterObjects();
+        if (masterPoints.size() == 0)
+        {
+            continue;
+        }
+
+        for (label modeI = 0; modeI < nMode_; ++modeI)
+        {
+            modeShapes_[modeI][newPoint] = vector::zero;
+        }
+
+        label validMasterCount = 0;
+        forAll(masterPoints, masterI)
+        {
+            const label oldPoint = masterPoints[masterI];
+            if (oldPoint < 0 || oldPoint >= oldNPoints)
+            {
+                continue;
+            }
+
+            ++validMasterCount;
+            for (label modeI = 0; modeI < nMode_; ++modeI)
+            {
+                modeShapes_[modeI][newPoint] += oldModeShapes[modeI][oldPoint];
+            }
+        }
+
+        if (validMasterCount == 0)
+        {
+            continue;
+        }
+
+        const scalar invMasterCount = 1.0/scalar(validMasterCount);
+        for (label modeI = 0; modeI < nMode_; ++modeI)
+        {
+            modeShapes_[modeI][newPoint] *= invMasterCount;
+        }
+
+        knownMask[newPoint] = true;
+        ++localLineageMapped;
+    }
+
+    const label globalLineageMapped =
+        returnReduce(localLineageMapped, sumOp<label>());
+    if (Pstream::master() && globalLineageMapped > 0)
+    {
+        Info << "Topology lineage mapped " << globalLineageMapped
+             << " refinement-added points from mapPolyMesh::pointsFromPoints."
+             << endl;
     }
 
     syncMappedModeShapes(knownMask);
