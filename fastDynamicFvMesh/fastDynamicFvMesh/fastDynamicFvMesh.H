@@ -38,6 +38,8 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
 {
     // Private Data
 
+    //- ===== Core fast-dynamic-mesh modal state and coupling controls =====
+
     //- Number of modes
     label nMode_;
 
@@ -113,6 +115,8 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- FSI patch names
     wordRes fsiPatches_;
 
+    //- ===== Per-step bookkeeping, diagnostics, and timing state =====
+
     //- Number of startup calls already treated as Wilson-theta initialisation
     label startupStepCount_;
 
@@ -149,6 +153,8 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Last physical time index for which global modal files were written
     label lastGlobalWriteTimeIndex_;
 
+    //- ===== FSI force-projection and model lookup caches =====
+
     //- Cached FSI patch ids for faster access during force assembly
     List<label> fsiPatchIDs_;
 
@@ -173,6 +179,8 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     const compressible::turbulenceModel* cmpTurbPtr_;
     const fluidThermo* fluidThermoPtr_;
     const transportModel* laminarTransportPtr_;
+
+    //- ===== Optional structural-force loading data =====
 
     //- Enable/disable prescribed structural nodal loading
     bool structuralForceEnabled_;
@@ -209,6 +217,8 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Current force signal for diagnostics/logging
     scalar structuralForceSignal_;
 
+    //- ===== Runtime AMR controls and indicator settings =====
+
     //- Enable refinement-aware modal interpolation and FSI force aggregation
     bool meshRefinementSupport_;
 
@@ -229,6 +239,8 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
 
     //- Source scalar field name used to build |grad(field)| indicator
     word refinementGradIndicatorField_;
+
+    //- ===== AMR reference-face mapping/cache for force consistency =====
 
     //- Whether reference FSI face cache has been initialized
     bool referenceFsiBuilt_;

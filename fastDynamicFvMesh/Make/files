@@ -1,3 +1,5 @@
-fastDynamicFvMesh/fastDynamicFvMesh.C
+fastDynamicFvMesh/fastDynamicFvMeshMain.C
+fastDynamicFvMesh/fastDynamicFvMeshAMR.C
+fastDynamicFvMesh/fastDynamicFvMeshDiagnostics.C
 
 LIB = $(FOAM_USER_LIBBIN)/libfastDynamicFvMesh
