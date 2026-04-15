@@ -72,6 +72,8 @@ At each mesh `update()`:
   - compatibility note: `refinementFaceMapTolerance` is accepted only for backward-compatible dictionaries, validated as `>=0`, emits a deprecation warning, and is otherwise ignored.
   - internal cleanup note: AMR reference-face bookkeeping now keeps only actively used data (reference-face areas, projections, and topology weights); removed unused reference centre/normal cache with no behavior change.
   - maintenance cleanup note: removed an unused local type alias in `devRhoReff()` to eliminate compiler warning `-Wunused-local-typedefs` with no runtime behavior change.
+  - maintainability note: member declarations in `fastDynamicFvMesh.H` are grouped by subsystem (core modal state, timing/diagnostics, structural loading, AMR controls, reference-face mapping) with no behavior change.
+  - source-layout note: implementation was split into `fastDynamicFvMeshMain.C`, `fastDynamicFvMeshAMR.C`, and `fastDynamicFvMeshDiagnostics.C`; this is a maintainability-only refactor with unchanged runtime keys/behavior.
 
 ## Build
 
@@ -326,15 +328,6 @@ This section maps each repository commit to concrete code/document changes.
 - Added displacement-increment limiter and reduced noisy `Info` output.
 - Solver-side integrated/implicit control changed to a custom `fsiPimpleControl` (`criteriaSatisfied() = pimpleCriteria && fsiConverged`).
 
-### `v1.8.0` — restart I/O channel split and force-based convergence unification (2026-04-08)
-
-- `fastDynamicFvMesh` restart persistence no longer writes modal state files into root time directories.
-- Restart state is now written/read via `constant/fsiRestart/` to avoid polluting reconstruct targets in AMR+unrefine workflows.
-- Legacy fallback remains: if dedicated restart files are absent, startup can still read modal state from current time directory when present.
-- `myInterFoam`, `myPimpleFoam`, `myRhoPimpleFoam` FSI convergence decision is unified to force residual:
-  - `fsiConverged = (fsiResidual < fsiTolerance)`.
-- Displacement change can still be logged diagnostically, but is no longer used as the FSI convergence criterion.
-
 ### `0340bff` — v1.4.1 add time tracker (2026-03-28)
 
 - Added optional runtime timing profiler in `fastDynamicFvMesh`:
@@ -357,3 +350,69 @@ This section maps each repository commit to concrete code/document changes.
 - Diagnostics I/O path optimization:
   - `writeDiagnostics()` now uses in-memory header state (`diagnosticsHeaderWritten_`) instead of file existence check each call,
   - signature changed from `writeDiagnostics() const` to non-const for header-state update.
+
+### `b98cf9a` — v1.5.1 update documents (2026-03-28)
+
+- Documentation-focused refresh:
+  - updated `fastDynamicFvMesh/README.md`,
+  - updated `fastDynamicFvMesh/Doc/快速动网格程序手册.md`.
+- `.gitignore` was adjusted alongside the documentation update.
+
+### `e0b42f3` — v2.0.0 add structural force (2026-04-04)
+
+- Added structural-force loading and projection path in `fastDynamicFvMesh`:
+  - support for `StructForce*.csv` time-series inputs,
+  - coordinate-to-structural-node target mapping with configurable tolerance,
+  - modal structural-force accumulation and coupling into structural solve.
+- Added/extended runtime controls for structural forcing (`structuralForceEnabled`, `nStructuralForces`, `structuralForceFilePrefix`, `structuralTargetTolerance`, etc.).
+- Updated English/Chinese docs for new structural-force workflow and file format.
+
+### `3a5d974` — v3.0.0 add Adaptive Mesh Refinement (2026-04-08)
+
+- Introduced runtime AMR integration in `fastDynamicFvMesh` on top of `dynamicRefineFvMesh`:
+  - supports `dynamicRefineFvMeshCoeffs` driven refine/unrefine during `update()`,
+  - adds topology-aware mode-shape remapping and cache rebuild for refine/unrefine events.
+- Extended build wiring (`fastDynamicFvMesh/Make/options`) and updated docs/config guidance for AMR usage.
+- Updated `myInterFoam` integrated-coupling path to stay robust when topology updates change point count.
+
+### `8bf422a` — v3.1.0 refactor restart function & FSI convergence check (2026-04-08)
+
+- `fastDynamicFvMesh` restart persistence no longer writes modal state files into root time directories.
+- Restart state is written/read via `constant/fsiRestart/`, with legacy fallback to root-time files for compatibility.
+- `myInterFoam`, `myPimpleFoam`, and `myRhoPimpleFoam` unified FSI convergence decision to force residual:
+  - `fsiConverged = (fsiResidual < fsiTolerance)`.
+- Displacement change is retained as diagnostic output only.
+
+### `0425961` — v3.1.1 fix AMR bugs (2026-04-10)
+
+- Fixed AMR robustness issues in `fastDynamicFvMesh`:
+  - hardened refine/unrefine topology mapping for mode-shape continuity,
+  - improved parallel AMR consistency in mapping/interpolation flow to avoid unstable behavior across ranks.
+- Updated English/Chinese docs to reflect AMR bug fixes and refined behavior notes.
+
+### `01b033a` — v3.1.2 add gradient-based refinement criteria and diagnostics (2026-04-15)
+
+- Added gradient-based AMR indicator controls:
+  - `useGradIndicator`,
+  - `gradIndicatorField`,
+  - threshold interpretation on `|grad(field)|` for refine/unrefine selection.
+- Added refinement size-floor controls and related diagnostics:
+  - `refinementMinCellVolume`,
+  - `refinementMinEdgeLength`,
+  - runtime reporting for size-floor candidate filtering.
+- Updated docs and compile database (`compile_commands.json`) with the new controls/workflow.
+
+### `9939057` — v3.2.0 split fastDynamicFvMesh (2026-04-15)
+
+- Refactored implementation layout by splitting the original monolithic source into:
+  - `fastDynamicFvMeshMain.C`,
+  - `fastDynamicFvMeshAMR.C`,
+  - `fastDynamicFvMeshDiagnostics.C`.
+- Updated build wiring for multi-translation-unit compilation:
+  - `fastDynamicFvMesh/Make/files`,
+  - `fastDynamicFvMesh/compile_commands.json`,
+  - `lnInclude` links for new implementation units.
+- Synced documentation with the split and added architecture flowchart source:
+  - `fastDynamicFvMesh/README.md`,
+  - `fastDynamicFvMesh/Doc/快速动网格程序手册.md`,
+  - `fastDynamicFvMesh/Doc/fastDynamicFvMesh_Flowchart.drawio`.
