@@ -18,6 +18,9 @@ At each mesh `update()`:
 - Force-based coupling in mesh update path:
   - relaxed force is used for structural solve,
   - `fsiResidual` is computed from force update magnitude.
+  - integrated/implicit FSI outer-loop convergence should use
+    `fsiResidual < fsiTolerance` (force criterion); displacement change can be
+    retained as diagnostics only.
 - Restart support:
   - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`) for non-zero-time continuation/restart only,
   - startup modal mapping now uses current mesh points by default, and only uses `constant/polyMesh/points` when its point count matches the current mesh (prevents `latestTime`+AMR point-count mismatch on restart),
@@ -41,6 +44,10 @@ At each mesh `update()`:
 - Optional refinement-aware FSI coupling:
   - enable by `meshRefinementSupport true`,
   - if `dynamicRefineFvMeshCoeffs` exists in `constant/dynamicMeshDict`, runtime AMR is executed in `fastDynamicFvMesh::update()` before modal-force/mesh-motion steps (same keys as OpenFOAM `dynamicRefineFvMesh`),
+  - optional gradient-based AMR indicator:
+    - `useGradIndicator true` switches AMR criteria from raw `field` values to `|grad(gradIndicatorField)|`,
+    - `gradIndicatorField` defaults to `alpha.water`,
+    - `lowerRefineLevel/upperRefineLevel/unrefineLevel` are then interpreted on gradient magnitude and can be set with explicit hysteresis (`unrefineLevel < lowerRefineLevel`),
   - optional refinement-size floors can be enforced before AMR split selection:
     - `refinementMinCellVolume` (minimum estimated child-cell volume),
     - `refinementMinEdgeLength` (minimum estimated child-edge length),
@@ -64,6 +71,7 @@ At each mesh `update()`:
   - topology mapping uses `mapPolyMesh` connectivity lineage (not geometric nearest-face fallback) for force redistribution.
   - compatibility note: `refinementFaceMapTolerance` is accepted only for backward-compatible dictionaries, validated as `>=0`, emits a deprecation warning, and is otherwise ignored.
   - internal cleanup note: AMR reference-face bookkeeping now keeps only actively used data (reference-face areas, projections, and topology weights); removed unused reference centre/normal cache with no behavior change.
+  - maintenance cleanup note: removed an unused local type alias in `devRhoReff()` to eliminate compiler warning `-Wunused-local-typedefs` with no runtime behavior change.
 
 ## Build
 
@@ -127,6 +135,25 @@ fastDynamicFvMeshCoeffs
     writeDiagnostics   false;
     trackTiming        true;
 }
+
+dynamicRefineFvMeshCoeffs
+{
+    refineInterval     1;
+    field              alpha.water;
+
+    // Optional: use |grad(alpha.water)| as AMR indicator
+    useGradIndicator   true;
+    gradIndicatorField alpha.water;
+
+    // Hysteresis on gradient indicator
+    lowerRefineLevel   30;
+    upperRefineLevel   500;
+    unrefineLevel      8;
+
+    nBufferLayers      3;
+    maxRefinement      2;
+    maxCells           180000;
+}
 ```
 
 ## Input files (`mode/`)
@@ -161,6 +188,11 @@ In parallel runs, restart modal state files are written by master to:
 
 This keeps restart metadata out of root time directories and avoids AMR/unrefine
 `reconstructPar` readUpdate conflicts.
+
+For AMR cases, prefer reconstructing in an isolated mirror case directory first
+and only syncing reconstructed time directories back after successful completion.
+This prevents partial writes in the main case when `reconstructPar` fails midway
+(for example, truncated field files that later trigger reader EOF errors).
 
 ## Timing output
 

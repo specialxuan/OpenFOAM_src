@@ -121,6 +121,8 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       refinementInterpTolerance_(1e-8),
       refinementMinCellVolume_(0.0),
       refinementMinEdgeLength_(0.0),
+      refinementUseGradIndicator_(false),
+      refinementGradIndicatorField_("alpha.water"),
       referenceFsiBuilt_(false),
       referenceFaceModeProjection_(0),
       fsiFaceToReferenceFaces_(0),
@@ -475,6 +477,22 @@ void fastDynamicFvMesh::readControls()
     fdmDict.readIfPresent("refinementMinCellVolume", refinementMinCellVolume_);
     fdmDict.readIfPresent("refinementMinEdgeLength", refinementMinEdgeLength_);
 
+    if (dynamicMeshDict.found("dynamicRefineFvMeshCoeffs"))
+    {
+        const dictionary& refineDict =
+            dynamicMeshDict.subDict("dynamicRefineFvMeshCoeffs");
+        refineDict.readIfPresent
+        (
+            "useGradIndicator",
+            refinementUseGradIndicator_
+        );
+        refineDict.readIfPresent
+        (
+            "gradIndicatorField",
+            refinementGradIndicatorField_
+        );
+    }
+
     if (fdmDict.found("modalMass"))
     {
         fdmDict.lookup("modalMass") >> modeMass_;
@@ -546,6 +564,20 @@ void fastDynamicFvMesh::readControls()
             << "Entry 'refinementMinEdgeLength' must be >= 0 in "
             << "sub-dictionary '" << typeName << "Coeffs' of "
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (refinementUseGradIndicator_ && refinementGradIndicatorField_.empty())
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'gradIndicatorField' cannot be empty when "
+            << "'useGradIndicator' is enabled in dynamicRefineFvMeshCoeffs of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (Pstream::master() && runtimeRefinementEnabled_ && refinementUseGradIndicator_)
+    {
+        Info<< "Runtime AMR indicator uses |grad(" << refinementGradIndicatorField_
+            << ")| with dynamicRefineFvMesh thresholds." << endl;
     }
 
     if (structuralForceEnabled_)
@@ -2676,6 +2708,58 @@ bool fastDynamicFvMesh::cellPassesRefinementSizeFloor(const label celli) const
 }
 
 
+scalarField fastDynamicFvMesh::refinementIndicatorCellField
+(
+    const scalarField& fallbackCellField
+) const
+{
+    if (!refinementUseGradIndicator_)
+    {
+        return fallbackCellField;
+    }
+
+    if (!this->foundObject<volScalarField>(refinementGradIndicatorField_))
+    {
+        FatalErrorInFunction
+            << "Runtime AMR gradient indicator is enabled, but source field '"
+            << refinementGradIndicatorField_
+            << "' is not available in the objectRegistry."
+            << exit(FatalError);
+    }
+
+    const volScalarField& sourceField =
+        this->lookupObject<volScalarField>(refinementGradIndicatorField_);
+    const tmp<volScalarField> tIndicator = mag(fvc::grad(sourceField));
+    return tIndicator().primitiveField();
+}
+
+
+scalarField fastDynamicFvMesh::refinementIndicatorPointField
+(
+    const scalarField& fallbackPointField
+) const
+{
+    if (!refinementUseGradIndicator_)
+    {
+        return fallbackPointField;
+    }
+
+    if (!this->foundObject<volScalarField>(refinementGradIndicatorField_))
+    {
+        FatalErrorInFunction
+            << "Runtime AMR gradient indicator is enabled, but source field '"
+            << refinementGradIndicatorField_
+            << "' is not available in the objectRegistry."
+            << exit(FatalError);
+    }
+
+    const volScalarField& sourceField =
+        this->lookupObject<volScalarField>(refinementGradIndicatorField_);
+    const tmp<volScalarField> tIndicator = mag(fvc::grad(sourceField));
+    return maxCellField(tIndicator());
+}
+
+
 void fastDynamicFvMesh::selectRefineCandidates
 (
     const scalar lowerRefineLevel,
@@ -2684,11 +2768,13 @@ void fastDynamicFvMesh::selectRefineCandidates
     bitSet& candidateCell
 ) const
 {
+    const scalarField indicatorCell = refinementIndicatorCellField(vFld);
+
     dynamicRefineFvMesh::selectRefineCandidates
     (
         lowerRefineLevel,
         upperRefineLevel,
-        vFld,
+        indicatorCell,
         candidateCell
     );
 
@@ -2758,6 +2844,24 @@ labelList fastDynamicFvMesh::selectRefineCells
         maxCells,
         maxRefinement,
         sizeFloorFiltered
+    );
+}
+
+
+labelList fastDynamicFvMesh::selectUnrefinePoints
+(
+    const scalar unrefineLevel,
+    const bitSet& markedCell,
+    const scalarField& pFld
+) const
+{
+    const scalarField indicatorPoint = refinementIndicatorPointField(pFld);
+
+    return dynamicRefineFvMesh::selectUnrefinePoints
+    (
+        unrefineLevel,
+        markedCell,
+        indicatorPoint
     );
 }
 
@@ -2841,9 +2945,6 @@ tmp<scalarField> fastDynamicFvMesh::patchDensity(
 tmp<symmTensorField> fastDynamicFvMesh::devRhoReff(const tensorField& gradUp,
     const label patchi, const scalar defaultRho) const
 {
-    typedef incompressible::turbulenceModel icoTurbModel;
-    typedef compressible::turbulenceModel cmpTurbModel;
-
     if (icoTurbPtr_)
     {
         const auto& turb = *icoTurbPtr_;
