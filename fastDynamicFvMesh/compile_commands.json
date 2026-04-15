@@ -20,6 +20,7 @@
       "-DNoRepository",
       "-ftemplate-depth-100",
       "-I/usr/lib/openfoam/openfoam2412/src/dynamicFvMesh/lnInclude",
+      "-I/usr/lib/openfoam/openfoam2412/src/dynamicMesh/lnInclude",
       "-I/usr/lib/openfoam/openfoam2412/src/finiteVolume/lnInclude",
       "-I/usr/lib/openfoam/openfoam2412/src/meshTools/lnInclude",
       "-I/usr/lib/openfoam/openfoam2412/src/thermophysicalModels/basic/lnInclude",
@@ -39,8 +40,8 @@
       "Make/linux64GccDPInt32Opt/fastDynamicFvMesh/fastDynamicFvMesh.o",
       "fastDynamicFvMesh/fastDynamicFvMesh.C"
     ],
-    "directory": "/root/OpenFOAM/user-v2412/src/FastDynamic",
-    "file": "/root/OpenFOAM/user-v2412/src/FastDynamic/fastDynamicFvMesh/fastDynamicFvMesh.C",
-    "output": "/root/OpenFOAM/user-v2412/src/FastDynamic/Make/linux64GccDPInt32Opt/fastDynamicFvMesh/fastDynamicFvMesh.o"
+    "directory": "/root/OpenFOAM/user-v2412/src/fastDynamicFvMesh",
+    "file": "/root/OpenFOAM/user-v2412/src/fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMesh.C",
+    "output": "/root/OpenFOAM/user-v2412/src/fastDynamicFvMesh/Make/linux64GccDPInt32Opt/fastDynamicFvMesh/fastDynamicFvMesh.o"
   }
 ]

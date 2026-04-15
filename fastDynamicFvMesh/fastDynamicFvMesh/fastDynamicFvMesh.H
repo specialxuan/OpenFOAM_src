@@ -224,6 +224,12 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Optional runtime-AMR minimum child-edge length floor (<=0 disables)
     scalar refinementMinEdgeLength_;
 
+    //- Use |grad(field)| as runtime-AMR indicator instead of raw field values
+    bool refinementUseGradIndicator_;
+
+    //- Source scalar field name used to build |grad(field)| indicator
+    word refinementGradIndicatorField_;
+
     //- Whether reference FSI face cache has been initialized
     bool referenceFsiBuilt_;
 
@@ -297,6 +303,18 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Cache turbulence/thermo/transport pointers from object registry
     void cacheModelPointers();
 
+    //- Runtime-AMR indicator at cell centers (raw field or |grad(field)|)
+    scalarField refinementIndicatorCellField
+    (
+        const scalarField& fallbackCellField
+    ) const;
+
+    //- Runtime-AMR indicator at points (raw field or |grad(field)|)
+    scalarField refinementIndicatorPointField
+    (
+        const scalarField& fallbackPointField
+    ) const;
+
     //- Select refinement candidates with optional child-size floor constraints
     virtual void selectRefineCandidates
     (
@@ -312,6 +330,14 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
         const label maxCells,
         const label maxRefinement,
         const bitSet& candidateCell
+    ) const;
+
+    //- Select unrefine points using the configured runtime-AMR indicator
+    virtual labelList selectUnrefinePoints
+    (
+        const scalar unrefineLevel,
+        const bitSet& markedCell,
+        const scalarField& pFld
     ) const;
 
     //- Calculate modal forces from fluid pressure and shear stress
