@@ -415,4 +415,4 @@ This section maps each repository commit to concrete code/document changes.
 - Synced documentation with the split and added architecture flowchart source:
   - `fastDynamicFvMesh/README.md`,
   - `fastDynamicFvMesh/Doc/快速动网格程序手册.md`,
-  - `fastDynamicFvMesh/Doc/fastDynamicFvMesh_Flowchart.drawio`.
+  - `fastDynamicFvMesh/Doc/Figures/fastDynamicFvMesh_Flowchart.drawio`.

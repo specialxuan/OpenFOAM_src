@@ -1,0 +1,229 @@
+<mxfile host="65bd71144e">
+    <diagram id="amr-flowchart" name="AMR自适应网格加密流程图">
+        <mxGraphModel dx="1084" dy="1179" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="1700" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" value="fastDynamicFvMesh — AMR 自适应网格加密详细流程" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;richText=1;fontSize=20;fontStyle=1" parent="1" vertex="1">
+                    <mxGeometry x="250" y="15" width="600" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase1_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;dashed=1;arcSize=4;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="70" width="750" height="310" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase1_label" value="【阶段一】AMR 配置与启动映射" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;richText=1;fontSize=15;fontStyle=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="75" width="500" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="cfg1" value="dynamicMeshDict 中配置&#xa;meshRefinementSupport = true&#xa;+ dynamicRefineFvMeshCoeffs 子字典" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="115" width="350" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="cfg2" value="可选 AMR 参数&#xa;• refineInterval, field, maxCells&#xa;• lowerRefineLevel / upperRefineLevel&#xa;• useGradIndicator (默认 false)&#xa;• refinementMinCellVolume / refinementMinEdgeLength" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="170" width="350" height="75" as="geometry"/>
+                </mxCell>
+                <mxCell id="cfg3" value="可选: useGradIndicator=true&#xa;→ 细化判据 = |grad(gradIndicatorField)|&#xa;→ gradIndicatorField 默认 alpha.water&#xa;→ 建议 unrefineLevel &lt; lowerRefineLevel (滞回)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="170" width="210" height="75" as="geometry"/>
+                </mxCell>
+                <mxCell id="cfg4" value="启动映射: readModeShapes()&#xa;几何最近邻映射 (mappingTolerance)&#xa;仅对 level-0 点执行" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="260" width="350" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="cfg5" value="若检测到已存在加密点 (pointLevel&gt;0)&#xa;→ AMR 新增点必须通过拓扑 2/4/8 补全&#xa;→ 不允许回退到几何最近邻" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="320" width="350" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase2_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;dashed=1;arcSize=4;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="400" width="750" height="290" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase2_label" value="【阶段二】启动/重启 — 拓扑 2/4/8 插值补全未映射点" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;richText=1;fontSize=15;fontStyle=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="200" y="405" width="550" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="interp1" value="并行共享点同步&#xa;先在并行共享点上同步已映射模态值&#xa;避免续跑时处理器边界位移不一致" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="445" width="350" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="interp2" value="检测未映射点 → 启用拓扑规则插值" style="rhombus;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="510" width="350" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="interp_edge" value="边中点 (2-point)&#xa;用 2 个端点按距离权重插值" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="570" width="180" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="interp_face" value="面中点 (4-point)&#xa;用 4 个角点等权插值" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="340" y="570" width="180" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="interp_cell" value="体中点 (8-point)&#xa;用 8 个角点等权插值" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="570" width="180" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="interp_loop" value="有界多轮插值循环&#xa;本轮有新增映射? → 继续下一轮&#xa;无新增 → 停止" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;fontStyle=1" parent="1" vertex="1">
+                    <mxGeometry x="250" y="630" width="350" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase3_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F3FF;strokeColor=#4A90D9;dashed=1;arcSize=4;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="710" width="750" height="500" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase3_label" value="【阶段三】运行时 AMR 加密 (每个物理时间步首次 update())" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;richText=1;fontSize=15;fontStyle=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="150" y="715" width="650" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="amr1" value="runtimeRefinementEnabled_?&#xa;需要执行网格加密?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="300" y="755" width="300" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="amr2" value="选择细化候选细胞&#xa;基于 field 值或 |grad| 梯度&#xa;lowerRefineLevel &lt; 候选 &lt; upperRefineLevel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="830" width="400" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="amr3" value="过滤过小子单元候选&#xa;refinementMinCellVolume / refinementMinEdgeLength&#xa;被过滤的候选 → 不参与细化、不进入 markedCell 保护集" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="895" width="400" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="amr4" value="2:1 一致化处理&#xa;dynamicRefineFvMesh 细化选择&#xa;标记 refine / unrefine 细胞" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="965" width="400" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="amr5" value="执行拓扑变化&#xa;refine: 分裂细胞 → 新增节点/面/细胞&#xa;unrefine: 合并细胞 → 移除节点/面/细胞" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="1025" width="400" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="amr6" value="updateMesh(mapPolyMesh) 触发&#xa;拓扑变化回调" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;fontStyle=1" parent="1" vertex="1">
+                    <mxGeometry x="250" y="1095" width="400" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="amr7_refine" value="Refine 路径 (点数增加)&#xa;• 不再把 pointMap master 标签当作已映射&#xa;• 若有 pointsFromPoints 谱系 → 先按旧点等权平均映射&#xa;• 进入 2/4/8 拓扑角点插值补全&#xa;• 有界多轮插值直到无新增映射" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="1145" width="260" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="amr7_unrefine" value="Unrefine 路径 (点数减少)&#xa;• 仅按 pointMap 同步幸存点&#xa;• 不执行新增点插值" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="1145" width="260" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase4_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#4CAF50;dashed=1;arcSize=4;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="1230" width="750" height="320" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase4_label" value="【阶段四】拓扑变化后 — 重建面-模态投影缓存" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;richText=1;fontSize=15;fontStyle=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="200" y="1235" width="550" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="rebuild1" value="buildForceProjectionCaches() 重建&#xa;首次构建: 缓存初始参考 FSI 面&#xa;(面积 + referenceFaceModeProjection_)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="1275" width="400" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="rebuild2" value="建立 当前面 → 初始参考面 映射&#xa;基于 mapPolyMesh 拓扑谱系&#xa;(faceMap / facesFromFacesMap)&#xa;计算面积权重" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="1340" width="400" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="rebuild3" value="目的: 保证 refine/unrefine 过程中&#xa;模态力计算基准始终是初始网格参考面" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;fontStyle=1" parent="1" vertex="1">
+                    <mxGeometry x="250" y="1420" width="400" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="rebuild4" value="calcModalForces() 加密协同路径&#xa;1. 计算当前面压力/剪切受力&#xa;2. 换算为当前面 traction&#xa;3. 按面积权重回分配到初始参考面&#xa;4. 用 referenceFaceModeProjection_ 做模态投影" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="1470" width="400" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase5_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF9800;dashed=1;arcSize=4;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="1550" width="750" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="phase5_label" value="【关键注意事项】" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;richText=1;fontSize=15;fontStyle=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="250" y="1555" width="400" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="note1" value="并行拓扑更新&#xa;采用全局一致的插值/同步轮次&#xa;含同一步 mixed refine+unrefine&#xa;避免 MPI collective 调用轮次不一致导致卡死" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="130" y="1590" width="220" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="note2" value="FSI 外迭代位移评估&#xa;拓扑变化导致 points 数量变化时&#xa;先判断 points.size() 是否一致&#xa;再计算 gMax(mag(points-points0))&#xa;避免尺寸不匹配触发 FPE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="370" y="1590" width="220" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="note3" value="AMR 算例重建工作流&#xa;先在独立镜像目录执行 reconstructPar&#xa;重建成功后再同步回主算例时间目录&#xa;避免半写文件导致 EOF 报错" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="610" y="1590" width="220" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="a1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="phase1_label" target="cfg1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="cfg1" target="cfg2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="cfg2" target="cfg4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;dashed=1;" parent="1" source="cfg2" target="cfg3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="cfg4" target="cfg5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a_p1p2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;" parent="1" source="cfg5" target="interp1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="interp1" target="interp2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="interp2" target="interp_edge" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="230" y="570"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="a8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="interp2" target="interp_face" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="interp2" target="interp_cell" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="620" y="570"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="a10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="interp_edge" target="interp_loop" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="230" y="630"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="a11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="interp_face" target="interp_loop" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="interp_cell" target="interp_loop" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="620" y="630"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="a_p2p3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;" parent="1" source="interp_loop" target="amr1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="amr1" target="amr2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="amr2" target="amr3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="amr3" target="amr4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="amr4" target="amr5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="amr5" target="amr6" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="amr6" target="amr7_refine" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="250" y="1145"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="a19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="amr6" target="amr7_unrefine" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="650" y="1145"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="a_p3p4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;" parent="1" source="amr7_refine" target="rebuild1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a_p3p4b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;" parent="1" source="amr7_unrefine" target="rebuild1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="rebuild1" target="rebuild2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="rebuild2" target="rebuild3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" parent="1" source="rebuild3" target="rebuild4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a_p4p5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;" parent="1" source="rebuild4" target="phase5_label" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend" value="图例:&#xa;🟢 绿色 = 配置/初始化&#xa;🔵 蓝色 = 主流程步骤&#xa;🔶 橙色菱形 = 条件判断&#xa;🟣 紫色 = 插值类型&#xa;🟡 黄色 = 循环/关键目的&#xa;🔴 红色 = 警告/过滤&#xa;⬜ 灰色虚线框 = 阶段分组" style="text;html=1;strokeColor=#CCCCCC;fillColor=#FAFAFA;align=left;verticalAlign=top;whiteSpace=wrap;richText=1;fontSize=10;spacing=4;" parent="1" vertex="1">
+                    <mxGeometry x="880" y="70" width="180" height="140" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
