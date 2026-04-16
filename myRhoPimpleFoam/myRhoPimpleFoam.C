@@ -156,6 +156,19 @@ int main(int argc, char *argv[])
         {
              dynamicMeshDict.lookup("fsiCoupling") >> fsiCoupling;
         }
+        if
+        (
+            fsiCoupling != "explicit"
+         && fsiCoupling != "partitioned"
+         && fsiCoupling != "integrated"
+         && fsiCoupling != "implicit"
+        )
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Unsupported fsiCoupling '" << fsiCoupling
+                << "'. Valid values are explicit, partitioned, integrated, "
+                << "and implicit." << exit(FatalIOError);
+        }
         const label maxFsiIter = dynamicMeshDict.lookupOrDefault<label>("maxFsiIter", 10);
         const scalar fsiTolerance = dynamicMeshDict.lookupOrDefault<scalar>("fsiTolerance", 1e-4);
 

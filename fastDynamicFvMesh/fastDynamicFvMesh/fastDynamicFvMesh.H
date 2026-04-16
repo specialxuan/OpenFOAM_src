@@ -191,7 +191,8 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Structural force file prefix (e.g., StructForce -> StructForce1.csv)
     word structuralForceFilePrefix_;
 
-    //- Geometric tolerance for mapping force-file coordinates to structure nodes
+    //- Geometric tolerance for mapping force-file coordinates to structure
+    //nodes
     scalar structuralTargetTolerance_;
 
     //- Structural mode files in mode/ directory
@@ -208,7 +209,8 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Time series (seconds) per force file
     List<scalarField> structuralForceTimes_;
 
-    //- Nodal force vectors per force file (same indexing as structuralForceTimes_)
+    //- Nodal force vectors per force file (same indexing as
+    //structuralForceTimes_)
     List<vectorField> structuralForceValues_;
 
     //- Structural contribution to modal force (before relaxation)
@@ -269,21 +271,16 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     void readLegacyParameters(const fileName& modeDir);
 
     //- Read mode files on master
-    void readModeFiles(
-        const fileName& modeDir,
-        List<point>& csvPoints,
-        List<List<vector>>& csvShapes,
-        label& nCsvNodes);
+    void readModeFiles(const fileName& modeDir, List<point>& csvPoints,
+        List<List<vector>>& csvShapes, label& nCsvNodes);
 
     //- Read structural node coordinates and mode shapes from StructNode*.csv
-    void readStructuralModeFiles(
-        const fileName& modeDir,
-        pointField& structPoints,
-        List<vectorField>& structShapes,
-        label& nStructNodes,
-        label& nStructModes);
+    void readStructuralModeFiles(const fileName& modeDir,
+        pointField& structPoints, List<vectorField>& structShapes,
+        label& nStructNodes, label& nStructModes);
 
-    //- Read structural force files, map coordinates to structure nodes, cache series
+    //- Read structural force files, map coordinates to structure nodes, cache
+    //series
     void readStructuralForceFiles(const fileName& modeDir);
 
     //- Build cached patch IDs, projection and topology-consistent face mapping
@@ -292,16 +289,14 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Synchronize mapped modal values on shared points (parallel consistency)
     void syncMappedModeShapes(boolList& mappedMask);
 
-    //- Synchronize moved point positions on shared points (parallel consistency)
+    //- Synchronize moved point positions on shared points (parallel
+    //consistency)
     void syncSharedPointPositions(pointField& pointValues) const;
 
     //- Interpolate mode shapes for currently-unknown points from known corners
-    label interpolateModeShapesFromKnown(
-        boolList& knownMask,
-        const boolList& sourceKnownMask,
-        const label cornerCount,
-        const bool distanceWeighted,
-        const word& context);
+    label interpolateModeShapesFromKnown(boolList& knownMask,
+        const boolList& sourceKnownMask, const label cornerCount,
+        const bool distanceWeighted, const word& context);
 
     //- Keep mode-shape storage consistent with current mesh topology
     void ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm);
@@ -316,41 +311,25 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     void cacheModelPointers();
 
     //- Runtime-AMR indicator at cell centers (raw field or |grad(field)|)
-    scalarField refinementIndicatorCellField
-    (
-        const scalarField& fallbackCellField
-    ) const;
+    scalarField refinementIndicatorCellField(
+        const scalarField& fallbackCellField) const;
 
     //- Runtime-AMR indicator at points (raw field or |grad(field)|)
-    scalarField refinementIndicatorPointField
-    (
-        const scalarField& fallbackPointField
-    ) const;
+    scalarField refinementIndicatorPointField(
+        const scalarField& fallbackPointField) const;
 
     //- Select refinement candidates with optional child-size floor constraints
-    virtual void selectRefineCandidates
-    (
-        const scalar lowerRefineLevel,
-        const scalar upperRefineLevel,
-        const scalarField& vFld,
-        bitSet& candidateCell
-    ) const;
+    virtual void selectRefineCandidates(const scalar lowerRefineLevel,
+        const scalar upperRefineLevel, const scalarField& vFld,
+        bitSet& candidateCell) const;
 
     //- Select refinement cells with optional child-size floor constraints
-    virtual labelList selectRefineCells
-    (
-        const label maxCells,
-        const label maxRefinement,
-        const bitSet& candidateCell
-    ) const;
+    virtual labelList selectRefineCells(const label maxCells,
+        const label maxRefinement, const bitSet& candidateCell) const;
 
     //- Select unrefine points using the configured runtime-AMR indicator
-    virtual labelList selectUnrefinePoints
-    (
-        const scalar unrefineLevel,
-        const bitSet& markedCell,
-        const scalarField& pFld
-    ) const;
+    virtual labelList selectUnrefinePoints(const scalar unrefineLevel,
+        const bitSet& markedCell, const scalarField& pFld) const;
 
     //- Calculate modal forces from fluid pressure and shear stress
     void calcModalForces();
@@ -359,10 +338,8 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     void calcStructuralModalForces();
 
     //- Linear interpolation of force time-series
-    vector interpolateStructuralForce(
-        const scalarField& times,
-        const vectorField& values,
-        const scalar t) const;
+    vector interpolateStructuralForce(const scalarField& times,
+        const vectorField& values, const scalar t) const;
 
     //- Return patch density used for shear calculations
     tmp<scalarField> patchDensity(const label patchi, scalar defaultRho) const;
