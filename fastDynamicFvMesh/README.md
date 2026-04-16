@@ -41,9 +41,19 @@ At each mesh `update()`:
   - each force file provides target node coordinates and force time-series rows `(time, Fx, Fy, Fz)`,
   - maps listed coordinates to structural nodes using `structuralTargetTolerance`,
   - linearly interpolates force vectors in time and projects them to modal forces.
+- Input parsing and validation:
+  - CSV-like input readers accept comma or whitespace separated numeric fields,
+  - empty lines and `#` comment lines are ignored for structural force files,
+  - parse failures report the input file path and line number where available,
+  - dictionary validation now checks `theta >= 1`, positive `mappingTolerance`
+    and `maxDispChange`, positive `modalMass` entries, and non-negative
+    `modalDamp` entries.
 - Optional refinement-aware FSI coupling:
   - enable by `meshRefinementSupport true`,
   - if `dynamicRefineFvMeshCoeffs` exists in `constant/dynamicMeshDict`, runtime AMR is executed in `fastDynamicFvMesh::update()` before modal-force/mesh-motion steps (same keys as OpenFOAM `dynamicRefineFvMesh`),
+  - if `dynamicRefineFvMeshCoeffs` exists while `meshRefinementSupport false`,
+    a warning is printed because topology changes can invalidate modal-shape and
+    FSI face caches,
   - optional gradient-based AMR indicator:
     - `useGradIndicator true` switches AMR criteria from raw `field` values to `|grad(gradIndicatorField)|`,
     - `gradIndicatorField` defaults to `alpha.water`,
@@ -170,6 +180,10 @@ Optional:
 - `FluidPara.csv` (legacy initial modal velocities; zero if missing)
 - `StructNodeCoor.csv`, `StructNodeDisp1.csv ... StructNodeDispN.csv` (required when `structuralForceEnabled true`)
 - `StructForce1.csv ... StructForceN.csv` (required when `structuralForceEnabled true`; `N = nStructuralForces`)
+
+CSV-style inputs accept commas or whitespace as separators. Structural force
+files may contain blank lines and `#` comments. Fatal parse errors include the
+file path and line number when available.
 
 ## Outputs
 

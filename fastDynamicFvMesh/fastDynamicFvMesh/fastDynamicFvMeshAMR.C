@@ -41,7 +41,6 @@ scalar fastDynamicFvMesh::cellMinEdgeLength(const label celli) const
     return minLen;
 }
 
-
 bool fastDynamicFvMesh::cellPassesRefinementSizeFloor(const label celli) const
 {
     if (refinementMinCellVolume_ <= 0 && refinementMinEdgeLength_ <= 0)
@@ -49,7 +48,7 @@ bool fastDynamicFvMesh::cellPassesRefinementSizeFloor(const label celli) const
         return true;
     }
 
-    const scalar childVolume = this->V()[celli]/8.0;
+    const scalar childVolume = this->V()[celli] / 8.0;
     if (refinementMinCellVolume_ > 0 && childVolume < refinementMinCellVolume_)
     {
         return false;
@@ -63,7 +62,7 @@ bool fastDynamicFvMesh::cellPassesRefinementSizeFloor(const label celli) const
             return false;
         }
 
-        if (0.5*minParentEdge < refinementMinEdgeLength_)
+        if (0.5 * minParentEdge < refinementMinEdgeLength_)
         {
             return false;
         }
@@ -72,11 +71,8 @@ bool fastDynamicFvMesh::cellPassesRefinementSizeFloor(const label celli) const
     return true;
 }
 
-
-scalarField fastDynamicFvMesh::refinementIndicatorCellField
-(
-    const scalarField& fallbackCellField
-) const
+scalarField fastDynamicFvMesh::refinementIndicatorCellField(
+    const scalarField& fallbackCellField) const
 {
     if (!refinementUseGradIndicator_)
     {
@@ -88,8 +84,7 @@ scalarField fastDynamicFvMesh::refinementIndicatorCellField
         FatalErrorInFunction
             << "Runtime AMR gradient indicator is enabled, but source field '"
             << refinementGradIndicatorField_
-            << "' is not available in the objectRegistry."
-            << exit(FatalError);
+            << "' is not available in the objectRegistry." << exit(FatalError);
     }
 
     const volScalarField& sourceField =
@@ -98,11 +93,8 @@ scalarField fastDynamicFvMesh::refinementIndicatorCellField
     return tIndicator().primitiveField();
 }
 
-
-scalarField fastDynamicFvMesh::refinementIndicatorPointField
-(
-    const scalarField& fallbackPointField
-) const
+scalarField fastDynamicFvMesh::refinementIndicatorPointField(
+    const scalarField& fallbackPointField) const
 {
     if (!refinementUseGradIndicator_)
     {
@@ -114,8 +106,7 @@ scalarField fastDynamicFvMesh::refinementIndicatorPointField
         FatalErrorInFunction
             << "Runtime AMR gradient indicator is enabled, but source field '"
             << refinementGradIndicatorField_
-            << "' is not available in the objectRegistry."
-            << exit(FatalError);
+            << "' is not available in the objectRegistry." << exit(FatalError);
     }
 
     const volScalarField& sourceField =
@@ -124,24 +115,14 @@ scalarField fastDynamicFvMesh::refinementIndicatorPointField
     return maxCellField(tIndicator());
 }
 
-
-void fastDynamicFvMesh::selectRefineCandidates
-(
-    const scalar lowerRefineLevel,
-    const scalar upperRefineLevel,
-    const scalarField& vFld,
-    bitSet& candidateCell
-) const
+void fastDynamicFvMesh::selectRefineCandidates(const scalar lowerRefineLevel,
+    const scalar upperRefineLevel, const scalarField& vFld,
+    bitSet& candidateCell) const
 {
     const scalarField indicatorCell = refinementIndicatorCellField(vFld);
 
-    dynamicRefineFvMesh::selectRefineCandidates
-    (
-        lowerRefineLevel,
-        upperRefineLevel,
-        indicatorCell,
-        candidateCell
-    );
+    dynamicRefineFvMesh::selectRefineCandidates(
+        lowerRefineLevel, upperRefineLevel, indicatorCell, candidateCell);
 
     if (refinementMinCellVolume_ <= 0 && refinementMinEdgeLength_ <= 0)
     {
@@ -157,22 +138,13 @@ void fastDynamicFvMesh::selectRefineCandidates
     }
 }
 
-
-labelList fastDynamicFvMesh::selectRefineCells
-(
-    const label maxCells,
-    const label maxRefinement,
-    const bitSet& candidateCell
-) const
+labelList fastDynamicFvMesh::selectRefineCells(const label maxCells,
+    const label maxRefinement, const bitSet& candidateCell) const
 {
     if (refinementMinCellVolume_ <= 0 && refinementMinEdgeLength_ <= 0)
     {
-        return dynamicRefineFvMesh::selectRefineCells
-        (
-            maxCells,
-            maxRefinement,
-            candidateCell
-        );
+        return dynamicRefineFvMesh::selectRefineCells(
+            maxCells, maxRefinement, candidateCell);
     }
 
     bitSet sizeFloorFiltered(candidateCell);
@@ -192,44 +164,30 @@ labelList fastDynamicFvMesh::selectRefineCells
     const label totalCandidates = returnReduce(nCandidates, sumOp<label>());
     if (Pstream::master() && totalRejected > 0)
     {
-        Info<< "Refinement size-floor filter rejected " << totalRejected
-            << " candidate cells (refinementMinCellVolume="
-            << refinementMinCellVolume_
-            << ", refinementMinEdgeLength=" << refinementMinEdgeLength_
-            << ")." << endl;
+        Info << "Refinement size-floor filter rejected " << totalRejected
+             << " candidate cells (refinementMinCellVolume="
+             << refinementMinCellVolume_
+             << ", refinementMinEdgeLength=" << refinementMinEdgeLength_ << ")."
+             << endl;
     }
     else if (Pstream::master() && totalCandidates > 0)
     {
-        Info<< "Refinement size-floor filter accepted all "
-            << totalCandidates << " candidate cells." << endl;
+        Info << "Refinement size-floor filter accepted all " << totalCandidates
+             << " candidate cells." << endl;
     }
 
-    return dynamicRefineFvMesh::selectRefineCells
-    (
-        maxCells,
-        maxRefinement,
-        sizeFloorFiltered
-    );
+    return dynamicRefineFvMesh::selectRefineCells(
+        maxCells, maxRefinement, sizeFloorFiltered);
 }
 
-
-labelList fastDynamicFvMesh::selectUnrefinePoints
-(
-    const scalar unrefineLevel,
-    const bitSet& markedCell,
-    const scalarField& pFld
-) const
+labelList fastDynamicFvMesh::selectUnrefinePoints(const scalar unrefineLevel,
+    const bitSet& markedCell, const scalarField& pFld) const
 {
     const scalarField indicatorPoint = refinementIndicatorPointField(pFld);
 
-    return dynamicRefineFvMesh::selectUnrefinePoints
-    (
-        unrefineLevel,
-        markedCell,
-        indicatorPoint
-    );
+    return dynamicRefineFvMesh::selectUnrefinePoints(
+        unrefineLevel, markedCell, indicatorPoint);
 }
-
 
 void fastDynamicFvMesh::updateMesh(const mapPolyMesh& mpm)
 {
@@ -245,4 +203,3 @@ void fastDynamicFvMesh::updateMesh(const mapPolyMesh& mpm)
 }
 
 } // namespace Foam
-

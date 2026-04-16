@@ -122,13 +122,12 @@ void fastDynamicFvMesh::writeDiagnostics()
     for (label i = 0; i < nMode_; ++i)
     {
         diagFile << "," << modeState_[i].x() << "," << modeState_[i].y() << ","
-                 << modeState_[i].z() << "," << appliedModeDisp_[i]
-                 << "," << structuralScale;
+                 << modeState_[i].z() << "," << appliedModeDisp_[i] << ","
+                 << structuralScale;
     }
 
     diagFile << "\n";
 }
-
 
 void fastDynamicFvMesh::writeTimingReport()
 {
@@ -145,22 +144,24 @@ void fastDynamicFvMesh::writeTimingReport()
     const scalar deltaMesh = totalMesh - timingMeshCpuAtLastWrite_;
     const scalar deltaAll = deltaFluid + deltaMesh;
 
-    const scalar totalFluidPct = totalAll > VSMALL ? 100.0*totalFluid/totalAll : 0.0;
-    const scalar totalMeshPct = totalAll > VSMALL ? 100.0*totalMesh/totalAll : 0.0;
-    const scalar deltaFluidPct = deltaAll > VSMALL ? 100.0*deltaFluid/deltaAll : 0.0;
-    const scalar deltaMeshPct = deltaAll > VSMALL ? 100.0*deltaMesh/deltaAll : 0.0;
+    const scalar totalFluidPct =
+        totalAll > VSMALL ? 100.0 * totalFluid / totalAll : 0.0;
+    const scalar totalMeshPct =
+        totalAll > VSMALL ? 100.0 * totalMesh / totalAll : 0.0;
+    const scalar deltaFluidPct =
+        deltaAll > VSMALL ? 100.0 * deltaFluid / deltaAll : 0.0;
+    const scalar deltaMeshPct =
+        deltaAll > VSMALL ? 100.0 * deltaMesh / deltaAll : 0.0;
 
     Info << "FSI timing [CPU s] at t=" << this->time().timeName()
          << "  step{fluid=" << deltaFluid << " (" << deltaFluidPct << "%)"
          << ", mesh=" << deltaMesh << " (" << deltaMeshPct << "%)"
-         << ", total=" << deltaAll << "}"
-         << "  cumulative{fluid=" << totalFluid << " (" << totalFluidPct << "%)"
-         << ", mesh=" << totalMesh << " (" << totalMeshPct << "%)"
-         << ", total=" << totalAll << "}" << endl;
+         << ", total=" << deltaAll << "}" << "  cumulative{fluid=" << totalFluid
+         << " (" << totalFluidPct << "%)" << ", mesh=" << totalMesh << " ("
+         << totalMeshPct << "%)" << ", total=" << totalAll << "}" << endl;
 
     timingFluidCpuAtLastWrite_ = totalFluid;
     timingMeshCpuAtLastWrite_ = totalMesh;
 }
 
 } // namespace Foam
-

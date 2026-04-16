@@ -1,6 +1,10 @@
 */Make/linux64GccDPInt32Opt
 */.cache/
 */lnInclude/
+__pycache__/
 mcp.json
 *.svg
+*.cvg
+*.sta
 .venv_fdm/
+.codex

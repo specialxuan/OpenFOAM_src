@@ -36,6 +36,83 @@ Description
 namespace Foam
 {
 
+namespace
+{
+
+void normalizeCsvLine(string& line)
+{
+    std::replace(line.begin(), line.end(), ',', ' ');
+    std::replace(line.begin(), line.end(), '\t', ' ');
+}
+
+bool containsNumericToken(const string& line)
+{
+    for (const char c : line)
+    {
+        if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.')
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool isIgnorableCsvLine(const string& line)
+{
+    for (const char c : line)
+    {
+        if (c == ' ' || c == '\t' || c == '\r')
+        {
+            continue;
+        }
+
+        return c == '#';
+    }
+
+    return true;
+}
+
+bool readNextCsvLine(std::ifstream& is, string& line, label& lineNo)
+{
+    if (std::getline(is, line))
+    {
+        ++lineNo;
+        return true;
+    }
+
+    return false;
+}
+
+bool readNextCsvDataLine(std::ifstream& is, string& line, label& lineNo)
+{
+    while (readNextCsvLine(is, line, lineNo))
+    {
+        if (!isIgnorableCsvLine(line) && containsNumericToken(line))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+template<class... Values>
+bool parseCsvValues(const string& input, Values&... values)
+{
+    string line(input);
+    normalizeCsvLine(line);
+    std::stringstream ss(line);
+
+    bool ok = true;
+    using expander = int[];
+    (void)expander{0, ((ok = ok && bool(ss >> values)), 0)...};
+
+    return ok;
+}
+
+} // End anonymous namespace
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 defineTypeNameAndDebug(fastDynamicFvMesh, 0);
@@ -55,96 +132,60 @@ addToRunTimeSelectionTable(dynamicFvMesh, fastDynamicFvMesh, IOobject);
 //    between CSV node coordinates and local mesh points. This mapping is
 //    intentionally brute-force for correctness.
 fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
-    : dynamicRefineFvMesh(io, false),
-      nMode_(0),
-      // Initialize restart containers; dedicated restart I/O is handled explicitly
-      // in readRestartStateStore()/writeRestartStateStore().
+    : dynamicRefineFvMesh(io, false), nMode_(0),
+      // Initialize restart containers; dedicated restart I/O is handled
+      // explicitly in readRestartStateStore()/writeRestartStateStore().
       modeForce_(
-          IOobject("modeForce", io.time().constant()/fileName("fsiRestart"), *this,
-                   IOobject::NO_READ, IOobject::NO_WRITE)),
+          IOobject("modeForce", io.time().constant() / fileName("fsiRestart"),
+              *this, IOobject::NO_READ, IOobject::NO_WRITE)),
       modeState_(
-          IOobject("modeState", io.time().constant()/fileName("fsiRestart"), *this,
-                   IOobject::NO_READ, IOobject::NO_WRITE)),
-      initVelocity_(0),
-      appliedModeDisp_(
-          IOobject("appliedModeDisp", io.time().constant()/fileName("fsiRestart"), *this,
-                   IOobject::NO_READ, IOobject::NO_WRITE)),
-      appliedModeForce_(
-          IOobject("appliedModeForce", io.time().constant()/fileName("fsiRestart"), *this,
-                   IOobject::NO_READ, IOobject::NO_WRITE)),
-      fsiResidual_(1.0),
-      theta_(1.4), // Default Wilson-Theta
-      mappingTolerance_(4e-6),
-      couplingRelaxation_(1.0),
-      pressureFieldName_("p"),
-      rhoRef_(-1.0),
-      pRef_(0.0),
-      maxDispChange_(1.0),
-      startupStepCount_(0),
-      lastUpdateTimeIndex_(-1),
-      updateCount_(0),
-      writeDiagnosticsEnabled_(false),
-      trackTimingEnabled_(false),
-      timingLastUpdateCpuTime_(0.0),
-      timingHasLastUpdate_(false),
-      timingFluidCpuAccum_(0.0),
-      timingMeshCpuAccum_(0.0),
-      timingFluidCpuAtLastWrite_(0.0),
-      timingMeshCpuAtLastWrite_(0.0),
-      lastGlobalWriteTimeIndex_(-1),
-      fsiPatchIDs_(0),
-      fsiPolyPatches_(0),
-      faceModeProjection_(0),
-      pressureScaleCache_(0),
-      pressureScaleInitialized_(0),
-      diagnosticsHeaderWritten_(false),
-      modelPointersCached_(false),
-      icoTurbPtr_(nullptr),
-      cmpTurbPtr_(nullptr),
-      fluidThermoPtr_(nullptr),
-      laminarTransportPtr_(nullptr),
-      structuralForceEnabled_(false),
-      nStructuralForces_(0),
+          IOobject("modeState", io.time().constant() / fileName("fsiRestart"),
+              *this, IOobject::NO_READ, IOobject::NO_WRITE)),
+      initVelocity_(0), appliedModeDisp_(IOobject("appliedModeDisp",
+                            io.time().constant() / fileName("fsiRestart"),
+                            *this, IOobject::NO_READ, IOobject::NO_WRITE)),
+      appliedModeForce_(IOobject("appliedModeForce",
+          io.time().constant() / fileName("fsiRestart"), *this,
+          IOobject::NO_READ, IOobject::NO_WRITE)),
+      fsiResidual_(1.0), theta_(1.4), // Default Wilson-Theta
+      mappingTolerance_(4e-6), couplingRelaxation_(1.0),
+      pressureFieldName_("p"), rhoRef_(-1.0), pRef_(0.0), maxDispChange_(1.0),
+      startupStepCount_(0), lastUpdateTimeIndex_(-1), updateCount_(0),
+      writeDiagnosticsEnabled_(false), trackTimingEnabled_(false),
+      timingLastUpdateCpuTime_(0.0), timingHasLastUpdate_(false),
+      timingFluidCpuAccum_(0.0), timingMeshCpuAccum_(0.0),
+      timingFluidCpuAtLastWrite_(0.0), timingMeshCpuAtLastWrite_(0.0),
+      lastGlobalWriteTimeIndex_(-1), fsiPatchIDs_(0), fsiPolyPatches_(0),
+      faceModeProjection_(0), pressureScaleCache_(0),
+      pressureScaleInitialized_(0), diagnosticsHeaderWritten_(false),
+      modelPointersCached_(false), icoTurbPtr_(nullptr), cmpTurbPtr_(nullptr),
+      fluidThermoPtr_(nullptr), laminarTransportPtr_(nullptr),
+      structuralForceEnabled_(false), nStructuralForces_(0),
       structuralForceFilePrefix_("StructForce"),
       structuralTargetTolerance_(1e-8),
       structNodeCoorFile_("StructNodeCoor.csv"),
-      structNodeDispPrefix_("StructNodeDisp"),
-      structNodeCoords_(0),
-      structModeShapes_(0),
-      structuralForceNodeIDs_(0),
-      structuralForceTimes_(0),
-      structuralForceValues_(0),
-      structuralModeForce_(0),
-      structuralForceSignal_(0.0),
-      meshRefinementSupport_(false),
-      runtimeRefinementEnabled_(false),
-      refinementInterpTolerance_(1e-8),
-      refinementMinCellVolume_(0.0),
-      refinementMinEdgeLength_(0.0),
-      refinementUseGradIndicator_(false),
-      refinementGradIndicatorField_("alpha.water"),
-      referenceFsiBuilt_(false),
-      referenceFaceModeProjection_(0),
-      fsiFaceToReferenceFaces_(0),
-      fsiFaceToReferenceWeights_(0),
-      referenceFsiFaceAreas_(0)
+      structNodeDispPrefix_("StructNodeDisp"), structNodeCoords_(0),
+      structModeShapes_(0), structuralForceNodeIDs_(0),
+      structuralForceTimes_(0), structuralForceValues_(0),
+      structuralModeForce_(0), structuralForceSignal_(0.0),
+      meshRefinementSupport_(false), runtimeRefinementEnabled_(false),
+      refinementInterpTolerance_(1e-8), refinementMinCellVolume_(0.0),
+      refinementMinEdgeLength_(0.0), refinementUseGradIndicator_(false),
+      refinementGradIndicatorField_("alpha.water"), referenceFsiBuilt_(false),
+      referenceFaceModeProjection_(0), fsiFaceToReferenceFaces_(0),
+      fsiFaceToReferenceWeights_(0), referenceFsiFaceAreas_(0)
 {
     init(true);
 }
 
-
 bool fastDynamicFvMesh::init(const bool doInit)
 {
     IOdictionary dynamicMeshDict(
-        IOobject(
-            "dynamicMeshDict",
-            this->time().constant(),
-            *this,
-            IOobject::MUST_READ,
-            IOobject::NO_WRITE,
-            IOobject::NO_REGISTER));
+        IOobject("dynamicMeshDict", this->time().constant(), *this,
+            IOobject::MUST_READ, IOobject::NO_WRITE, IOobject::NO_REGISTER));
 
-    runtimeRefinementEnabled_ = dynamicMeshDict.found("dynamicRefineFvMeshCoeffs");
+    runtimeRefinementEnabled_ =
+        dynamicMeshDict.found("dynamicRefineFvMeshCoeffs");
 
     if (runtimeRefinementEnabled_)
     {
@@ -163,8 +204,8 @@ bool fastDynamicFvMesh::init(const bool doInit)
 
     if (stateRead && modeState_.size() == nMode_)
     {
-        Info << "Restarting fastDynamicFvMesh with " << nMode_ << " modes from time "
-             << this->time().timeName() << endl;
+        Info << "Restarting fastDynamicFvMesh with " << nMode_
+             << " modes from time " << this->time().timeName() << endl;
 
         startupStepCount_ = 2;
 
@@ -175,7 +216,9 @@ bool fastDynamicFvMesh::init(const bool doInit)
 
         if (appliedModeDisp_.size() != nMode_)
         {
-            Info << "  appliedModeDisp not read or wrong size; initializing from modeState displacement." << endl;
+            Info << "  appliedModeDisp not read or wrong size; initializing "
+                    "from modeState displacement."
+                 << endl;
             appliedModeDisp_.setSize(nMode_);
             for (label i = 0; i < nMode_; ++i)
             {
@@ -185,7 +228,8 @@ bool fastDynamicFvMesh::init(const bool doInit)
 
         if (appliedModeForce_.size() != nMode_)
         {
-            Info << "  appliedModeForce not read; initializing from modeForce." << endl;
+            Info << "  appliedModeForce not read; initializing from modeForce."
+                 << endl;
             if (modeForce_.size() == nMode_)
             {
                 appliedModeForce_ = modeForce_;
@@ -199,9 +243,12 @@ bool fastDynamicFvMesh::init(const bool doInit)
         modeState0_ = modeState_;
         modeForce0_ = modeForce_;
 
-        if (nMode_ > 0 && mag(appliedModeForce_[0]) < VSMALL && mag(modeForce0_[0]) > VSMALL)
+        if (nMode_ > 0 && mag(appliedModeForce_[0]) < VSMALL &&
+            mag(modeForce0_[0]) > VSMALL)
         {
-            Info << "  Initializing appliedModeForce from modeForce0 to avoid relaxation shock." << endl;
+            Info << "  Initializing appliedModeForce from modeForce0 to avoid "
+                    "relaxation shock."
+                 << endl;
             appliedModeForce_ = modeForce0_;
         }
     }
@@ -209,10 +256,9 @@ bool fastDynamicFvMesh::init(const bool doInit)
     {
         if (restartStateRead)
         {
-            WarningInFunction
-                << "Read modeState size " << modeState_.size()
-                << " does not match nMode " << nMode_
-                << ". Resetting state." << endl;
+            WarningInFunction << "Read modeState size " << modeState_.size()
+                              << " does not match nMode " << nMode_
+                              << ". Resetting state." << endl;
         }
 
         modeForce_.setSize(nMode_, 0.0);
@@ -226,12 +272,10 @@ bool fastDynamicFvMesh::init(const bool doInit)
     return true;
 }
 
-
 fileName fastDynamicFvMesh::restartStateInstance() const
 {
-    return this->time().constant()/fileName("fsiRestart");
+    return this->time().constant() / fileName("fsiRestart");
 }
-
 
 bool fastDynamicFvMesh::readRestartStateStore()
 {
@@ -246,17 +290,10 @@ bool fastDynamicFvMesh::readRestartStateStore()
     const fileName restartInstance = restartStateInstance();
     bool loadedAny = false;
 
-    auto readScalarFieldIfPresent = [&](const word& name, IOField<scalar>& target) -> bool
-    {
-        IOobject io
-        (
-            name,
-            restartInstance,
-            *this,
-            IOobject::READ_IF_PRESENT,
-            IOobject::NO_WRITE,
-            false
-        );
+    auto readScalarFieldIfPresent = [&](const word& name,
+                                        IOField<scalar>& target) -> bool {
+        IOobject io(name, restartInstance, *this, IOobject::READ_IF_PRESENT,
+            IOobject::NO_WRITE, false);
 
         if (!isFile(io.objectPath()))
         {
@@ -268,17 +305,10 @@ bool fastDynamicFvMesh::readRestartStateStore()
         return true;
     };
 
-    auto readVectorFieldIfPresent = [&](const word& name, IOField<vector>& target) -> bool
-    {
-        IOobject io
-        (
-            name,
-            restartInstance,
-            *this,
-            IOobject::READ_IF_PRESENT,
-            IOobject::NO_WRITE,
-            false
-        );
+    auto readVectorFieldIfPresent = [&](const word& name,
+                                        IOField<vector>& target) -> bool {
+        IOobject io(name, restartInstance, *this, IOobject::READ_IF_PRESENT,
+            IOobject::NO_WRITE, false);
 
         if (!isFile(io.objectPath()))
         {
@@ -292,24 +322,20 @@ bool fastDynamicFvMesh::readRestartStateStore()
 
     loadedAny = readScalarFieldIfPresent("modeForce", modeForce_) || loadedAny;
     loadedAny = readVectorFieldIfPresent("modeState", modeState_) || loadedAny;
-    loadedAny = readScalarFieldIfPresent("appliedModeDisp", appliedModeDisp_) || loadedAny;
-    loadedAny = readScalarFieldIfPresent("appliedModeForce", appliedModeForce_) || loadedAny;
+    loadedAny = readScalarFieldIfPresent("appliedModeDisp", appliedModeDisp_) ||
+        loadedAny;
+    loadedAny =
+        readScalarFieldIfPresent("appliedModeForce", appliedModeForce_) ||
+        loadedAny;
 
     if (!loadedAny)
     {
         const fileName legacyInstance = this->time().timeName();
 
-        auto readLegacyScalar = [&](const word& name, IOField<scalar>& target) -> bool
-        {
-            IOobject io
-            (
-                name,
-                legacyInstance,
-                *this,
-                IOobject::READ_IF_PRESENT,
-                IOobject::NO_WRITE,
-                false
-            );
+        auto readLegacyScalar = [&](const word& name,
+                                    IOField<scalar>& target) -> bool {
+            IOobject io(name, legacyInstance, *this, IOobject::READ_IF_PRESENT,
+                IOobject::NO_WRITE, false);
 
             if (!isFile(io.objectPath()))
             {
@@ -321,17 +347,10 @@ bool fastDynamicFvMesh::readRestartStateStore()
             return true;
         };
 
-        auto readLegacyVector = [&](const word& name, IOField<vector>& target) -> bool
-        {
-            IOobject io
-            (
-                name,
-                legacyInstance,
-                *this,
-                IOobject::READ_IF_PRESENT,
-                IOobject::NO_WRITE,
-                false
-            );
+        auto readLegacyVector = [&](const word& name,
+                                    IOField<vector>& target) -> bool {
+            IOobject io(name, legacyInstance, *this, IOobject::READ_IF_PRESENT,
+                IOobject::NO_WRITE, false);
 
             if (!isFile(io.objectPath()))
             {
@@ -345,8 +364,10 @@ bool fastDynamicFvMesh::readRestartStateStore()
 
         loadedAny = readLegacyScalar("modeForce", modeForce_) || loadedAny;
         loadedAny = readLegacyVector("modeState", modeState_) || loadedAny;
-        loadedAny = readLegacyScalar("appliedModeDisp", appliedModeDisp_) || loadedAny;
-        loadedAny = readLegacyScalar("appliedModeForce", appliedModeForce_) || loadedAny;
+        loadedAny =
+            readLegacyScalar("appliedModeDisp", appliedModeDisp_) || loadedAny;
+        loadedAny = readLegacyScalar("appliedModeForce", appliedModeForce_) ||
+            loadedAny;
 
         if (loadedAny && Pstream::master())
         {
@@ -358,23 +379,36 @@ bool fastDynamicFvMesh::readRestartStateStore()
     return loadedAny;
 }
 
-
 void fastDynamicFvMesh::writeRestartStateStore() const
 {
-    const fileName restartDir = this->time().globalPath()/restartStateInstance();
+    const fileName restartDir =
+        this->time().globalPath() / restartStateInstance();
     mkDir(restartDir);
 
-    auto writeGlobalField = [&](const word& name, const auto& field, const word& className)
-    {
-        OFstream os(restartDir/name);
+    auto writeGlobalField = [&](const word& name, const auto& field,
+                                const word& className) {
+        OFstream os(restartDir / name);
 
-        os << "/*--------------------------------*- C++ -*----------------------------------*\\" << nl;
-        os << "| =========                 |                                                 |" << nl;
-        os << "| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |" << nl;
-        os << "|  \\\\    /   O peration     | Version:  " << OPENFOAM << "                                  |" << nl;
-        os << "|   \\\\  /    A nd           | Website:  www.openfoam.com                      |" << nl;
-        os << "|    \\\\/     M anipulation  |                                                 |" << nl;
-        os << "\\*---------------------------------------------------------------------------*/" << nl;
+        os << "/*--------------------------------*- C++ "
+              "-*----------------------------------*\\"
+           << nl;
+        os << "| =========                 |                                   "
+              "              |"
+           << nl;
+        os << "| \\\\      /  F ield         | OpenFOAM: The Open Source CFD "
+              "Toolbox           |"
+           << nl;
+        os << "|  \\\\    /   O peration     | Version:  " << OPENFOAM
+           << "                                  |" << nl;
+        os << "|   \\\\  /    A nd           | Website:  www.openfoam.com      "
+              "                |"
+           << nl;
+        os << "|    \\\\/     M anipulation  |                                 "
+              "                |"
+           << nl;
+        os << "\\*-------------------------------------------------------------"
+              "--------------*/"
+           << nl;
         os << "FoamFile" << nl;
         os << "{" << nl;
         os << "    version     2.0;" << nl;
@@ -383,11 +417,17 @@ void fastDynamicFvMesh::writeRestartStateStore() const
         os << "    location    \"" << restartStateInstance() << "\";" << nl;
         os << "    object      " << name << ";" << nl;
         os << "}" << nl;
-        os << "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //" << nl << nl;
+        os << "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * "
+              "* * * * * * * //"
+           << nl << nl;
 
         os << field;
 
-        os << nl << "// ************************************************************************* //" << nl;
+        os << nl
+           << "// "
+              "****************************************************************"
+              "********* //"
+           << nl;
     };
 
     writeGlobalField("modeState", modeState_, "vectorField");
@@ -465,15 +505,18 @@ void fastDynamicFvMesh::readControls()
     fdmDict.readIfPresent("trackTiming", trackTimingEnabled_);
     fdmDict.readIfPresent("structuralForceEnabled", structuralForceEnabled_);
     fdmDict.readIfPresent("nStructuralForces", nStructuralForces_);
-    fdmDict.readIfPresent("structuralForceFilePrefix", structuralForceFilePrefix_);
-    fdmDict.readIfPresent("structuralTargetTolerance", structuralTargetTolerance_);
+    fdmDict.readIfPresent(
+        "structuralForceFilePrefix", structuralForceFilePrefix_);
+    fdmDict.readIfPresent(
+        "structuralTargetTolerance", structuralTargetTolerance_);
     fdmDict.readIfPresent("structNodeCoorFile", structNodeCoorFile_);
     fdmDict.readIfPresent("structNodeDispPrefix", structNodeDispPrefix_);
     fdmDict.readIfPresent("meshRefinementSupport", meshRefinementSupport_);
-    fdmDict.readIfPresent("refinementInterpTolerance", refinementInterpTolerance_);
+    fdmDict.readIfPresent(
+        "refinementInterpTolerance", refinementInterpTolerance_);
     scalar refinementFaceMapTolerance = 0.0;
-    const bool foundRefinementFaceMapTolerance =
-        fdmDict.readIfPresent("refinementFaceMapTolerance", refinementFaceMapTolerance);
+    const bool foundRefinementFaceMapTolerance = fdmDict.readIfPresent(
+        "refinementFaceMapTolerance", refinementFaceMapTolerance);
     fdmDict.readIfPresent("refinementMinCellVolume", refinementMinCellVolume_);
     fdmDict.readIfPresent("refinementMinEdgeLength", refinementMinEdgeLength_);
 
@@ -481,16 +524,20 @@ void fastDynamicFvMesh::readControls()
     {
         const dictionary& refineDict =
             dynamicMeshDict.subDict("dynamicRefineFvMeshCoeffs");
-        refineDict.readIfPresent
-        (
-            "useGradIndicator",
-            refinementUseGradIndicator_
-        );
-        refineDict.readIfPresent
-        (
-            "gradIndicatorField",
-            refinementGradIndicatorField_
-        );
+        refineDict.readIfPresent(
+            "useGradIndicator", refinementUseGradIndicator_);
+        refineDict.readIfPresent(
+            "gradIndicatorField", refinementGradIndicatorField_);
+    }
+
+    if (runtimeRefinementEnabled_ && !meshRefinementSupport_ && Pstream::master())
+    {
+        WarningInFunction
+            << "dynamicRefineFvMeshCoeffs is present, but "
+            << "'meshRefinementSupport' is false in " << typeName
+            << "Coeffs. Runtime topology changes can invalidate modal "
+            << "shape and FSI face caches; set meshRefinementSupport true "
+            << "for AMR-coupled fastDynamicFvMesh cases." << endl;
     }
 
     if (fdmDict.found("modalMass"))
@@ -509,6 +556,52 @@ void fastDynamicFvMesh::readControls()
             << "Entry 'couplingRelaxation' must be in the range (0, 1] in "
             << "sub-dictionary '" << typeName << "Coeffs' of "
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (theta_ < 1)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'theta' must be >= 1 for Wilson-Theta integration in "
+            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (mappingTolerance_ <= 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'mappingTolerance' must be positive in sub-dictionary '"
+            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << exit(FatalIOError);
+    }
+
+    if (maxDispChange_ <= 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'maxDispChange' must be positive in sub-dictionary '"
+            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << exit(FatalIOError);
+    }
+
+    forAll(modeMass_, modeI)
+    {
+        if (modeMass_[modeI] <= 0)
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'modalMass' must contain positive values; index "
+                << modeI << " is " << modeMass_[modeI] << " in "
+                << dynamicMeshDict.objectPath() << exit(FatalIOError);
+        }
+    }
+
+    forAll(modeDamp_, modeI)
+    {
+        if (modeDamp_[modeI] < 0)
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'modalDamp' must contain non-negative values; index "
+                << modeI << " is " << modeDamp_[modeI] << " in "
+                << dynamicMeshDict.objectPath() << exit(FatalIOError);
+        }
     }
 
     if (foundRhoRef && rhoRef_ <= 0)
@@ -574,10 +667,12 @@ void fastDynamicFvMesh::readControls()
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
     }
 
-    if (Pstream::master() && runtimeRefinementEnabled_ && refinementUseGradIndicator_)
+    if (Pstream::master() && runtimeRefinementEnabled_ &&
+        refinementUseGradIndicator_)
     {
-        Info<< "Runtime AMR indicator uses |grad(" << refinementGradIndicatorField_
-            << ")| with dynamicRefineFvMesh thresholds." << endl;
+        Info << "Runtime AMR indicator uses |grad("
+             << refinementGradIndicatorField_
+             << ")| with dynamicRefineFvMesh thresholds." << endl;
     }
 
     if (structuralForceEnabled_)
@@ -598,7 +693,21 @@ void fastDynamicFvMesh::readControls()
                 << dynamicMeshDict.objectPath() << exit(FatalIOError);
         }
     }
-
+    else if
+    (
+        Pstream::master()
+     && (
+            fdmDict.found("nStructuralForces")
+         || fdmDict.found("structuralForceFilePrefix")
+         || fdmDict.found("structuralTargetTolerance")
+        )
+    )
+    {
+        WarningInFunction
+            << "Structural-force entries are present, but "
+            << "'structuralForceEnabled' is false; structural force files "
+            << "will not be read." << endl;
+    }
 }
 
 // readLegacyParameters(modeDir)
@@ -629,18 +738,21 @@ void fastDynamicFvMesh::readLegacyParameters(const fileName& modeDir)
         return;
     }
 
+    label lineNo = 0;
+
     auto readCsvScalar = [&](scalar& value) -> bool {
         string line;
 
-        while (std::getline(paraFile, line))
+        while (readNextCsvDataLine(paraFile, line, lineNo))
         {
-            std::replace(line.begin(), line.end(), ',', ' ');
-            std::stringstream ss(line);
-
-            if (ss >> value)
+            if (parseCsvValues(line, value))
             {
                 return true;
             }
+
+            WarningInFunction
+                << "Skipping malformed scalar row " << lineNo << " in "
+                << paraPath << ": " << line << endl;
         }
 
         return false;
@@ -701,11 +813,8 @@ void fastDynamicFvMesh::readLegacyParameters(const fileName& modeDir)
 //  over asymptotic performance; mapping is done once at startup.
 //  - Mode frequency values read from files are stored in modeFreq_ and expected
 //  to be in Hz (omega computed later as 2*pi*freq).
-void fastDynamicFvMesh::readModeFiles(
-    const fileName& modeDir,
-    List<point>& csvPoints,
-    List<List<vector>>& csvShapes,
-    label& nCsvNodes)
+void fastDynamicFvMesh::readModeFiles(const fileName& modeDir,
+    List<point>& csvPoints, List<List<vector>>& csvShapes, label& nCsvNodes)
 {
     if (!Pstream::master())
     {
@@ -728,16 +837,15 @@ void fastDynamicFvMesh::readModeFiles(
     else
     {
         scalar dummy, nNode, nMode;
-        // Add robust parsing for header
-        // Read line, replace commas with spaces, read numbers
         string line;
-        std::getline(file, line);
-        std::replace(line.begin(), line.end(), ',', ' ');
-        std::stringstream ss(line);
-        if (!(ss >> dummy >> nNode >> nMode) || nNode <= 0 || nMode <= 0)
+        label lineNo = 0;
+        if (!readNextCsvDataLine(file, line, lineNo) ||
+            !parseCsvValues(line, dummy, nNode, nMode) || nNode <= 0 ||
+            nMode <= 0)
         {
             FatalErrorInFunction
-                << "Invalid FluidNodeCoor.csv header in " << coorPath << nl
+                << "Invalid FluidNodeCoor.csv header in " << coorPath
+                << " at line " << lineNo << nl
                 << "Expected three comma-separated values with positive "
                 << "node and mode counts." << exit(FatalError);
         }
@@ -753,29 +861,20 @@ void fastDynamicFvMesh::readModeFiles(
         csvShapes.setSize(nMode_);
         forAll(csvShapes, m) csvShapes[m].setSize(nCsvNodes);
 
-        // Skip rest of first line (already read)
-        // std::getline(file, line);
-
         for (label i = 0; i < nCsvNodes; ++i)
         {
             scalar x, y, z;
-            // Robust parsing for coordinates
-            // Read 3 numbers separated by commas
-            // file >> x >> c >> y >> c >> z;
-            // This fails if there are spaces around comma.
-            // Better: read line, replace commas, read numbers
-            if (!std::getline(file, line))
+            if (!readNextCsvDataLine(file, line, lineNo))
             {
                 FatalErrorInFunction
                     << "Unexpected end of file while reading node " << i
                     << " from " << coorPath << exit(FatalError);
             }
-            std::replace(line.begin(), line.end(), ',', ' ');
-            std::stringstream ss2(line);
-            if (!(ss2 >> x >> y >> z))
+            if (!parseCsvValues(line, x, y, z))
             {
                 FatalErrorInFunction << "Invalid coordinate entry for node "
-                                     << i << " in " << coorPath
+                                     << i << " in " << coorPath << " at line "
+                                     << lineNo << ": " << line
                                      << exit(FatalError);
             }
 
@@ -785,34 +884,36 @@ void fastDynamicFvMesh::readModeFiles(
         // Read mode shapes
         for (label m = 0; m < nMode_; ++m)
         {
-            fileName shapePath = modeDir /
-                ("FluidNodeDisp" + std::to_string(m + 1) + ".csv");
+            fileName shapePath =
+                modeDir / ("FluidNodeDisp" + std::to_string(m + 1) + ".csv");
             std::ifstream mFile(shapePath);
 
             if (!mFile.good())
             {
-                FatalErrorInFunction
-                    << "Cannot open required mode shape file " << shapePath
-                    << exit(FatalError);
+                FatalErrorInFunction << "Cannot open required mode shape file "
+                                     << shapePath << exit(FatalError);
             }
 
             string line;
-            if (!std::getline(mFile, line))
+            label shapeLineNo = 0;
+            if (!readNextCsvDataLine(mFile, line, shapeLineNo))
             {
                 FatalErrorInFunction << "Missing frequency line in "
                                      << shapePath << exit(FatalError);
             }
 
-            std::replace(line.begin(), line.end(), ',', ' ');
-            std::stringstream ss(line);
             scalar freq = 0.0;
             scalar fileNodeCount = 0.0;
             scalar fileModeCount = 0.0;
 
+            string headerLine(line);
+            normalizeCsvLine(headerLine);
+            std::stringstream ss(headerLine);
             if (!(ss >> freq))
             {
                 FatalErrorInFunction << "Failed to read frequency from "
-                                     << shapePath << exit(FatalError);
+                                     << shapePath << " at line " << shapeLineNo
+                                     << ": " << line << exit(FatalError);
             }
 
             if ((ss >> fileNodeCount) && (ss >> fileModeCount))
@@ -824,8 +925,8 @@ void fastDynamicFvMesh::readModeFiles(
                         << "Mode file " << shapePath << " reports "
                         << label(fileNodeCount) << " nodes and "
                         << label(fileModeCount)
-                        << " modes, but FluidNodeCoor.csv reports "
-                        << nCsvNodes << " nodes and " << nMode_ << " modes."
+                        << " modes, but FluidNodeCoor.csv reports " << nCsvNodes
+                        << " nodes and " << nMode_ << " modes."
                         << exit(FatalError);
                 }
             }
@@ -837,31 +938,33 @@ void fastDynamicFvMesh::readModeFiles(
 
             while (dataRow < nCsvNodes)
             {
-                if (!std::getline(mFile, line))
+                if (!readNextCsvLine(mFile, line, shapeLineNo))
                 {
                     FatalErrorInFunction
                         << "Unexpected end of file while reading node "
-                        << dataRow << " from " << shapePath
-                        << exit(FatalError);
+                        << dataRow << " from " << shapePath << exit(FatalError);
                 }
 
-                std::replace(line.begin(), line.end(), ',', ' ');
-                std::stringstream ss2(line);
+                if (isIgnorableCsvLine(line))
+                {
+                    continue;
+                }
 
                 scalar dx = 0.0;
                 scalar dy = 0.0;
                 scalar dz = 0.0;
 
-                if (!(ss2 >> dx >> dy >> dz))
+                if (!parseCsvValues(line, dx, dy, dz))
                 {
-                    if (dataRow == 0)
+                    if (dataRow == 0 && !containsNumericToken(line))
                     {
                         continue;
                     }
 
                     FatalErrorInFunction
                         << "Invalid displacement entry for node " << dataRow
-                        << " in " << shapePath << exit(FatalError);
+                        << " in " << shapePath << " at line " << shapeLineNo
+                        << ": " << line << exit(FatalError);
                 }
 
                 csvShapes[m][dataRow] = vector(dx, dy, dz);
@@ -871,13 +974,9 @@ void fastDynamicFvMesh::readModeFiles(
     }
 }
 
-
-void fastDynamicFvMesh::readStructuralModeFiles(
-    const fileName& modeDir,
-    pointField& structPoints,
-    List<vectorField>& structShapes,
-    label& nStructNodes,
-    label& nStructModes)
+void fastDynamicFvMesh::readStructuralModeFiles(const fileName& modeDir,
+    pointField& structPoints, List<vectorField>& structShapes,
+    label& nStructNodes, label& nStructModes)
 {
     if (!Pstream::master())
     {
@@ -891,29 +990,29 @@ void fastDynamicFvMesh::readStructuralModeFiles(
     {
         FatalErrorInFunction
             << "Cannot open required structural coordinate file " << coorPath
-            << nl
-            << "Set 'structNodeCoorFile' correctly in dynamicMeshDict."
+            << nl << "Set 'structNodeCoorFile' correctly in dynamicMeshDict."
             << exit(FatalError);
     }
 
     string line;
-    if (!std::getline(coorFile, line))
+    label lineNo = 0;
+    if (!readNextCsvDataLine(coorFile, line, lineNo))
     {
         FatalErrorInFunction
             << "Missing header line in structural coordinate file " << coorPath
             << exit(FatalError);
     }
 
-    std::replace(line.begin(), line.end(), ',', ' ');
-    std::stringstream hs(line);
     scalar dummy = 0.0;
     scalar nNode = 0.0;
     scalar nMode = 0.0;
 
-    if (!(hs >> dummy >> nNode >> nMode) || nNode <= 0 || nMode <= 0)
+    if (!parseCsvValues(line, dummy, nNode, nMode) || nNode <= 0 ||
+        nMode <= 0)
     {
         FatalErrorInFunction
             << "Invalid header in structural coordinate file " << coorPath
+            << " at line " << lineNo
             << ". Expected: dummy, nNode, nMode with positive counts."
             << exit(FatalError);
     }
@@ -923,33 +1022,31 @@ void fastDynamicFvMesh::readStructuralModeFiles(
 
     if (nStructModes != nMode_)
     {
-        FatalErrorInFunction
-            << "Structural mode count (" << nStructModes
-            << ") does not match fluid mode count (" << nMode_ << ")."
-            << exit(FatalError);
+        FatalErrorInFunction << "Structural mode count (" << nStructModes
+                             << ") does not match fluid mode count (" << nMode_
+                             << ")." << exit(FatalError);
     }
 
     structPoints.setSize(nStructNodes);
     for (label i = 0; i < nStructNodes; ++i)
     {
-        if (!std::getline(coorFile, line))
+        if (!readNextCsvDataLine(coorFile, line, lineNo))
         {
             FatalErrorInFunction
                 << "Unexpected end of file while reading structural node " << i
                 << " from " << coorPath << exit(FatalError);
         }
 
-        std::replace(line.begin(), line.end(), ',', ' ');
-        std::stringstream ls(line);
         scalar x = 0.0;
         scalar y = 0.0;
         scalar z = 0.0;
 
-        if (!(ls >> x >> y >> z))
+        if (!parseCsvValues(line, x, y, z))
         {
             FatalErrorInFunction
                 << "Invalid structural coordinate entry for node " << i
-                << " in " << coorPath << exit(FatalError);
+                << " in " << coorPath << " at line " << lineNo << ": "
+                << line << exit(FatalError);
         }
 
         structPoints[i] = point(x, y, z);
@@ -970,23 +1067,25 @@ void fastDynamicFvMesh::readStructuralModeFiles(
                 << shapePath << exit(FatalError);
         }
 
-        if (!std::getline(shapeFile, line))
+        label shapeLineNo = 0;
+        if (!readNextCsvDataLine(shapeFile, line, shapeLineNo))
         {
-            FatalErrorInFunction
-                << "Missing frequency line in " << shapePath << exit(FatalError);
+            FatalErrorInFunction << "Missing frequency line in " << shapePath
+                                 << exit(FatalError);
         }
 
-        std::replace(line.begin(), line.end(), ',', ' ');
-        std::stringstream hShape(line);
         scalar freq = 0.0;
         scalar fileNodeCount = 0.0;
         scalar fileModeCount = 0.0;
 
+        string headerLine(line);
+        normalizeCsvLine(headerLine);
+        std::stringstream hShape(headerLine);
         if (!(hShape >> freq))
         {
-            FatalErrorInFunction
-                << "Failed to read frequency from " << shapePath
-                << exit(FatalError);
+            FatalErrorInFunction << "Failed to read frequency from "
+                                 << shapePath << " at line " << shapeLineNo
+                                 << ": " << line << exit(FatalError);
         }
 
         if ((hShape >> fileNodeCount) && (hShape >> fileModeCount))
@@ -1009,31 +1108,33 @@ void fastDynamicFvMesh::readStructuralModeFiles(
         label dataRow = 0;
         while (dataRow < nStructNodes)
         {
-            if (!std::getline(shapeFile, line))
+            if (!readNextCsvLine(shapeFile, line, shapeLineNo))
             {
                 FatalErrorInFunction
                     << "Unexpected end of file while reading structural node "
-                    << dataRow << " from " << shapePath
-                    << exit(FatalError);
+                    << dataRow << " from " << shapePath << exit(FatalError);
             }
 
-            std::replace(line.begin(), line.end(), ',', ' ');
-            std::stringstream ds(line);
+            if (isIgnorableCsvLine(line))
+            {
+                continue;
+            }
+
             scalar dx = 0.0;
             scalar dy = 0.0;
             scalar dz = 0.0;
 
-            if (!(ds >> dx >> dy >> dz))
+            if (!parseCsvValues(line, dx, dy, dz))
             {
-                if (dataRow == 0)
+                if (dataRow == 0 && !containsNumericToken(line))
                 {
                     continue;
                 }
 
                 FatalErrorInFunction
                     << "Invalid structural displacement entry for node "
-                    << dataRow << " in " << shapePath
-                    << exit(FatalError);
+                    << dataRow << " in " << shapePath << " at line "
+                    << shapeLineNo << ": " << line << exit(FatalError);
             }
 
             structShapes[m][dataRow] = vector(dx, dy, dz);
@@ -1041,7 +1142,6 @@ void fastDynamicFvMesh::readStructuralModeFiles(
         }
     }
 }
-
 
 void fastDynamicFvMesh::readStructuralForceFiles(const fileName& modeDir)
 {
@@ -1068,69 +1168,34 @@ void fastDynamicFvMesh::readStructuralForceFiles(const fileName& modeDir)
 
         for (label forceI = 0; forceI < nStructuralForces_; ++forceI)
         {
-            const fileName forcePath =
-                modeDir / (structuralForceFilePrefix_ + std::to_string(forceI + 1) + ".csv");
+            const fileName forcePath = modeDir /
+                (structuralForceFilePrefix_ + std::to_string(forceI + 1) +
+                    ".csv");
             std::ifstream in(forcePath);
 
             if (!in.good())
             {
-                FatalErrorInFunction
-                    << "Cannot open structural force file " << forcePath
-                    << exit(FatalError);
+                FatalErrorInFunction << "Cannot open structural force file "
+                                     << forcePath << exit(FatalError);
             }
 
             string line;
+            label lineNo = 0;
 
-            auto nextDataLine = [&](string& out) -> bool
+            if (!readNextCsvDataLine(in, line, lineNo))
             {
-                while (std::getline(in, out))
-                {
-                    if (out.empty())
-                    {
-                        continue;
-                    }
-
-                    const char c0 = out[0];
-                    if (c0 == '#')
-                    {
-                        continue;
-                    }
-
-                    bool hasDigit = false;
-                    for (const char c : out)
-                    {
-                        if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.')
-                        {
-                            hasDigit = true;
-                            break;
-                        }
-                    }
-
-                    if (hasDigit)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            };
-
-            if (!nextDataLine(line))
-            {
-                FatalErrorInFunction
-                    << "Missing coordinate-count line in " << forcePath
-                    << exit(FatalError);
+                FatalErrorInFunction << "Missing coordinate-count line in "
+                                     << forcePath << exit(FatalError);
             }
 
-            std::replace(line.begin(), line.end(), ',', ' ');
-            std::stringstream ssN(line);
             label nCoords = -1;
-            if (!(ssN >> nCoords) || nCoords <= 0)
+            if (!parseCsvValues(line, nCoords) || nCoords <= 0)
             {
-                FatalErrorInFunction
-                    << "First numeric line in " << forcePath
-                    << " must be positive coordinate count."
-                    << exit(FatalError);
+                FatalErrorInFunction << "First numeric line in " << forcePath
+                                     << " at line " << lineNo
+                                     << " must be positive coordinate count: "
+                                     << line
+                                     << exit(FatalError);
             }
 
             DynamicList<label> nodeIDs;
@@ -1138,25 +1203,24 @@ void fastDynamicFvMesh::readStructuralForceFiles(const fileName& modeDir)
 
             for (label cI = 0; cI < nCoords; ++cI)
             {
-                if (!nextDataLine(line))
+                if (!readNextCsvDataLine(in, line, lineNo))
                 {
-                    FatalErrorInFunction
-                        << "Expected " << nCoords << " coordinate lines in "
-                        << forcePath << ", but file ended early."
-                        << exit(FatalError);
+                    FatalErrorInFunction << "Expected " << nCoords
+                                         << " coordinate lines in " << forcePath
+                                         << ", but file ended early."
+                                         << exit(FatalError);
                 }
 
-                std::replace(line.begin(), line.end(), ',', ' ');
-                std::stringstream cs(line);
                 scalar x = 0.0;
                 scalar y = 0.0;
                 scalar z = 0.0;
 
-                if (!(cs >> x >> y >> z))
+                if (!parseCsvValues(line, x, y, z))
                 {
-                    FatalErrorInFunction
-                        << "Invalid coordinate line in " << forcePath
-                        << ": " << line << exit(FatalError);
+                    FatalErrorInFunction << "Invalid coordinate line in "
+                                         << forcePath << " at line " << lineNo
+                                         << ": " << line
+                                         << exit(FatalError);
                 }
 
                 const point target(x, y, z);
@@ -1202,28 +1266,28 @@ void fastDynamicFvMesh::readStructuralForceFiles(const fileName& modeDir)
             DynamicList<scalar> tList;
             DynamicList<vector> fList;
 
-            while (nextDataLine(line))
+            while (readNextCsvDataLine(in, line, lineNo))
             {
-                std::replace(line.begin(), line.end(), ',', ' ');
-                std::stringstream ts(line);
                 scalar tt = 0.0;
                 scalar fx = 0.0;
                 scalar fy = 0.0;
                 scalar fz = 0.0;
 
-                if (!(ts >> tt >> fx >> fy >> fz))
+                if (!parseCsvValues(line, tt, fx, fy, fz))
                 {
-                    FatalErrorInFunction
-                        << "Invalid time-force row in " << forcePath
-                        << ": " << line << exit(FatalError);
+                    FatalErrorInFunction << "Invalid time-force row in "
+                                         << forcePath << " at line " << lineNo
+                                         << ": " << line
+                                         << exit(FatalError);
                 }
 
                 if (!tList.empty() && tt < tList.last())
                 {
-                    FatalErrorInFunction
-                        << "Force times in " << forcePath
-                        << " must be non-decreasing."
-                        << exit(FatalError);
+                    FatalErrorInFunction << "Force times in " << forcePath
+                                         << " must be non-decreasing; line "
+                                         << lineNo << " has time " << tt
+                                         << " after " << tList.last() << "."
+                                         << exit(FatalError);
                 }
 
                 tList.append(tt);
@@ -1232,9 +1296,8 @@ void fastDynamicFvMesh::readStructuralForceFiles(const fileName& modeDir)
 
             if (tList.empty())
             {
-                FatalErrorInFunction
-                    << "No force time-series rows found in " << forcePath
-                    << exit(FatalError);
+                FatalErrorInFunction << "No force time-series rows found in "
+                                     << forcePath << exit(FatalError);
             }
 
             structuralForceNodeIDs_[forceI].transfer(nodeIDs);
@@ -1363,19 +1426,15 @@ void fastDynamicFvMesh::readModeShapes()
     // constant/polyMesh/points.
     pointField mappingPoints(this->points());
     pointField basePoints;
-    
-    // Try to read points from constant/polyMesh (or processor*/constant/polyMesh)
-    // Note: in parallel, the polyMesh directory is inside the processor directory.
-    // IOobject will handle processor path automatically if we use NO_WRITE.
-    
+
+    // Try to read points from constant/polyMesh (or
+    // processor*/constant/polyMesh) Note: in parallel, the polyMesh directory
+    // is inside the processor directory. IOobject will handle processor path
+    // automatically if we use NO_WRITE.
+
     // We construct an IOobject to look for "points" in the constant instance.
-    IOobject ioPoints(
-        "points",
-        this->time().constant(),
-        polyMesh::meshSubDir,
-        *this,
-        IOobject::MUST_READ,
-        IOobject::NO_WRITE,
+    IOobject ioPoints("points", this->time().constant(), polyMesh::meshSubDir,
+        *this, IOobject::MUST_READ, IOobject::NO_WRITE,
         false // register
     );
 
@@ -1385,36 +1444,39 @@ void fastDynamicFvMesh::readModeShapes()
     {
     public:
         // Force the type name to match the file header
-        virtual const word& type() const 
-        { 
+        virtual const word& type() const
+        {
             static const word typeName_val("vectorField");
-            return typeName_val; 
+            return typeName_val;
         }
-        
+
         vectorFieldIO(const IOobject& io) : IOField<vector>(io) {}
     };
 
     // Attempt to read with the custom wrapper.
     bool readOk = false;
-    try 
+    try
     {
         // Don't check header via typeHeaderOk as it might check the wrong type
-        // Just verify it exists (MUST_READ handles this usually, but we want to catch it)
+        // Just verify it exists (MUST_READ handles this usually, but we want to
+        // catch it)
         if (ioPoints.headerClassName() == "vectorField")
         {
-             vectorFieldIO pIO(ioPoints);
-             basePoints = pIO;
-             readOk = true;
+            vectorFieldIO pIO(ioPoints);
+            basePoints = pIO;
+            readOk = true;
         }
         else if (ioPoints.typeHeaderOk<vectorFieldIO>(true))
         {
-             vectorFieldIO pIO(ioPoints);
-             basePoints = pIO;
-             readOk = true;
+            vectorFieldIO pIO(ioPoints);
+            basePoints = pIO;
+            readOk = true;
         }
     }
-    catch (...) {}
-    
+    catch (...)
+    {
+    }
+
     if (readOk)
     {
         if (basePoints.size() == mappingPoints.size())
@@ -1423,9 +1485,9 @@ void fastDynamicFvMesh::readModeShapes()
 
             if (Pstream::master())
             {
-                Info<< "  Read " << basePoints.size()
-                    << " base points for mapping from "
-                    << ioPoints.objectPath() << endl;
+                Info << "  Read " << basePoints.size()
+                     << " base points for mapping from "
+                     << ioPoints.objectPath() << endl;
             }
         }
         else if (Pstream::master())
@@ -1434,8 +1496,7 @@ void fastDynamicFvMesh::readModeShapes()
                 << "constant/polyMesh points count (" << basePoints.size()
                 << ") differs from current mesh points count ("
                 << mappingPoints.size() << ") on startup/restart. "
-                << "Using current mesh points for modal mapping."
-                << endl;
+                << "Using current mesh points for modal mapping." << endl;
         }
     }
     else if (Pstream::master())
@@ -1445,7 +1506,7 @@ void fastDynamicFvMesh::readModeShapes()
             << "(expected class vectorField). Using current mesh points "
             << "for modal mapping." << endl;
     }
-    
+
     modeShapes_.setSize(nMode_);
     forAll(modeShapes_, m)
     {
@@ -1462,9 +1523,8 @@ void fastDynamicFvMesh::readModeShapes()
         {
             FatalErrorInFunction
                 << "meshCutter pointLevel size (" << pointLevel.size()
-                << ") does not match mesh point count ("
-                << mappingPoints.size() << ")."
-                << exit(FatalError);
+                << ") does not match mesh point count (" << mappingPoints.size()
+                << ")." << exit(FatalError);
         }
 
         label localRefinedPointCount = 0;
@@ -1483,7 +1543,8 @@ void fastDynamicFvMesh::readModeShapes()
 
         if (Pstream::master() && topologyOnlyForRefinedPoints)
         {
-            Info<< "Refined startup mesh detected (" << globalRefinedPointCount
+            Info
+                << "Refined startup mesh detected (" << globalRefinedPointCount
                 << " points with pointLevel>0). "
                 << "Geometric CSV mapping is restricted to level-0 points; "
                 << "refined points must be recovered by topology interpolation."
@@ -1594,7 +1655,8 @@ void fastDynamicFvMesh::readModeShapes()
 
         if (Pstream::master())
         {
-            Info << "Refinement-aware startup interpolation raised mapped points "
+            Info << "Refinement-aware startup interpolation raised mapped "
+                    "points "
                  << "from " << totalMapped << " to " << totalKnown << " out of "
                  << totalPoints << "." << endl;
         }
@@ -1602,25 +1664,24 @@ void fastDynamicFvMesh::readModeShapes()
         if (totalKnown != totalPoints && topologyOnlyForRefinedPoints)
         {
             FatalErrorInFunction
-                << "With meshRefinementSupport enabled on a refined startup mesh, "
+                << "With meshRefinementSupport enabled on a refined startup "
+                   "mesh, "
                 << (totalPoints - totalKnown)
                 << " points remain unmapped after 2/4/8 topology interpolation."
                 << nl
                 << "No geometric fallback is allowed for AMR-generated points."
-                << nl
-                << "Check refinement lineage consistency and "
-                << "refinementInterpTolerance."
-                << exit(FatalError);
+                << nl << "Check refinement lineage consistency and "
+                << "refinementInterpTolerance." << exit(FatalError);
         }
         else if (totalKnown != totalPoints && Pstream::master())
         {
-            WarningInFunction
-                << "With meshRefinementSupport enabled, "
-                << (totalPoints - totalKnown)
-                << " points remain unmapped after 2/4/8 topology interpolation. "
-                << "These points keep zero modal displacement until they can be "
-                << "mapped by later topology updates."
-                << endl;
+            WarningInFunction << "With meshRefinementSupport enabled, "
+                              << (totalPoints - totalKnown)
+                              << " points remain unmapped after 2/4/8 topology "
+                                 "interpolation. "
+                              << "These points keep zero modal displacement "
+                                 "until they can be "
+                              << "mapped by later topology updates." << endl;
         }
 
         totalMapped = totalKnown;
@@ -1703,16 +1764,17 @@ void fastDynamicFvMesh::readModeShapes()
     }
 }
 
-
 void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
 {
     const polyBoundaryMesh& pbm = this->boundaryMesh();
 
-    const List<List<labelList>> oldFaceToReferenceFaces(fsiFaceToReferenceFaces_);
-    const List<List<scalarField>> oldFaceToReferenceWeights(fsiFaceToReferenceWeights_);
+    const List<List<labelList>> oldFaceToReferenceFaces(
+        fsiFaceToReferenceFaces_);
+    const List<List<scalarField>> oldFaceToReferenceWeights(
+        fsiFaceToReferenceWeights_);
     const bool hasOldReferenceMapping =
-        oldFaceToReferenceFaces.size() == fsiPatches_.size()
-     && oldFaceToReferenceWeights.size() == fsiPatches_.size();
+        oldFaceToReferenceFaces.size() == fsiPatches_.size() &&
+        oldFaceToReferenceWeights.size() == fsiPatches_.size();
 
     fsiPatchIDs_.setSize(fsiPatches_.size(), -1);
     fsiPolyPatches_.setSize(fsiPatches_.size(), nullptr);
@@ -1728,26 +1790,26 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
         referenceFaceModeProjection_.clear();
         referenceFsiFaceAreas_.clear();
     }
-    else if
-    (
-        !referenceFsiBuilt_
-     || referenceFaceModeProjection_.size() != fsiPatches_.size()
-     || referenceFsiFaceAreas_.size() != fsiPatches_.size()
-    )
+    else if (!referenceFsiBuilt_ ||
+        referenceFaceModeProjection_.size() != fsiPatches_.size() ||
+        referenceFsiFaceAreas_.size() != fsiPatches_.size())
     {
         referenceFaceModeProjection_.setSize(fsiPatches_.size());
         referenceFsiFaceAreas_.setSize(fsiPatches_.size());
         referenceFsiBuilt_ = false;
     }
 
-    const labelList* oldPatchStartsPtr = mpmPtr ? &mpmPtr->oldPatchStarts() : nullptr;
-    const labelList* oldPatchSizesPtr = mpmPtr ? &mpmPtr->oldPatchSizes() : nullptr;
-    const List<objectMap>* facesFromFacesMapPtr = mpmPtr ? &mpmPtr->facesFromFacesMap() : nullptr;
+    const labelList* oldPatchStartsPtr =
+        mpmPtr ? &mpmPtr->oldPatchStarts() : nullptr;
+    const labelList* oldPatchSizesPtr =
+        mpmPtr ? &mpmPtr->oldPatchSizes() : nullptr;
+    const List<objectMap>* facesFromFacesMapPtr =
+        mpmPtr ? &mpmPtr->facesFromFacesMap() : nullptr;
 
     Map<labelList> facesFromFacesByNewFace;
     if (facesFromFacesMapPtr)
     {
-        facesFromFacesByNewFace.resize(2*facesFromFacesMapPtr->size() + 1);
+        facesFromFacesByNewFace.resize(2 * facesFromFacesMapPtr->size() + 1);
         forAll(*facesFromFacesMapPtr, mapI)
         {
             const objectMap& obj = (*facesFromFacesMapPtr)[mapI];
@@ -1760,10 +1822,9 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
         const label patchID = pbm.findPatchID(fsiPatches_[i]);
         if (patchID == -1)
         {
-            FatalErrorInFunction
-                << "Configured FSI patch '" << fsiPatches_[i]
-                << "' was not found in boundaryMesh."
-                << exit(FatalError);
+            FatalErrorInFunction << "Configured FSI patch '" << fsiPatches_[i]
+                                 << "' was not found in boundaryMesh."
+                                 << exit(FatalError);
         }
 
         fsiPatchIDs_[i] = patchID;
@@ -1828,7 +1889,8 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
 
             for (label modeI = 0; modeI < nMode_; ++modeI)
             {
-                referenceFaceModeProjection_[i][modeI] = faceModeProjection_[i][modeI];
+                referenceFaceModeProjection_[i][modeI] =
+                    faceModeProjection_[i][modeI];
             }
 
             forAll(faceToRefs, faceI)
@@ -1842,10 +1904,10 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
 
         if (!mpmPtr)
         {
-            FatalErrorInFunction
-                << "Reference cache is already initialized, but mapPolyMesh was not provided "
-                << "while rebuilding topology mappings."
-                << exit(FatalError);
+            FatalErrorInFunction << "Reference cache is already initialized, "
+                                    "but mapPolyMesh was not provided "
+                                 << "while rebuilding topology mappings."
+                                 << exit(FatalError);
         }
 
         if (!hasOldReferenceMapping)
@@ -1866,26 +1928,22 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
         if (oldPatchStart < 0 || oldPatchSize < 0)
         {
             FatalErrorInFunction
-                << "Cannot read old patch start/size for patch '" << fsiPatches_[i]
-                << "' (patchID=" << patchID << ")."
+                << "Cannot read old patch start/size for patch '"
+                << fsiPatches_[i] << "' (patchID=" << patchID << ")."
                 << exit(FatalError);
         }
 
         const List<labelList>& oldPatchRefs = oldFaceToReferenceFaces[i];
         const List<scalarField>& oldPatchWeights = oldFaceToReferenceWeights[i];
 
-        if
-        (
-            oldPatchRefs.size() != oldPatchSize
-         || oldPatchWeights.size() != oldPatchSize
-        )
+        if (oldPatchRefs.size() != oldPatchSize ||
+            oldPatchWeights.size() != oldPatchSize)
         {
             FatalErrorInFunction
-                << "Old mapping size mismatch on patch '" << fsiPatches_[i] << "': "
-                << "oldPatchSize=" << oldPatchSize
+                << "Old mapping size mismatch on patch '" << fsiPatches_[i]
+                << "': " << "oldPatchSize=" << oldPatchSize
                 << ", refs=" << oldPatchRefs.size()
-                << ", weights=" << oldPatchWeights.size()
-                << exit(FatalError);
+                << ", weights=" << oldPatchWeights.size() << exit(FatalError);
         }
 
         const scalarField& refAreas = referenceFsiFaceAreas_[i];
@@ -1921,18 +1979,19 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
 
             if (oldFaces.empty())
             {
-                FatalErrorInFunction
-                    << "Cannot derive old faces for patch '" << fsiPatches_[i]
-                    << "', face " << faceI << " (global face " << globalFace << ")."
-                    << exit(FatalError);
+                FatalErrorInFunction << "Cannot derive old faces for patch '"
+                                     << fsiPatches_[i] << "', face " << faceI
+                                     << " (global face " << globalFace << ")."
+                                     << exit(FatalError);
             }
 
-            Map<scalar> refAreaAccum(2*oldFaces.size() + 1);
+            Map<scalar> refAreaAccum(2 * oldFaces.size() + 1);
 
             forAll(oldFaces, oldI)
             {
                 const label oldFace = oldFaces[oldI];
-                if (oldFace < oldPatchStart || oldFace >= oldPatchStart + oldPatchSize)
+                if (oldFace < oldPatchStart ||
+                    oldFace >= oldPatchStart + oldPatchSize)
                 {
                     continue;
                 }
@@ -1944,9 +2003,9 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
                 if (prevRefs.size() != prevWeights.size() || prevRefs.empty())
                 {
                     FatalErrorInFunction
-                        << "Invalid old mapping entry for patch '" << fsiPatches_[i]
-                        << "', old local face " << oldLocalFace << "."
-                        << exit(FatalError);
+                        << "Invalid old mapping entry for patch '"
+                        << fsiPatches_[i] << "', old local face "
+                        << oldLocalFace << "." << exit(FatalError);
                 }
 
                 forAll(prevRefs, refI)
@@ -1954,14 +2013,15 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
                     const label refFace = prevRefs[refI];
                     if (refFace < 0 || refFace >= refAreas.size())
                     {
-                        FatalErrorInFunction
-                            << "Out-of-range reference face " << refFace
-                            << " on patch '" << fsiPatches_[i] << "'."
-                            << exit(FatalError);
+                        FatalErrorInFunction << "Out-of-range reference face "
+                                             << refFace << " on patch '"
+                                             << fsiPatches_[i] << "'."
+                                             << exit(FatalError);
                     }
 
                     const scalar clampedWeight = max(prevWeights[refI], 0.0);
-                    const scalar contribArea = max(refAreas[refFace], VSMALL)*clampedWeight;
+                    const scalar contribArea =
+                        max(refAreas[refFace], VSMALL) * clampedWeight;
                     refAreaAccum(refFace, 0.0) += contribArea;
                 }
             }
@@ -1997,16 +2057,15 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
             forAll(sortedRefs, refI)
             {
                 refs[refI] = sortedRefs[refI];
-                weights[refI] = refAreaAccum[sortedRefs[refI]]/sumArea;
+                weights[refI] = refAreaAccum[sortedRefs[refI]] / sumArea;
                 sumW += weights[refI];
             }
 
             if (sumW <= VSMALL)
             {
-                FatalErrorInFunction
-                    << "Zero total mapping weight on patch '" << fsiPatches_[i]
-                    << "', face " << faceI << "."
-                    << exit(FatalError);
+                FatalErrorInFunction << "Zero total mapping weight on patch '"
+                                     << fsiPatches_[i] << "', face " << faceI
+                                     << "." << exit(FatalError);
             }
 
             if (mag(sumW - 1.0) > 1e-10)
@@ -2040,12 +2099,12 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
         referenceFsiBuilt_ = true;
         if (Pstream::master())
         {
-            Info << "Initialized reference FSI face cache for refinement/unrefine-aware "
+            Info << "Initialized reference FSI face cache for "
+                    "refinement/unrefine-aware "
                  << "force aggregation." << endl;
         }
     }
 }
-
 
 void fastDynamicFvMesh::syncMappedModeShapes(boolList& mappedMask)
 {
@@ -2056,10 +2115,10 @@ void fastDynamicFvMesh::syncMappedModeShapes(boolList& mappedMask)
 
     if (mappedMask.size() != modeShapes_[0].size())
     {
-        FatalErrorInFunction
-            << "mappedMask size (" << mappedMask.size()
-            << ") does not match mode-shape point count ("
-            << modeShapes_[0].size() << ")." << exit(FatalError);
+        FatalErrorInFunction << "mappedMask size (" << mappedMask.size()
+                             << ") does not match mode-shape point count ("
+                             << modeShapes_[0].size() << ")."
+                             << exit(FatalError);
     }
 
     List<label> ownerProc(mappedMask.size(), -1);
@@ -2094,7 +2153,6 @@ void fastDynamicFvMesh::syncMappedModeShapes(boolList& mappedMask)
     }
 }
 
-
 void fastDynamicFvMesh::syncSharedPointPositions(pointField& pointValues) const
 {
     if (!Pstream::parRun())
@@ -2104,10 +2162,10 @@ void fastDynamicFvMesh::syncSharedPointPositions(pointField& pointValues) const
 
     if (pointValues.size() != this->points().size())
     {
-        FatalErrorInFunction
-            << "pointValues size (" << pointValues.size()
-            << ") does not match mesh point count (" << this->points().size()
-            << ")." << exit(FatalError);
+        FatalErrorInFunction << "pointValues size (" << pointValues.size()
+                             << ") does not match mesh point count ("
+                             << this->points().size() << ")."
+                             << exit(FatalError);
     }
 
     List<label> ownerProc(pointValues.size(), Pstream::myProcNo());
@@ -2129,13 +2187,9 @@ void fastDynamicFvMesh::syncSharedPointPositions(pointField& pointValues) const
     pointValues.transfer(ownedValues);
 }
 
-
-label fastDynamicFvMesh::interpolateModeShapesFromKnown(
-    boolList& knownMask,
-    const boolList& sourceKnownMask,
-    const label cornerCount,
-    const bool distanceWeighted,
-    const word& context)
+label fastDynamicFvMesh::interpolateModeShapesFromKnown(boolList& knownMask,
+    const boolList& sourceKnownMask, const label cornerCount,
+    const bool distanceWeighted, const word& context)
 {
     if (cornerCount <= 0)
     {
@@ -2200,15 +2254,8 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
             dist[candI] = mag(pts[pointI] - pts[candidates[candI]]);
         }
 
-        std::sort
-        (
-            order.begin(),
-            order.end(),
-            [&](const label a, const label b)
-            {
-                return dist[a] < dist[b];
-            }
-        );
+        std::sort(order.begin(), order.end(),
+            [&](const label a, const label b) { return dist[a] < dist[b]; });
 
         // Select corners by minimizing geometric centroid mismatch at this
         // point (within nearest local candidates), which is more robust than
@@ -2224,8 +2271,7 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
         {
             DynamicList<label> trial(cornerCount);
 
-            auto updateBest = [&](const DynamicList<label>& labels)
-            {
+            auto updateBest = [&](const DynamicList<label>& labels) {
                 point centroid = point::zero;
                 scalar avgDist = 0.0;
 
@@ -2241,14 +2287,9 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
 
                 const scalar centroidErr = mag(pts[pointI] - centroid);
 
-                if
-                (
-                    centroidErr < bestCentroidErr - SMALL
-                 || (
-                        mag(centroidErr - bestCentroidErr) <= SMALL
-                     && avgDist < bestAvgDist
-                    )
-                )
+                if (centroidErr < bestCentroidErr - SMALL ||
+                    (mag(centroidErr - bestCentroidErr) <= SMALL &&
+                        avgDist < bestAvgDist))
                 {
                     bestCentroidErr = centroidErr;
                     bestAvgDist = avgDist;
@@ -2260,9 +2301,8 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
                 }
             };
 
-            auto chooseCorners =
-                [&](const auto& self, const label start, const label need) -> void
-            {
+            auto chooseCorners = [&](const auto& self, const label start,
+                                     const label need) -> void {
                 if (need == 0)
                 {
                     updateBest(trial);
@@ -2297,7 +2337,7 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
             continue;
         }
 
-        scalarField weights(cornerCount, 1.0/scalar(cornerCount));
+        scalarField weights(cornerCount, 1.0 / scalar(cornerCount));
 
         if (cornerCount == 2 && distanceWeighted)
         {
@@ -2307,8 +2347,8 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
 
             if (denom > VSMALL)
             {
-                weights[0] = d1/denom;
-                weights[1] = d0/denom;
+                weights[0] = d1 / denom;
+                weights[1] = d0 / denom;
             }
             else
             {
@@ -2320,7 +2360,7 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
         {
             // For hex-like AMR topology (face/cell midpoint creation), equal
             // corner weights preserve straight-line/plane consistency better.
-            weights = 1.0/scalar(cornerCount);
+            weights = 1.0 / scalar(cornerCount);
         }
         else
         {
@@ -2328,7 +2368,7 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
             forAll(corners, cI)
             {
                 const scalar d = mag(pts[pointI] - pts[corners[cI]]);
-                const scalar inv = 1.0/max(d, refinementInterpTolerance_);
+                const scalar inv = 1.0 / max(d, refinementInterpTolerance_);
                 weights[cI] = inv;
                 sumInv += inv;
             }
@@ -2339,7 +2379,7 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
             }
             else
             {
-                weights = 1.0/scalar(cornerCount);
+                weights = 1.0 / scalar(cornerCount);
             }
         }
 
@@ -2366,7 +2406,6 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(
 
     return localInterpolated;
 }
-
 
 void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
 {
@@ -2395,10 +2434,9 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
 
     if (pointMap.size() != newNPoints)
     {
-        FatalErrorInFunction
-            << "pointMap size (" << pointMap.size()
-            << ") does not match new mesh point count (" << newNPoints << ")."
-            << exit(FatalError);
+        FatalErrorInFunction << "pointMap size (" << pointMap.size()
+                             << ") does not match new mesh point count ("
+                             << newNPoints << ")." << exit(FatalError);
     }
 
     List<vectorField> oldModeShapes(modeShapes_);
@@ -2458,9 +2496,9 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
     }
 
     // Prefer direct topology lineage for refinement-added points.
-    // mapPolyMesh stores source old points for new points in pointsFromPointsMap.
-    // Averaging source modal values preserves geometric continuity better than
-    // a generic nearest-corner search.
+    // mapPolyMesh stores source old points for new points in
+    // pointsFromPointsMap. Averaging source modal values preserves geometric
+    // continuity better than a generic nearest-corner search.
     label localLineageMapped = 0;
     const List<objectMap>& pointsFromPoints = mpm.pointsFromPointsMap();
 
@@ -2469,12 +2507,7 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
         const objectMap& pointMapEntry = pointsFromPoints[mapI];
         const label newPoint = pointMapEntry.index();
 
-        if
-        (
-            newPoint < 0
-         || newPoint >= newNPoints
-         || knownMask[newPoint]
-        )
+        if (newPoint < 0 || newPoint >= newNPoints || knownMask[newPoint])
         {
             continue;
         }
@@ -2511,7 +2544,7 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
             continue;
         }
 
-        const scalar invMasterCount = 1.0/scalar(validMasterCount);
+        const scalar invMasterCount = 1.0 / scalar(validMasterCount);
         for (label modeI = 0; modeI < nMode_; ++modeI)
         {
             modeShapes_[modeI][newPoint] *= invMasterCount;
@@ -2552,7 +2585,8 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
 
     if (anyRefinement)
     {
-        label globalKnownPrev = returnReduce(localKnownAfterSync, sumOp<label>());
+        label globalKnownPrev =
+            returnReduce(localKnownAfterSync, sumOp<label>());
 
         for (label passI = 0; passI < 4; ++passI)
         {
@@ -2579,7 +2613,8 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
                 }
             }
 
-            const label globalKnownNow = returnReduce(localKnownNow, sumOp<label>());
+            const label globalKnownNow =
+                returnReduce(localKnownNow, sumOp<label>());
 
             if (globalKnownNow <= globalKnownPrev)
             {
@@ -2604,20 +2639,20 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
     if (localUnknown > 0)
     {
         FatalErrorInFunction
-            << (shrinkingOrEqualTopology ? "Topology mapping failed for "
-                                         : "Refinement interpolation failed for ")
-            << localUnknown
-            << " local points on processor " << Pstream::myProcNo()
-            << " points."
             << (shrinkingOrEqualTopology
-                ? " Some surviving points were not mapped by pointMap."
-                : " The 2/4/8 topology-corner rules could not classify all "
-                  "added points. Adjust refinement controls or "
-                  "refinementInterpTolerance.")
+                       ? "Topology mapping failed for "
+                       : "Refinement interpolation failed for ")
+            << localUnknown << " local points on processor "
+            << Pstream::myProcNo() << " points."
+            << (shrinkingOrEqualTopology
+                       ? " Some surviving points were not mapped by pointMap."
+                       : " The 2/4/8 topology-corner rules could not classify "
+                         "all "
+                         "added points. Adjust refinement controls or "
+                         "refinementInterpTolerance.")
             << exit(FatalError);
     }
 }
-
 
 void fastDynamicFvMesh::cacheModelPointers()
 {
@@ -2631,32 +2666,33 @@ void fastDynamicFvMesh::cacheModelPointers()
 
     if (this->foundObject<icoTurbModel>(icoTurbModel::propertiesName))
     {
-        icoTurbPtr_ = &this->lookupObject<icoTurbModel>(icoTurbModel::propertiesName);
+        icoTurbPtr_ =
+            &this->lookupObject<icoTurbModel>(icoTurbModel::propertiesName);
     }
 
     if (this->foundObject<cmpTurbModel>(cmpTurbModel::propertiesName))
     {
-        cmpTurbPtr_ = &this->lookupObject<cmpTurbModel>(cmpTurbModel::propertiesName);
+        cmpTurbPtr_ =
+            &this->lookupObject<cmpTurbModel>(cmpTurbModel::propertiesName);
     }
 
     if (this->foundObject<fluidThermo>(fluidThermo::dictName))
     {
-        fluidThermoPtr_ = &this->lookupObject<fluidThermo>(fluidThermo::dictName);
+        fluidThermoPtr_ =
+            &this->lookupObject<fluidThermo>(fluidThermo::dictName);
     }
 
     if (this->foundObject<transportModel>("transportProperties"))
     {
-        laminarTransportPtr_ = &this->lookupObject<transportModel>("transportProperties");
+        laminarTransportPtr_ =
+            &this->lookupObject<transportModel>("transportProperties");
     }
 
     modelPointersCached_ = true;
 }
 
-
 vector fastDynamicFvMesh::interpolateStructuralForce(
-    const scalarField& times,
-    const vectorField& values,
-    const scalar t) const
+    const scalarField& times, const vectorField& values, const scalar t) const
 {
     if (times.size() == 1)
     {
@@ -2686,8 +2722,8 @@ vector fastDynamicFvMesh::interpolateStructuralForce(
                 return values[i + 1];
             }
 
-            const scalar w = (t - t0)/dt;
-            return (1.0 - w)*values[i] + w*values[i + 1];
+            const scalar w = (t - t0) / dt;
+            return (1.0 - w) * values[i] + w * values[i + 1];
         }
     }
 
@@ -2859,8 +2895,6 @@ void fastDynamicFvMesh::calcModalForces()
             << exit(FatalError);
     }
 
-
-
     tmp<volTensorField> tGradU;
     const volTensorField* gradUPtr = nullptr;
 
@@ -2876,9 +2910,6 @@ void fastDynamicFvMesh::calcModalForces()
             << "Velocity field 'U' not found; wall shear contribution "
             << "to modal forces will be skipped." << endl;
     }
-
-
-
 
     // Iterate over cached FSI patches
     forAll(fsiPatchIDs_, i)
@@ -2917,17 +2948,21 @@ void fastDynamicFvMesh::calcModalForces()
             vectorField aggregatedPressure(nRefFaces, vector::zero);
             vectorField aggregatedShear(nRefFaces, vector::zero);
             const List<labelList>& faceToRefs = fsiFaceToReferenceFaces_[i];
-            const List<scalarField>& faceToRefWeights = fsiFaceToReferenceWeights_[i];
+            const List<scalarField>& faceToRefWeights =
+                fsiFaceToReferenceWeights_[i];
 
-            // Loop over current (possibly split) faces and aggregate to reference faces
+            // Loop over current (possibly split) faces and aggregate to
+            // reference faces
             forAll(pp, faceI)
             {
-                if (faceI >= faceToRefs.size() || faceI >= faceToRefWeights.size())
+                if (faceI >= faceToRefs.size() ||
+                    faceI >= faceToRefWeights.size())
                 {
                     FatalErrorInFunction
-                        << "Invalid refined-face mapping: patch '" << fsiPatches_[i]
-                        << "', face " << faceI
-                        << " has no reference mapping entry." << exit(FatalError);
+                        << "Invalid refined-face mapping: patch '"
+                        << fsiPatches_[i] << "', face " << faceI
+                        << " has no reference mapping entry."
+                        << exit(FatalError);
                 }
 
                 const labelList& refs = faceToRefs[faceI];
@@ -2939,14 +2974,13 @@ void fastDynamicFvMesh::calcModalForces()
                         << "Invalid refined/unrefined face mapping on patch '"
                         << fsiPatches_[i] << "', face " << faceI
                         << ": refs=" << refs.size()
-                        << ", weights=" << weights.size()
-                        << exit(FatalError);
+                        << ", weights=" << weights.size() << exit(FatalError);
                 }
 
                 const vector& areaVec = faceAreas[faceI];
                 const scalar areaMag = mag(areaVec);
                 const vector faceNormal =
-                    areaMag > VSMALL ? areaVec/areaMag : vector::zero;
+                    areaMag > VSMALL ? areaVec / areaMag : vector::zero;
 
                 const vector pressureForce =
                     (pressureScale[faceI] * pPatch[faceI] - pRef_) * areaVec;
@@ -2962,9 +2996,9 @@ void fastDynamicFvMesh::calcModalForces()
                 }
 
                 const vector pressureTraction =
-                    areaMag > VSMALL ? pressureForce/areaMag : vector::zero;
+                    areaMag > VSMALL ? pressureForce / areaMag : vector::zero;
                 const vector shearTraction =
-                    areaMag > VSMALL ? shearForce/areaMag : vector::zero;
+                    areaMag > VSMALL ? shearForce / areaMag : vector::zero;
 
                 forAll(refs, refI)
                 {
@@ -2980,14 +3014,16 @@ void fastDynamicFvMesh::calcModalForces()
 
                     const scalar w = max(weights[refI], 0.0);
                     const scalar refArea = referenceFsiFaceAreas_[i][refFaceI];
-                    aggregatedPressure[refFaceI] += pressureTraction*(w*refArea);
-                    aggregatedShear[refFaceI] += shearTraction*(w*refArea);
+                    aggregatedPressure[refFaceI] +=
+                        pressureTraction * (w * refArea);
+                    aggregatedShear[refFaceI] += shearTraction * (w * refArea);
                 }
             }
 
             for (label m = 0; m < nMode_; ++m)
             {
-                const vectorField& refShape = referenceFaceModeProjection_[i][m];
+                const vectorField& refShape =
+                    referenceFaceModeProjection_[i][m];
                 forAll(refShape, refFaceI)
                 {
                     const scalar pressureModeForce =
@@ -3045,10 +3081,7 @@ void fastDynamicFvMesh::calcModalForces()
         reduce(modePressureForce_[i], sumOp<scalar>());
         reduce(modeShearForce_[i], sumOp<scalar>());
     }
-
-
 }
-
 
 void fastDynamicFvMesh::calcStructuralModalForces()
 {
@@ -3067,10 +3100,8 @@ void fastDynamicFvMesh::calcStructuralModalForces()
         forAll(structuralForceNodeIDs_, forceI)
         {
             const vector nodalForce =
-                interpolateStructuralForce(
-                    structuralForceTimes_[forceI],
-                    structuralForceValues_[forceI],
-                    t);
+                interpolateStructuralForce(structuralForceTimes_[forceI],
+                    structuralForceValues_[forceI], t);
 
             structuralForceSignal_ += mag(nodalForce);
 
@@ -3218,7 +3249,8 @@ bool fastDynamicFvMesh::update()
     {
         if (timingHasLastUpdate_)
         {
-            const scalar fluidCpu = updateStartCpuTime - timingLastUpdateCpuTime_;
+            const scalar fluidCpu =
+                updateStartCpuTime - timingLastUpdateCpuTime_;
             if (fluidCpu > 0)
             {
                 timingFluidCpuAccum_ += fluidCpu;
@@ -3243,18 +3275,14 @@ bool fastDynamicFvMesh::update()
     if (firstIter)
     {
         updateCount_ = 0;
+        // Store previous state only on the first iteration of the time step
+        modeForce0_ = modeForce_;
+        modeState0_ = modeState_;
     }
     updateCount_++;
 
     // 1. Calculate time step
     scalar dt = this->time().deltaTValue();
-
-    // Store previous state only on the first iteration of the time step
-    if (firstIter)
-    {
-        modeForce0_ = modeForce_;
-        modeState0_ = modeState_;
-    }
 
     // 2. Calculate fluid forces and optional structural external loading
     calcModalForces();
@@ -3266,21 +3294,18 @@ bool fastDynamicFvMesh::update()
     }
 
     // Force relaxation and residual calculation
-    if (firstIter)
-    {
-        // On the very first iteration of a time step, we are predicting the force.
-        // If we just use modeForce0_, we are assuming force doesn't change.
-        // But appliedModeForce_ holds the LAST applied force from the PREVIOUS time step's convergence.
-        
-        // HOWEVER, on a restart, appliedModeForce_ might be stale or just read.
-        // We should ensure that we don't relax against a zero vector if the force is large.
-        
-        // Let's rely on the constructor/initialization logic for restart cases.
-        // For normal running, appliedModeForce_ carries over.
-    }
+    //   ON the very first iteration of a time step, we are predicting the
+    // force. If we just use modeForce0_, we are assuming force doesn't change.
+    // But appliedModeForce_ holds the LAST applied force from the PREVIOUS time
+    // step's convergence.
+    //   HOWEVER, on a restart, appliedModeForce_ might be stale or just read.
+    // We should ensure that we don't relax against a zero vector if the force
+    // is large.
+    //   LET'S rely on the constructor/initialization logic for restart cases.
+    // For normal running, appliedModeForce_ carries over.
 
     fsiResidual_ = 0.0;
-    
+
     // Temporary storage for next iteration forces
     scalarField nextAppliedForce(nMode_);
 
@@ -3288,39 +3313,44 @@ bool fastDynamicFvMesh::update()
     {
         scalar rawFluidForce = modeForce_[i];
         scalar prevRelaxedForce = appliedModeForce_[i];
-        
+
         // Relax: F_new = F_old + alpha * (F_fluid - F_old)
         // Here F_fluid is the new target, F_old is where we were.
-        scalar newRelaxedForce = prevRelaxedForce + couplingRelaxation_ * (rawFluidForce - prevRelaxedForce);
-        
-        // If this is the first iteration of the time step, and we are RESTARTING (or startup),
-        // we might want to trust the computed force more if the previous force is suspiciously zero
-        // while the new force is large.
-        if (firstIter && mag(prevRelaxedForce) < VSMALL && mag(rawFluidForce) > 1.0)
+        scalar newRelaxedForce = prevRelaxedForce +
+            couplingRelaxation_ * (rawFluidForce - prevRelaxedForce);
+
+        // If this is the first iteration of the time step, and we are
+        // RESTARTING (or startup), we might want to trust the computed force
+        // more if the previous force is suspiciously zero while the new force
+        // is large.
+        if (firstIter && mag(prevRelaxedForce) < VSMALL &&
+            mag(rawFluidForce) > 1.0)
         {
-             // Likely a bad initialization on restart or startup
-             newRelaxedForce = rawFluidForce;
-             
-             if (Pstream::master() && i==0)
-             {
-                 Info << "  First iter override: using raw force " << rawFluidForce 
-                      << " instead of relaxed " << newRelaxedForce << endl;
-             }
+            // Likely a bad initialization on restart or startup
+            newRelaxedForce = rawFluidForce;
+
+            if (Pstream::master() && i == 0)
+            {
+                Info << "  First iter override: using raw force "
+                     << rawFluidForce << " instead of relaxed "
+                     << newRelaxedForce << endl;
+            }
         }
-        
+
         // Calculate residual relative to the NEW force magnitude
         // Convergence is when F_fluid matches F_old (correction goes to zero)
         // or when F_new matches F_old (change is zero).
         scalar diff = mag(newRelaxedForce - prevRelaxedForce);
         scalar magForce = mag(newRelaxedForce) + 1e-12; // Avoid div by zero
         scalar res = diff / magForce;
-        
-        if (res > fsiResidual_) fsiResidual_ = res;
-        
+
+        if (res > fsiResidual_)
+            fsiResidual_ = res;
+
         // Store for next step
         nextAppliedForce[i] = newRelaxedForce;
     }
-    
+
     // Update state
     appliedModeForce_ = nextAppliedForce;
     modeForce_ = nextAppliedForce; // Use relaxed force for structural dynamics
@@ -3328,18 +3358,18 @@ bool fastDynamicFvMesh::update()
     // Store FSI residual in object registry for solvers to read
     if (this->foundObject<uniformDimensionedScalarField>("fsiResidual"))
     {
-         const_cast<uniformDimensionedScalarField&>(
-             this->lookupObject<uniformDimensionedScalarField>("fsiResidual")
-         ).value() = fsiResidual_;
+        const_cast<uniformDimensionedScalarField&>(
+            this->lookupObject<uniformDimensionedScalarField>("fsiResidual"))
+            .value() = fsiResidual_;
     }
     else
     {
-         uniformDimensionedScalarField* fsiResPtr = new uniformDimensionedScalarField(
-             IOobject("fsiResidual", this->time().constant(), *this, 
-                      IOobject::NO_READ, IOobject::NO_WRITE), 
-             dimless, 
-             fsiResidual_);
-         fsiResPtr->store();
+        uniformDimensionedScalarField* fsiResPtr =
+            new uniformDimensionedScalarField(
+                IOobject("fsiResidual", this->time().constant(), *this,
+                    IOobject::NO_READ, IOobject::NO_WRITE),
+                dimless, fsiResidual_);
+        fsiResPtr->store();
     }
 
     if (startupStepCount_ < 2)
@@ -3393,9 +3423,8 @@ bool fastDynamicFvMesh::update()
             timingLastUpdateCpuTime_ = updateEndCpuTime;
         }
 
-
-
-        return runtimeRefinementEnabled_ || this->moving() || this->topoChanging();
+        return runtimeRefinementEnabled_ || this->moving() ||
+            this->topoChanging();
     }
 
     // 3. Solve dynamics
@@ -3413,30 +3442,32 @@ bool fastDynamicFvMesh::update()
 
         // Old displacement applied to the mesh
         const scalar appliedDisp0 = appliedModeDisp_[m];
-        
+
         // New displacement from structural solver (using relaxed forces)
         const scalar targetDisp = modeState_[m].x();
 
         // Calculate increment
         scalar dDisp = targetDisp - appliedDisp0;
-        
+
         // Apply limiter
         if (mag(dDisp) > maxDispChange_)
         {
-            if (Pstream::master() && updateCount_ == 1 && m == 0) // Log once per step
+            if (Pstream::master() && updateCount_ == 1 &&
+                m == 0) // Log once per step
             {
-                WarningInFunction << "Limiting displacement change for Mode " << m 
-                                  << " from " << dDisp << " to " 
-                                  << (dDisp > 0 ? maxDispChange_ : -maxDispChange_) << endl;
+                WarningInFunction
+                    << "Limiting displacement change for Mode " << m << " from "
+                    << dDisp << " to "
+                    << (dDisp > 0 ? maxDispChange_ : -maxDispChange_) << endl;
             }
             dDisp = (dDisp > 0) ? maxDispChange_ : -maxDispChange_;
         }
-        
+
         // Final applied displacement
         const scalar appliedDisp = appliedDisp0 + dDisp;
-        
-        // Update the physics state to be consistent with the applied displacement
-        // This effectively adds a constraint force implicitly
+
+        // Update the physics state to be consistent with the applied
+        // displacement This effectively adds a constraint force implicitly
         modeState_[m].x() = appliedDisp;
         appliedModeDisp_[m] = appliedDisp;
 
@@ -3450,7 +3481,8 @@ bool fastDynamicFvMesh::update()
     this->movePoints(newPoints);
     writeDiagnostics();
 
-    if (Pstream::master() && structuralForceEnabled_ && updateCount_ == 1 && nMode_ > 0)
+    if (Pstream::master() && structuralForceEnabled_ && updateCount_ == 1 &&
+        nMode_ > 0)
     {
         Info << "Structural modal load summary at t=" << this->time().timeName()
              << ": mode0=" << structuralModeForce_[0]
@@ -3468,14 +3500,11 @@ bool fastDynamicFvMesh::update()
         timingLastUpdateCpuTime_ = updateEndCpuTime;
     }
 
-    // Persist restart modal states in a dedicated channel under constant/fsiRestart
-    // to avoid mixing restart metadata with reconstructed field time directories.
-    if
-    (
-        Pstream::master()
-     && this->time().writeTime()
-     && currentTimeIndex != lastGlobalWriteTimeIndex_
-    )
+    // Persist restart modal states in a dedicated channel under
+    // constant/fsiRestart to avoid mixing restart metadata with reconstructed
+    // field time directories.
+    if (Pstream::master() && this->time().writeTime() &&
+        currentTimeIndex != lastGlobalWriteTimeIndex_)
     {
         lastGlobalWriteTimeIndex_ = currentTimeIndex;
 

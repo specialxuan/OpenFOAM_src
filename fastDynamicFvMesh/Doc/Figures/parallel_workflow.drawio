@@ -1,0 +1,229 @@
+<mxfile host="65bd71144e">
+    <diagram id="CPZlCMhuwHvcsL-K3rVJ" name="Page-1">
+        <mxGraphModel dx="1064" dy="601" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="1600" background="ffffff" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="s1label" value="Step 1" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="50" y="50" width="100" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="s1box" value="Get frequency and modal shape vector" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="220" y="50" width="600" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="s2label" value="Step 2" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="50" y="130" width="100" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="s2box" value="Distribute Structure-Pseudo-Elastomer nodes" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="220" y="120" width="600" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="s3label" value="Step 3" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="50" y="230" width="100" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1sub" value="P₁&#xa;Sub-processor" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="150" y="230" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1force" value="P₁: Modal&#xa;force solution at&#xa;regional nodes" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="150" y="340" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1e1" style="fontSize=16;" parent="1" source="p1sub" target="p1force" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p2sub" value="P₂&#xa;Sub-processor" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="330" y="230" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="p2force" value="P₂: Modal&#xa;force solution at&#xa;regional nodes" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="330" y="340" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="p2e1" style="fontSize=16;" parent="1" source="p2sub" target="p2force" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="7" value="" style="edgeStyle=none;html=1;" edge="1" parent="1" source="ellipsis1" target="6">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ellipsis1" value="......" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="510" y="230" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pnsub" value="Pₙ&#xa;Sub-processor" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="690" y="230" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pnforce" value="Pₙ: Modal&#xa;force solution at&#xa;regional nodes" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="690" y="340" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pne1" style="fontSize=16;" parent="1" source="pnsub" target="pnforce" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="sum1" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="p1force" target="s4box" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="520" y="450" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="210" y="440"/>
+                            <mxPoint x="520" y="440"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="sum2" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="p2force" target="s4box" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="520" y="450" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="390" y="440"/>
+                            <mxPoint x="520" y="440"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="sumLabel" value="Summation" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="440" width="240" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="sum3" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="pnforce" target="s4box" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="520" y="450" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="750" y="440"/>
+                            <mxPoint x="520" y="440"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="s4label" value="Step 4" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="50" y="480" width="100" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="s4box" value="P₁: Calculate modal displacement using&#xa;Wilson-θ method in main processor" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="220" y="480" width="600" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="s4box" target="p1trans" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="520" y="590" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="520" y="580"/>
+                            <mxPoint x="210" y="580"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="bcLabel" value="Broadcast" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="550" width="240" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="s5label" value="Step 5" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="50" y="600" width="100" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1trans" value="P₁&#xa;regular transform" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="150" y="600" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="p2trans" value="P₂&#xa;regular transform" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="330" y="600" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="5" value="" style="edgeStyle=none;html=1;" edge="1" parent="1" source="ellipsis2" target="ellipsis3">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ellipsis2" value="......" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="510" y="600" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pntrans" value="Pₙ&#xa;regular transform" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="690" y="600" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="s6label" value="Step 6" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="50" y="720" width="100" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1mesh" value="P₁: Regional&#xa;mesh update" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="150" y="720" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="p2mesh" value="P₂: Regional&#xa;mesh update" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="330" y="720" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="ellipsis3" value="......" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="510" y="720" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pnmesh" value="Pₙ: Regional&#xa;mesh update" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" parent="1" vertex="1">
+                    <mxGeometry x="690" y="720" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="e5to6_1" style="fontSize=16;" parent="1" source="p1trans" target="p1mesh" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e5to6_2" style="fontSize=16;" parent="1" source="p2trans" target="p2mesh" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e5to6_3" style="fontSize=16;" parent="1" source="pntrans" target="pnmesh" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="2" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="s4box" target="p2trans">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="220" y="610" as="targetPoint"/>
+                        <mxPoint x="530" y="550" as="sourcePoint"/>
+                        <Array as="points">
+                            <mxPoint x="520" y="580"/>
+                            <mxPoint x="390" y="580"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="3" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" target="ellipsis2">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="400" y="610" as="targetPoint"/>
+                        <mxPoint x="520" y="540" as="sourcePoint"/>
+                        <Array as="points">
+                            <mxPoint x="520" y="580"/>
+                            <mxPoint x="570" y="580"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="4" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="s4box" target="pntrans">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="580" y="610" as="targetPoint"/>
+                        <mxPoint x="530" y="550" as="sourcePoint"/>
+                        <Array as="points">
+                            <mxPoint x="520" y="580"/>
+                            <mxPoint x="750" y="580"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="8" value="" style="edgeStyle=none;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="6" target="s4box">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="570" y="440"/>
+                            <mxPoint x="520" y="440"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="6" value="......" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5;align=center;fontSize=16;" vertex="1" parent="1">
+                    <mxGeometry x="510" y="340" width="120" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="s2box" target="p1sub">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="210" y="230" as="targetPoint"/>
+                        <mxPoint x="520" y="170" as="sourcePoint"/>
+                        <Array as="points">
+                            <mxPoint x="520" y="210"/>
+                            <mxPoint x="210" y="210"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="10" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="s2box" target="p2sub">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="390" y="230" as="targetPoint"/>
+                        <mxPoint x="520" y="170" as="sourcePoint"/>
+                        <Array as="points">
+                            <mxPoint x="520" y="210"/>
+                            <mxPoint x="390" y="210"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="11" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="s2box" target="ellipsis1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="570" y="230" as="targetPoint"/>
+                        <mxPoint x="520" y="170" as="sourcePoint"/>
+                        <Array as="points">
+                            <mxPoint x="520" y="210"/>
+                            <mxPoint x="570" y="210"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="12" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;fontSize=16;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="s2box" target="pnsub">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="750" y="230" as="targetPoint"/>
+                        <mxPoint x="520" y="170" as="sourcePoint"/>
+                        <Array as="points">
+                            <mxPoint x="520" y="210"/>
+                            <mxPoint x="750" y="210"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
