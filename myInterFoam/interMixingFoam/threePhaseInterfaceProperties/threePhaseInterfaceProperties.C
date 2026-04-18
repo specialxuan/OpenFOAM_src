@@ -125,6 +125,9 @@ void Foam::threePhaseInterfaceProperties::calculateK()
     // Cell gradient of alpha
     volVectorField gradAlpha(fvc::grad(alpha1));
 
+    magGradAlpha_ = mag(gradAlpha);
+    magGradAlpha_.correctBoundaryConditions();
+
     // Interpolated face-gradient of alpha
     surfaceVectorField gradAlphaf(fvc::interpolate(gradAlpha));
 
@@ -190,6 +193,20 @@ Foam::threePhaseInterfaceProperties::threePhaseInterfaceProperties
             "interfaceProperties:K",
             mixture.alpha1().time().timeName(),
             mixture.alpha1().mesh()
+        ),
+        mixture.alpha1().mesh(),
+        dimensionedScalar(dimless/dimLength, Zero)
+    ),
+
+    magGradAlpha_
+    (
+        IOobject
+        (
+            "alphaGradMagForAMR",
+            mixture.alpha1().time().timeName(),
+            mixture.alpha1().mesh(),
+            IOobject::NO_READ,
+            IOobject::NO_WRITE
         ),
         mixture.alpha1().mesh(),
         dimensionedScalar(dimless/dimLength, Zero)
