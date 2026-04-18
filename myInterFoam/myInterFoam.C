@@ -52,22 +52,7 @@ Description
 #include "fvOptions.H"
 #include "CorrectPhi.H"
 #include "fvcSmooth.H"
-
-// Custom PIMPLE control to enforce FSI convergence
-class fsiPimpleControl : public pimpleControl
-{
-    const bool& fsiConverged_;
-public:
-    fsiPimpleControl(fvMesh& mesh, const bool& fsiConverged, const word& dictName="PIMPLE")
-    : pimpleControl(mesh, dictName), fsiConverged_(fsiConverged)
-    {}
-
-protected:
-    virtual bool criteriaSatisfied()
-    {
-        return pimpleControl::criteriaSatisfied() && fsiConverged_;
-    }
-};
+#include "fsiCoupling.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -124,41 +109,16 @@ int main(int argc, char *argv[])
 
         // --- Pressure-velocity PIMPLE corrector loop
 
-        // Read FSI controls
-        IOdictionary dynamicMeshDict(
-            IOobject(
-                "dynamicMeshDict",
-                runTime.constant(),
-                mesh,
-                IOobject::MUST_READ_IF_MODIFIED,
-                IOobject::NO_WRITE
-            )
-        );
-        const word fsiCoupling = dynamicMeshDict.lookupOrDefault<word>("fsiCoupling", "explicit");
-        const label maxFsiIter = dynamicMeshDict.lookupOrDefault<label>("maxFsiIter", 10);
-        const scalar fsiTolerance = dynamicMeshDict.lookupOrDefault<scalar>("fsiTolerance", 1e-4);
+        const fsiCouplingControls fsiControls =
+            readFsiCouplingControls(runTime, mesh);
 
-        if
-        (
-            fsiCoupling != "explicit"
-         && fsiCoupling != "partitioned"
-         && fsiCoupling != "integrated"
-         && fsiCoupling != "implicit"
-        )
-        {
-            FatalIOErrorInFunction(dynamicMeshDict)
-                << "Unsupported fsiCoupling '" << fsiCoupling
-                << "'. Valid values are explicit, partitioned, integrated, "
-                << "and implicit." << exit(FatalIOError);
-        }
-
-        if (fsiCoupling == "partitioned")
+        if (isPartitionedFsiCoupling(fsiControls.coupling))
         {
             label fsiIter = 0;
             bool fsiConverged = false;
             pointField points0 = mesh.points();
 
-            while (fsiIter < maxFsiIter && !fsiConverged)
+            while (fsiIter < fsiControls.maxIter && !fsiConverged)
             {
                 fsiIter++;
 
@@ -175,36 +135,24 @@ int main(int argc, char *argv[])
                 }
 
                 // Check convergence
-                const pointField& points = mesh.points();
-                scalar maxDiff = 0.0;
-                if (points.size() == points0.size())
-                {
-                    maxDiff = max(mag(points - points0));
-                }
-                else if (Pstream::master())
-                {
-                    Info << "FSI Iteration " << fsiIter
-                         << ": topology change detected on at least one rank"
-                         << "; reset displacement-change reference." << endl;
-                }
-                reduce(maxDiff, maxOp<scalar>());
-                scalar fsiRes = 1.0;
-                if (mesh.foundObject<uniformDimensionedScalarField>("fsiResidual"))
-                {
-                    fsiRes = mesh.lookupObject<uniformDimensionedScalarField>("fsiResidual").value();
-                }
-                fsiConverged = (fsiRes < fsiTolerance);
-                points0 = points;
+                const scalar maxDiff = fsiMaxDisplacementChange
+                (
+                    mesh,
+                    points0,
+                    fsiIter,
+                    "FSI Iteration"
+                );
+                const scalar fsiRes = readFsiResidual(mesh);
+                fsiConverged = (fsiRes < fsiControls.tolerance);
+                points0 = mesh.points();
 
-                Info << "FSI Iteration " << fsiIter
-                     << ": FSI Force Residual = " << fsiRes
-                     << ", max displacement change = " << maxDiff << endl;
+                logFsiIteration("FSI Iteration", fsiIter, fsiRes, maxDiff);
             }
         }
-        else if (fsiCoupling == "integrated" || fsiCoupling == "implicit") // Option (3)
+        else if (isIntegratedFsiCoupling(fsiControls.coupling))
         {
             // Integrated implicit coupling: Move mesh on every PIMPLE outer corrector
-            
+
             pointField points0 = mesh.points();
             bool fsiConverged = false;
             label fsiIter = 0;
@@ -218,33 +166,26 @@ int main(int argc, char *argv[])
 
                 #include "pimpleLoopBody.H"
 
-                const pointField& points = mesh.points();
-                scalar maxDiff = 0.0;
-                if (points.size() == points0.size())
-                {
-                    maxDiff = max(mag(points - points0));
-                }
-                else if (Pstream::master())
-                {
-                    Info << "FSI/PIMPLE Iteration " << fsiIter
-                         << ": topology change detected on at least one rank"
-                         << "; reset displacement-change reference." << endl;
-                }
-                reduce(maxDiff, maxOp<scalar>());
-                
-                scalar fsiRes = 1.0;
-                if (mesh.foundObject<uniformDimensionedScalarField>("fsiResidual"))
-                {
-                    fsiRes = mesh.lookupObject<uniformDimensionedScalarField>("fsiResidual").value();
-                }
+                const scalar maxDiff = fsiMaxDisplacementChange
+                (
+                    mesh,
+                    points0,
+                    fsiIter,
+                    "FSI/PIMPLE Iteration"
+                );
+                const scalar fsiRes = readFsiResidual(mesh);
 
-                Info << "FSI/PIMPLE Iteration " << fsiIter
-                     << ": max displacement change = " << maxDiff 
-                     << ", FSI Force Residual = " << fsiRes << endl;
+                logFsiIteration
+                (
+                    "FSI/PIMPLE Iteration",
+                    fsiIter,
+                    fsiRes,
+                    maxDiff
+                );
 
                 // Check for FSI convergence (using force residual)
-                fsiConverged = (fsiRes < fsiTolerance);
-                points0 = points;
+                fsiConverged = (fsiRes < fsiControls.tolerance);
+                points0 = mesh.points();
             }
 
             if (!fsiConverged)
