@@ -71,6 +71,7 @@ class threePhaseInterfaceProperties
 
         surfaceScalarField nHatf_;
         volScalarField K_;
+        volScalarField magGradAlpha_;
 
 
     // Private Member Functions
@@ -128,6 +129,11 @@ public:
         const volScalarField& K() const
         {
             return K_;
+        }
+
+        const volScalarField& magGradAlpha() const
+        {
+            return magGradAlpha_;
         }
 
         tmp<volScalarField> sigma() const

@@ -171,7 +171,15 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       meshRefinementSupport_(false), runtimeRefinementEnabled_(false),
       refinementInterpTolerance_(1e-8), refinementMinCellVolume_(0.0),
       refinementMinEdgeLength_(0.0), refinementUseGradIndicator_(false),
-      refinementGradIndicatorField_("alpha.water"), referenceFsiBuilt_(false),
+      refinementGradIndicatorField_("alpha.water"),
+      refinementGradIndicatorMagnitudeField_(word::null),
+      refinementGradIndicatorCellCache_(0), refinementGradIndicatorPointCache_(0),
+      refinementGradIndicatorCacheTimeIndex_(-1),
+      refinementGradIndicatorCacheNCells_(-1),
+      refinementGradIndicatorCacheNPoints_(-1),
+      refinementGradIndicatorCacheSourceField_(word::null),
+      refinementGradIndicatorCacheMagnitudeField_(word::null),
+      refinementGradIndicatorCacheValid_(false), referenceFsiBuilt_(false),
       referenceFaceModeProjection_(0), fsiFaceToReferenceFaces_(0),
       fsiFaceToReferenceWeights_(0), referenceFsiFaceAreas_(0)
 {
@@ -528,6 +536,8 @@ void fastDynamicFvMesh::readControls()
             "useGradIndicator", refinementUseGradIndicator_);
         refineDict.readIfPresent(
             "gradIndicatorField", refinementGradIndicatorField_);
+        refineDict.readIfPresent("gradIndicatorMagnitudeField",
+            refinementGradIndicatorMagnitudeField_);
     }
 
     if (runtimeRefinementEnabled_ && !meshRefinementSupport_ && Pstream::master())
@@ -670,9 +680,19 @@ void fastDynamicFvMesh::readControls()
     if (Pstream::master() && runtimeRefinementEnabled_ &&
         refinementUseGradIndicator_)
     {
-        Info << "Runtime AMR indicator uses |grad("
-             << refinementGradIndicatorField_
-             << ")| with dynamicRefineFvMesh thresholds." << endl;
+        if (refinementGradIndicatorMagnitudeField_.empty())
+        {
+            Info << "Runtime AMR indicator uses cached |grad("
+                 << refinementGradIndicatorField_
+                 << ")| with dynamicRefineFvMesh thresholds." << endl;
+        }
+        else
+        {
+            Info << "Runtime AMR indicator uses registered field '"
+                 << refinementGradIndicatorMagnitudeField_
+                 << "' as |grad(" << refinementGradIndicatorField_
+                 << ")| with dynamicRefineFvMesh thresholds." << endl;
+        }
     }
 
     if (structuralForceEnabled_)

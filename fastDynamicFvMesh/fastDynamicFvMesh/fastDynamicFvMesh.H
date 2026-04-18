@@ -242,6 +242,33 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Source scalar field name used to build |grad(field)| indicator
     word refinementGradIndicatorField_;
 
+    //- Optional registered volScalarField containing precomputed |grad(field)|
+    word refinementGradIndicatorMagnitudeField_;
+
+    //- Cached runtime-AMR cell indicator built from |grad(field)|
+    mutable scalarField refinementGradIndicatorCellCache_;
+
+    //- Cached runtime-AMR point indicator built from |grad(field)|
+    mutable scalarField refinementGradIndicatorPointCache_;
+
+    //- Time index for cached runtime-AMR gradient indicator
+    mutable label refinementGradIndicatorCacheTimeIndex_;
+
+    //- Cell count for cached runtime-AMR gradient indicator
+    mutable label refinementGradIndicatorCacheNCells_;
+
+    //- Point count for cached runtime-AMR gradient indicator
+    mutable label refinementGradIndicatorCacheNPoints_;
+
+    //- Source field name for cached runtime-AMR gradient indicator
+    mutable word refinementGradIndicatorCacheSourceField_;
+
+    //- External magnitude field name for cached runtime-AMR gradient indicator
+    mutable word refinementGradIndicatorCacheMagnitudeField_;
+
+    //- Whether cached runtime-AMR gradient indicator is valid
+    mutable bool refinementGradIndicatorCacheValid_;
+
     //- ===== AMR reference-face mapping/cache for force consistency =====
 
     //- Whether reference FSI face cache has been initialized
@@ -306,6 +333,12 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
 
     //- Whether a candidate parent cell satisfies refinement size-floor controls
     bool cellPassesRefinementSizeFloor(const label celli) const;
+
+    //- Clear cached runtime-AMR gradient indicator fields
+    void clearRefinementGradIndicatorCache() const;
+
+    //- Ensure cached runtime-AMR gradient indicator fields are current
+    void ensureRefinementGradIndicatorCache() const;
 
     //- Cache turbulence/thermo/transport pointers from object registry
     void cacheModelPointers();

@@ -71,12 +71,105 @@ bool fastDynamicFvMesh::cellPassesRefinementSizeFloor(const label celli) const
     return true;
 }
 
-scalarField fastDynamicFvMesh::refinementIndicatorCellField(
-    const scalarField& fallbackCellField) const
+void fastDynamicFvMesh::clearRefinementGradIndicatorCache() const
+{
+    refinementGradIndicatorCellCache_.setSize(0);
+    refinementGradIndicatorPointCache_.setSize(0);
+    refinementGradIndicatorCacheTimeIndex_ = -1;
+    refinementGradIndicatorCacheNCells_ = -1;
+    refinementGradIndicatorCacheNPoints_ = -1;
+    refinementGradIndicatorCacheSourceField_ = word::null;
+    refinementGradIndicatorCacheMagnitudeField_ = word::null;
+    refinementGradIndicatorCacheValid_ = false;
+}
+
+void fastDynamicFvMesh::ensureRefinementGradIndicatorCache() const
 {
     if (!refinementUseGradIndicator_)
     {
-        return fallbackCellField;
+        clearRefinementGradIndicatorCache();
+        return;
+    }
+
+    const label timeIndex = this->time().timeIndex();
+    const label nCells = this->nCells();
+    const label nPoints = this->nPoints();
+
+    if
+    (
+        refinementGradIndicatorCacheValid_
+     && refinementGradIndicatorCacheTimeIndex_ == timeIndex
+     && refinementGradIndicatorCacheNCells_ == nCells
+     && refinementGradIndicatorCacheNPoints_ == nPoints
+     && refinementGradIndicatorCacheSourceField_ == refinementGradIndicatorField_
+     && refinementGradIndicatorCacheMagnitudeField_
+        == refinementGradIndicatorMagnitudeField_
+     && refinementGradIndicatorCellCache_.size() == nCells
+     && refinementGradIndicatorPointCache_.size() == nPoints
+    )
+    {
+        return;
+    }
+
+    auto cacheIndicator = [&](const volScalarField& indicator)
+    {
+        if (indicator.size() != nCells)
+        {
+            FatalErrorInFunction
+                << "Runtime AMR gradient indicator field '"
+                << indicator.name() << "' has " << indicator.size()
+                << " cells, but the mesh has " << nCells << " cells."
+                << exit(FatalError);
+        }
+
+        refinementGradIndicatorCellCache_ = indicator.primitiveField();
+        refinementGradIndicatorPointCache_ = maxCellField(indicator);
+
+        if (refinementGradIndicatorPointCache_.size() != nPoints)
+        {
+            FatalErrorInFunction
+                << "Runtime AMR gradient point indicator built from field '"
+                << indicator.name() << "' has "
+                << refinementGradIndicatorPointCache_.size()
+                << " points, but the mesh has " << nPoints << " points."
+                << exit(FatalError);
+        }
+
+        refinementGradIndicatorCacheTimeIndex_ = timeIndex;
+        refinementGradIndicatorCacheNCells_ = nCells;
+        refinementGradIndicatorCacheNPoints_ = nPoints;
+        refinementGradIndicatorCacheSourceField_ =
+            refinementGradIndicatorField_;
+        refinementGradIndicatorCacheMagnitudeField_ =
+            refinementGradIndicatorMagnitudeField_;
+        refinementGradIndicatorCacheValid_ = true;
+    };
+
+    if (!refinementGradIndicatorMagnitudeField_.empty())
+    {
+        if
+        (
+            !this->foundObject<volScalarField>
+            (
+                refinementGradIndicatorMagnitudeField_
+            )
+        )
+        {
+            FatalErrorInFunction
+                << "Runtime AMR gradient indicator magnitude field '"
+                << refinementGradIndicatorMagnitudeField_
+                << "' is configured, but it is not available in the "
+                << "objectRegistry." << exit(FatalError);
+        }
+
+        cacheIndicator
+        (
+            this->lookupObject<volScalarField>
+            (
+                refinementGradIndicatorMagnitudeField_
+            )
+        );
+        return;
     }
 
     if (!this->foundObject<volScalarField>(refinementGradIndicatorField_))
@@ -90,7 +183,19 @@ scalarField fastDynamicFvMesh::refinementIndicatorCellField(
     const volScalarField& sourceField =
         this->lookupObject<volScalarField>(refinementGradIndicatorField_);
     const tmp<volScalarField> tIndicator = mag(fvc::grad(sourceField));
-    return tIndicator().primitiveField();
+    cacheIndicator(tIndicator());
+}
+
+scalarField fastDynamicFvMesh::refinementIndicatorCellField(
+    const scalarField& fallbackCellField) const
+{
+    if (!refinementUseGradIndicator_)
+    {
+        return fallbackCellField;
+    }
+
+    ensureRefinementGradIndicatorCache();
+    return refinementGradIndicatorCellCache_;
 }
 
 scalarField fastDynamicFvMesh::refinementIndicatorPointField(
@@ -101,18 +206,8 @@ scalarField fastDynamicFvMesh::refinementIndicatorPointField(
         return fallbackPointField;
     }
 
-    if (!this->foundObject<volScalarField>(refinementGradIndicatorField_))
-    {
-        FatalErrorInFunction
-            << "Runtime AMR gradient indicator is enabled, but source field '"
-            << refinementGradIndicatorField_
-            << "' is not available in the objectRegistry." << exit(FatalError);
-    }
-
-    const volScalarField& sourceField =
-        this->lookupObject<volScalarField>(refinementGradIndicatorField_);
-    const tmp<volScalarField> tIndicator = mag(fvc::grad(sourceField));
-    return maxCellField(tIndicator());
+    ensureRefinementGradIndicatorCache();
+    return refinementGradIndicatorPointCache_;
 }
 
 void fastDynamicFvMesh::selectRefineCandidates(const scalar lowerRefineLevel,
@@ -192,6 +287,7 @@ labelList fastDynamicFvMesh::selectUnrefinePoints(const scalar unrefineLevel,
 void fastDynamicFvMesh::updateMesh(const mapPolyMesh& mpm)
 {
     dynamicFvMesh::updateMesh(mpm);
+    clearRefinementGradIndicatorCache();
 
     if (!meshRefinementSupport_)
     {

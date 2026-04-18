@@ -57,7 +57,16 @@ At each mesh `update()`:
   - optional gradient-based AMR indicator:
     - `useGradIndicator true` switches AMR criteria from raw `field` values to `|grad(gradIndicatorField)|`,
     - `gradIndicatorField` defaults to `alpha.water`,
+    - `gradIndicatorMagnitudeField` is optional; when set, `fastDynamicFvMesh`
+      reads that registered `volScalarField` as the precomputed gradient
+      magnitude and does not call `fvc::grad(gradIndicatorField)` during AMR,
+    - when `gradIndicatorMagnitudeField` is not set, the internally computed
+      gradient magnitude is cached for the current time index and mesh size, so
+      cell refine and point unrefine selection share one gradient calculation,
     - `lowerRefineLevel/upperRefineLevel/unrefineLevel` are then interpreted on gradient magnitude and can be set with explicit hysteresis (`unrefineLevel < lowerRefineLevel`),
+    - the local `interMixingFoam` three-phase interface model registers
+      `alphaGradMagForAMR` from the `gradAlpha` already computed in
+      `mixture.correct()`, which can be used as `gradIndicatorMagnitudeField`,
   - optional refinement-size floors can be enforced before AMR split selection:
     - `refinementMinCellVolume` (minimum estimated child-cell volume),
     - `refinementMinEdgeLength` (minimum estimated child-edge length),
@@ -156,6 +165,8 @@ dynamicRefineFvMeshCoeffs
     // Optional: use |grad(alpha.water)| as AMR indicator
     useGradIndicator   true;
     gradIndicatorField alpha.water;
+    // Optional: reuse a registered precomputed magnitude field
+    // gradIndicatorMagnitudeField alphaGradMagForAMR;
 
     // Hysteresis on gradient indicator
     lowerRefineLevel   30;

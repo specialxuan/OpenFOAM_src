@@ -1,6 +1,6 @@
-*/Make/linux64GccDPInt32Opt
+**/linux64GccDPInt32Opt
 */.cache/
-*/lnInclude/
+**/lnInclude/
 __pycache__/
 mcp.json
 *.svg
@@ -8,3 +8,6 @@ mcp.json
 *.sta
 .venv_fdm/
 .codex
+mesh_accuracy_efficiency_comparison.md
+Plan_1-5_Finished.md
+Plan.md
