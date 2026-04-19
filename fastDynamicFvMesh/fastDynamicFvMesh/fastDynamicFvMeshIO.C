@@ -338,6 +338,8 @@ void fastDynamicFvMesh::readControls()
     fdmDict.readIfPresent("meshRefinementSupport", meshRefinementSupport_);
     fdmDict.readIfPresent(
         "refinementInterpTolerance", refinementInterpTolerance_);
+    fdmDict.readIfPresent(
+        "refinementMappingDiagnostics", refinementMappingDiagnostics_);
     scalar refinementFaceMapTolerance = 0.0;
     const bool foundRefinementFaceMapTolerance = fdmDict.readIfPresent(
         "refinementFaceMapTolerance", refinementFaceMapTolerance);
