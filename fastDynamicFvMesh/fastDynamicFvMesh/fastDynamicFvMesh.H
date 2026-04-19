@@ -384,6 +384,36 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Solve structural dynamics using Wilson-Theta method
     void solveStructuralDynamics(scalar dt);
 
+    //- Account estimated fluid CPU time at the start of update()
+    void accountFluidCpuAtUpdateStart(const scalar updateStartCpuTime);
+
+    //- Prepare per-time-step state and trigger runtime-AMR topology update
+    bool beginUpdateStep(const label currentTimeIndex);
+
+    //- Assemble fluid/structural modal forces, relax them, and publish residual
+    void assembleAndRelaxModalForces(const bool firstIter);
+
+    //- Publish current FSI residual in the mesh object registry
+    void publishFsiResidual();
+
+    //- Handle the two legacy startup initialisation passes
+    bool initializeStartupStateIfNeeded();
+
+    //- Solve modal dynamics and move mesh points
+    void solveAndMoveMesh(const scalar dt);
+
+    //- Log structural load summary for the first update of a time step
+    void logStructuralLoadSummary();
+
+    //- Account mesh CPU time at the end of update()
+    void accountMeshCpuAtUpdateEnd(const scalar updateStartCpuTime);
+
+    //- Write timing and restart state when the current time is a write time
+    void writeUpdateOutputs(const label currentTimeIndex);
+
+    //- Return OpenFOAM mesh-update status from the current mesh state
+    bool updateReturnState();
+
     //- Write modal force/displacement diagnostics (optional)
     void writeDiagnostics();
 

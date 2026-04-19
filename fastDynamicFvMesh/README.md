@@ -92,7 +92,8 @@ At each mesh `update()`:
   - internal cleanup note: AMR reference-face bookkeeping now keeps only actively used data (reference-face areas, projections, and topology weights); removed unused reference centre/normal cache with no behavior change.
   - maintenance cleanup note: removed an unused local type alias in `devRhoReff()` to eliminate compiler warning `-Wunused-local-typedefs` with no runtime behavior change.
   - maintainability note: member declarations in `fastDynamicFvMesh.H` are grouped by subsystem (core modal state, timing/diagnostics, structural loading, AMR controls, reference-face mapping) with no behavior change.
-  - source-layout note: implementation is split by subsystem into `fastDynamicFvMeshMain.C`, `fastDynamicFvMeshIO.C`, `fastDynamicFvMeshModeMapping.C`, `fastDynamicFvMeshForces.C`, `fastDynamicFvMeshSolver.C`, `fastDynamicFvMeshAMR.C`, and `fastDynamicFvMeshDiagnostics.C`; this is a maintainability-only refactor with unchanged runtime keys/behavior.
+  - source-layout note: implementation is split by subsystem into `fastDynamicFvMeshMain.C`, `fastDynamicFvMeshUpdate.C`, `fastDynamicFvMeshIO.C`, `fastDynamicFvMeshModeMapping.C`, `fastDynamicFvMeshForces.C`, `fastDynamicFvMeshSolver.C`, `fastDynamicFvMeshAMR.C`, and `fastDynamicFvMeshDiagnostics.C`; this is a maintainability-only refactor with unchanged runtime keys/behavior.
+  - update-orchestration note: `fastDynamicFvMesh::update()` is decomposed into named internal stages for timing, AMR topology update, modal-force relaxation, startup initialization, mesh motion, and write-time output; this keeps the call order and runtime behavior unchanged.
 
 ## Build
 
@@ -430,7 +431,8 @@ This section maps each repository commit to concrete code/document changes.
 ### `9939057` — v3.2.0 split fastDynamicFvMesh (2026-04-15)
 
 - Refactored implementation layout by splitting the original monolithic source into:
-  - `fastDynamicFvMeshMain.C`: construction, initialization, and update orchestration,
+  - `fastDynamicFvMeshMain.C`: construction, initialization, and the `update()` entry point,
+  - `fastDynamicFvMeshUpdate.C`: internal `update()` stages for timing, topology update, modal-force relaxation, startup initialization, mesh motion, and write-time output,
   - `fastDynamicFvMeshIO.C`: dictionary parsing, restart state I/O, modal CSV input, and structural force input,
   - `fastDynamicFvMeshModeMapping.C`: mode-shape loading, mesh-topology interpolation, shared-point synchronization, and reference-face mapping,
   - `fastDynamicFvMeshForces.C`: fluid/structural modal-force assembly and stress helpers,
@@ -445,3 +447,4 @@ This section maps each repository commit to concrete code/document changes.
   - `fastDynamicFvMesh/README.md`,
   - `fastDynamicFvMesh/Doc/快速动网格程序手册.md`,
   - `fastDynamicFvMesh/Doc/Figures/fastDynamicFvMesh_Flowchart.drawio`.
+- Follow-up maintainability refactor: decomposed `fastDynamicFvMesh::update()` into named internal stages in `fastDynamicFvMeshUpdate.C` while preserving the original call order and behavior.
