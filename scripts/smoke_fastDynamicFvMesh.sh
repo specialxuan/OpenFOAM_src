@@ -3,7 +3,7 @@ set -euo pipefail
 
 workspace_root="${WORKSPACE_ROOT:-/root/Workspace}"
 src_root="${SRC_ROOT:-/root/OpenFOAM/user-v2412/src}"
-run_root="${RUN_ROOT:-/tmp/fastDynamicFvMesh_smoke_$(date +%Y%m%d_%H%M%S)}"
+run_root="${RUN_ROOT:-$workspace_root/fastDynamicFvMesh_smoke_$(date +%Y%m%d_%H%M%S)}"
 solver_override="${SMOKE_SOLVER:-}"
 end_time="${SMOKE_END_TIME:-}"
 dry_run=0
@@ -20,7 +20,7 @@ By default, each case uses its own system/controlDict application entry.
 Environment overrides:
   WORKSPACE_ROOT   default: /root/Workspace
   SRC_ROOT         default: /root/OpenFOAM/user-v2412/src
-  RUN_ROOT         default: /tmp/fastDynamicFvMesh_smoke_<timestamp>
+  RUN_ROOT         default: /root/Workspace/fastDynamicFvMesh_smoke_<timestamp>
   SMOKE_SOLVER     optional solver override for all cases
   SMOKE_END_TIME   optional controlDict endTime override
 USAGE

@@ -54,6 +54,8 @@ At each mesh `update()`:
   - if `dynamicRefineFvMeshCoeffs` exists while `meshRefinementSupport false`,
     a warning is printed because topology changes can invalidate modal-shape and
     FSI face caches,
+  - `refinementMappingDiagnostics true` prints per-topology-change mode-shape
+    mapping counts for AMR validation (default `false`),
   - optional gradient-based AMR indicator:
     - `useGradIndicator true` switches AMR criteria from raw `field` values to `|grad(gradIndicatorField)|`,
     - `gradIndicatorField` defaults to `alpha.water`,
@@ -142,6 +144,7 @@ fastDynamicFvMeshCoeffs
     structNodeDispPrefix    StructNodeDisp;
     meshRefinementSupport   false;
     refinementInterpTolerance 1e-8;
+    refinementMappingDiagnostics false;
     refinementFaceMapTolerance 0; // deprecated compatibility key; ignored
     refinementMinCellVolume 0;    // optional; 0 disables child-volume floor
     refinementMinEdgeLength 0;    // optional; 0 disables child-edge floor

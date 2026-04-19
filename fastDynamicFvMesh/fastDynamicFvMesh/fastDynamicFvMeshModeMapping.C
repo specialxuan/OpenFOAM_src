@@ -1117,6 +1117,53 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(boolList& knownMask,
     return localInterpolated;
 }
 
+void fastDynamicFvMesh::logModeShapeMappingSummary(const label oldNPoints,
+    const label newNPoints, const bool anyRefinement,
+    const bool shrinkingOrEqualTopology, const label localDirectMapped,
+    const label localDeferredAddedPoints, const label localLineageMapped,
+    const label localEdgeInterpolated, const label localFaceInterpolated,
+    const label localCellInterpolated, const label localUnknown) const
+{
+    if (!refinementMappingDiagnostics_)
+    {
+        return;
+    }
+
+    const label globalOldNPoints = returnReduce(oldNPoints, sumOp<label>());
+    const label globalNewNPoints = returnReduce(newNPoints, sumOp<label>());
+    const label globalDirectMapped =
+        returnReduce(localDirectMapped, sumOp<label>());
+    const label globalDeferredAddedPoints =
+        returnReduce(localDeferredAddedPoints, sumOp<label>());
+    const label globalLineageMapped =
+        returnReduce(localLineageMapped, sumOp<label>());
+    const label globalEdgeInterpolated =
+        returnReduce(localEdgeInterpolated, sumOp<label>());
+    const label globalFaceInterpolated =
+        returnReduce(localFaceInterpolated, sumOp<label>());
+    const label globalCellInterpolated =
+        returnReduce(localCellInterpolated, sumOp<label>());
+    const label globalUnknown = returnReduce(localUnknown, sumOp<label>());
+
+    if (Pstream::master())
+    {
+        Info << "Mode-shape topology mapping diagnostics:" << nl
+             << "  topologyChange="
+             << (anyRefinement ? "refinement/mixed" : "unrefine/shrink")
+             << ", localTopology="
+             << (shrinkingOrEqualTopology ? "shrinkingOrEqual" : "growing")
+             << nl << "  points old/new=" << globalOldNPoints << "/"
+             << globalNewNPoints << nl
+             << "  directPointMap=" << globalDirectMapped
+             << ", deferredPointMapMasters=" << globalDeferredAddedPoints
+             << ", pointsFromPoints=" << globalLineageMapped << nl
+             << "  interpolated edge/face/cell=" << globalEdgeInterpolated
+             << "/" << globalFaceInterpolated << "/"
+             << globalCellInterpolated << nl
+             << "  finalUnknown=" << globalUnknown << endl;
+    }
+}
+
 void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
 {
     if (!meshRefinementSupport_ || nMode_ <= 0 || modeShapes_.size() == 0)
@@ -1158,6 +1205,7 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
     }
 
     boolList knownMask(newNPoints, false);
+    label localDirectMapped = 0;
     label localDeferredAddedPoints = 0;
 
     for (label pointI = 0; pointI < newNPoints; ++pointI)
@@ -1194,6 +1242,7 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
         }
 
         knownMask[pointI] = true;
+        ++localDirectMapped;
     }
 
     const label globalDeferredAddedPoints =
@@ -1297,6 +1346,9 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
     {
         label globalKnownPrev =
             returnReduce(localKnownAfterSync, sumOp<label>());
+        label localEdgeInterpolated = 0;
+        label localFaceInterpolated = 0;
+        label localCellInterpolated = 0;
 
         for (label passI = 0; passI < 4; ++passI)
         {
@@ -1304,11 +1356,11 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
 
             if (!shrinkingOrEqualTopology)
             {
-                interpolateModeShapesFromKnown(
+                localEdgeInterpolated += interpolateModeShapesFromKnown(
                     knownMask, sourceKnownMask, 2, true, "edge midpoint");
-                interpolateModeShapesFromKnown(
+                localFaceInterpolated += interpolateModeShapesFromKnown(
                     knownMask, sourceKnownMask, 4, false, "face midpoint");
-                interpolateModeShapesFromKnown(
+                localCellInterpolated += interpolateModeShapesFromKnown(
                     knownMask, sourceKnownMask, 8, false, "cell midpoint");
             }
 
@@ -1333,6 +1385,36 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
 
             globalKnownPrev = globalKnownNow;
         }
+
+        syncMappedModeShapes(knownMask);
+
+        label localUnknown = 0;
+        forAll(knownMask, pointI)
+        {
+            if (!knownMask[pointI])
+            {
+                ++localUnknown;
+            }
+        }
+
+        logModeShapeMappingSummary(oldNPoints, newNPoints, anyRefinement,
+            shrinkingOrEqualTopology, localDirectMapped,
+            localDeferredAddedPoints, localLineageMapped,
+            localEdgeInterpolated, localFaceInterpolated,
+            localCellInterpolated, localUnknown);
+
+        if (localUnknown > 0)
+        {
+            FatalErrorInFunction
+                << "Refinement interpolation failed for " << localUnknown
+                << " local points on processor " << Pstream::myProcNo()
+                << " points."
+                << " The 2/4/8 topology-corner rules could not classify all "
+                << "added points. Adjust refinement controls or "
+                << "refinementInterpTolerance." << exit(FatalError);
+        }
+
+        return;
     }
 
     syncMappedModeShapes(knownMask);
@@ -1345,6 +1427,10 @@ void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
             ++localUnknown;
         }
     }
+
+    logModeShapeMappingSummary(oldNPoints, newNPoints, anyRefinement,
+        shrinkingOrEqualTopology, localDirectMapped,
+        localDeferredAddedPoints, localLineageMapped, 0, 0, 0, localUnknown);
 
     if (localUnknown > 0)
     {

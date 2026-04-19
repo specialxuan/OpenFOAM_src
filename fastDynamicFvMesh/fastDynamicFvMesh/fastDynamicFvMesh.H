@@ -230,6 +230,9 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Geometric tolerance for refinement interpolation classification
     scalar refinementInterpTolerance_;
 
+    //- Print per-topology-change mode-shape mapping diagnostics
+    bool refinementMappingDiagnostics_;
+
     //- Optional runtime-AMR minimum child-cell volume floor (<=0 disables)
     scalar refinementMinCellVolume_;
 
@@ -324,6 +327,14 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     label interpolateModeShapesFromKnown(boolList& knownMask,
         const boolList& sourceKnownMask, const label cornerCount,
         const bool distanceWeighted, const word& context);
+
+    //- Print AMR/refinement mode-shape mapping diagnostics when enabled
+    void logModeShapeMappingSummary(const label oldNPoints,
+        const label newNPoints, const bool anyRefinement,
+        const bool shrinkingOrEqualTopology, const label localDirectMapped,
+        const label localDeferredAddedPoints, const label localLineageMapped,
+        const label localEdgeInterpolated, const label localFaceInterpolated,
+        const label localCellInterpolated, const label localUnknown) const;
 
     //- Keep mode-shape storage consistent with current mesh topology
     void ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm);
