@@ -92,7 +92,7 @@ At each mesh `update()`:
   - internal cleanup note: AMR reference-face bookkeeping now keeps only actively used data (reference-face areas, projections, and topology weights); removed unused reference centre/normal cache with no behavior change.
   - maintenance cleanup note: removed an unused local type alias in `devRhoReff()` to eliminate compiler warning `-Wunused-local-typedefs` with no runtime behavior change.
   - maintainability note: member declarations in `fastDynamicFvMesh.H` are grouped by subsystem (core modal state, timing/diagnostics, structural loading, AMR controls, reference-face mapping) with no behavior change.
-  - source-layout note: implementation was split into `fastDynamicFvMeshMain.C`, `fastDynamicFvMeshAMR.C`, and `fastDynamicFvMeshDiagnostics.C`; this is a maintainability-only refactor with unchanged runtime keys/behavior.
+  - source-layout note: implementation is split by subsystem into `fastDynamicFvMeshMain.C`, `fastDynamicFvMeshIO.C`, `fastDynamicFvMeshModeMapping.C`, `fastDynamicFvMeshForces.C`, `fastDynamicFvMeshSolver.C`, `fastDynamicFvMeshAMR.C`, and `fastDynamicFvMeshDiagnostics.C`; this is a maintainability-only refactor with unchanged runtime keys/behavior.
 
 ## Build
 
@@ -430,9 +430,13 @@ This section maps each repository commit to concrete code/document changes.
 ### `9939057` — v3.2.0 split fastDynamicFvMesh (2026-04-15)
 
 - Refactored implementation layout by splitting the original monolithic source into:
-  - `fastDynamicFvMeshMain.C`,
-  - `fastDynamicFvMeshAMR.C`,
-  - `fastDynamicFvMeshDiagnostics.C`.
+  - `fastDynamicFvMeshMain.C`: construction, initialization, and update orchestration,
+  - `fastDynamicFvMeshIO.C`: dictionary parsing, restart state I/O, modal CSV input, and structural force input,
+  - `fastDynamicFvMeshModeMapping.C`: mode-shape loading, mesh-topology interpolation, shared-point synchronization, and reference-face mapping,
+  - `fastDynamicFvMeshForces.C`: fluid/structural modal-force assembly and stress helpers,
+  - `fastDynamicFvMeshSolver.C`: Wilson-Theta structural modal dynamics,
+  - `fastDynamicFvMeshAMR.C`: runtime AMR indicator, selection, and topology-update hooks,
+  - `fastDynamicFvMeshDiagnostics.C`: diagnostics and timing reports.
 - Updated build wiring for multi-translation-unit compilation:
   - `fastDynamicFvMesh/Make/files`,
   - `fastDynamicFvMesh/compile_commands.json`,

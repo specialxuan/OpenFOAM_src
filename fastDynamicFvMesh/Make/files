@@ -1,4 +1,8 @@
 fastDynamicFvMesh/fastDynamicFvMeshMain.C
+fastDynamicFvMesh/fastDynamicFvMeshIO.C
+fastDynamicFvMesh/fastDynamicFvMeshModeMapping.C
+fastDynamicFvMesh/fastDynamicFvMeshForces.C
+fastDynamicFvMesh/fastDynamicFvMeshSolver.C
 fastDynamicFvMesh/fastDynamicFvMeshAMR.C
 fastDynamicFvMesh/fastDynamicFvMeshDiagnostics.C
 
