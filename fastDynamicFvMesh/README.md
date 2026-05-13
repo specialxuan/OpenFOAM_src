@@ -33,7 +33,9 @@ At each mesh `update()`:
   - per-mode `reduce(sumOp<scalar>())` for parallel force reduction.
 - Optional diagnostics and timing:
   - `writeDiagnostics` controls `modal_diagnostics.csv` output (default `false`),
-  - `trackTiming` prints fluid-vs-mesh CPU timing at `writeTime()` (default `false`).
+  - `trackTiming` prints fluid-vs-mesh CPU timing at `writeTime()` (default `false`),
+  - `trackAmrTiming` prints one runtime-AMR timing line for each
+    `dynamicRefineFvMesh::updateTopology()` call (default `false`).
 - Optional structural forcing:
   - enable by `structuralForceEnabled true`,
   - reads `StructNodeCoor.csv` and `StructNodeDisp1..N.csv` for structure modes,
@@ -159,6 +161,7 @@ fastDynamicFvMeshCoeffs
 
     writeDiagnostics   false;
     trackTiming        true;
+    trackAmrTiming     false;
 }
 
 dynamicRefineFvMeshCoeffs
@@ -232,6 +235,16 @@ When `trackTiming true`, master prints at write times:
 ```text
 FSI timing [CPU s] at t=...  step{fluid=..., mesh=..., total=...}  cumulative{...}
 ```
+
+When `trackAmrTiming true`, master also prints one line for each runtime AMR
+topology-update call:
+
+```text
+Runtime AMR timing at t=... [max over ranks]: CPU=... s, Clock=... s, cells ... -> ..., points ... -> ...
+```
+
+In parallel, CPU and Clock are reduced with `max` over ranks, while cell and
+point counts are global sums.
 
 ## A/B performance evaluation (2026-03-28)
 

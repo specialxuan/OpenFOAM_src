@@ -19,6 +19,7 @@
       "-O3",
       "-DNoRepository",
       "-ftemplate-depth-100",
+      "-I../fsiCoupling",
       "-I/usr/lib/openfoam/openfoam2412/src/finiteVolume/cfdTools",
       "-I/usr/lib/openfoam/openfoam2412/src/finiteVolume/lnInclude",
       "-I/usr/lib/openfoam/openfoam2412/src/meshTools/lnInclude",
