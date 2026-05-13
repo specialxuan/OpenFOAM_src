@@ -19,6 +19,7 @@
       "-O3",
       "-DNoRepository",
       "-ftemplate-depth-100",
+      "-I/root/OpenFOAM/user-v2412/src/fsiCoupling",
       "-I/usr/lib/openfoam/openfoam2412/applications/solvers/multiphase/VoF",
       "-I/usr/lib/openfoam/openfoam2412/src/phaseSystemModels/twoPhaseInter/incompressibleInterPhaseTransportModel/lnInclude",
       "-I/usr/lib/openfoam/openfoam2412/src/phaseSystemModels/twoPhaseInter/VoFphaseIncompressibleTurbulenceModels/lnInclude",

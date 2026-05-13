@@ -132,6 +132,9 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Enable/disable timing profiler for fluid/mesh CPU usage
     bool trackTimingEnabled_;
 
+    //- Enable per-runtime-AMR-call timing log output
+    bool trackAmrTimingEnabled_;
+
     //- CPU time at end of previous update() call
     scalar timingLastUpdateCpuTime_;
 

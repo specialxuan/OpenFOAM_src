@@ -327,6 +327,7 @@ void fastDynamicFvMesh::readControls()
     fdmDict.readIfPresent("maxDispChange", maxDispChange_);
     fdmDict.readIfPresent("writeDiagnostics", writeDiagnosticsEnabled_);
     fdmDict.readIfPresent("trackTiming", trackTimingEnabled_);
+    fdmDict.readIfPresent("trackAmrTiming", trackAmrTimingEnabled_);
     fdmDict.readIfPresent("structuralForceEnabled", structuralForceEnabled_);
     fdmDict.readIfPresent("nStructuralForces", nStructuralForces_);
     fdmDict.readIfPresent(

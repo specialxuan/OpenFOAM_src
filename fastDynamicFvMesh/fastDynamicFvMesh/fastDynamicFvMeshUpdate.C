@@ -46,7 +46,41 @@ bool fastDynamicFvMesh::beginUpdateStep(const label currentTimeIndex)
 
     if (runtimeRefinementEnabled_ && firstIter)
     {
-        dynamicRefineFvMesh::updateTopology();
+        if (!trackAmrTimingEnabled_)
+        {
+            dynamicRefineFvMesh::updateTopology();
+        }
+        else
+        {
+            const label nCellsBefore =
+                returnReduce(this->nCells(), sumOp<label>());
+            const label nPointsBefore =
+                returnReduce(this->nPoints(), sumOp<label>());
+            const scalar amrStartCpuTime = this->time().elapsedCpuTime();
+            const scalar amrStartClockTime = this->time().elapsedClockTime();
+
+            dynamicRefineFvMesh::updateTopology();
+
+            const scalar localCpu =
+                this->time().elapsedCpuTime() - amrStartCpuTime;
+            const scalar localClock =
+                this->time().elapsedClockTime() - amrStartClockTime;
+            const scalar maxCpu = returnReduce(localCpu, maxOp<scalar>());
+            const scalar maxClock = returnReduce(localClock, maxOp<scalar>());
+            const label nCellsAfter =
+                returnReduce(this->nCells(), sumOp<label>());
+            const label nPointsAfter =
+                returnReduce(this->nPoints(), sumOp<label>());
+
+            if (Pstream::master())
+            {
+                Info << "Runtime AMR timing at t=" << this->time().timeName()
+                     << " [max over ranks]: CPU=" << maxCpu
+                     << " s, Clock=" << maxClock << " s, cells "
+                     << nCellsBefore << " -> " << nCellsAfter << ", points "
+                     << nPointsBefore << " -> " << nPointsAfter << endl;
+            }
+        }
     }
 
     lastUpdateTimeIndex_ = currentTimeIndex;
