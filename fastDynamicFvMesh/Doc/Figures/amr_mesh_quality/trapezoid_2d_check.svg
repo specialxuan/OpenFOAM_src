@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="560" viewBox="0 0 980 560" role="img" aria-labelledby="title desc">
+  <title id="title">二维梯形验算示意图</title>
+  <desc id="desc">双线性四边形示例中，母单元上边非正交角为45度，内部剖切边的非正交角约为14度。</desc>
+  <defs>
+    <marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#d35400"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#1d6fa5"/>
+    </marker>
+    <style>
+      .shape { fill:#f8fbfd; stroke:#203040; stroke-width:2.8; }
+      .sub { fill:#4aa3df; fill-opacity:0.18; stroke:none; }
+      .split { stroke:#1d6fa5; stroke-width:3.5; }
+      .edgeTop { stroke:#8e44ad; stroke-width:4; }
+      .dash { stroke:#7f8c8d; stroke-width:1.6; stroke-dasharray:7 5; fill:none; }
+      .point { fill:#111827; }
+      .center { fill:#d35400; stroke:#ffffff; stroke-width:1.4; }
+      .dvec { stroke:#d35400; stroke-width:3; marker-end:url(#arrowOrange); fill:none; }
+      .nvec { stroke:#1d6fa5; stroke-width:3; marker-end:url(#arrowBlue); fill:none; }
+      .label { font: 18px sans-serif; fill:#17202a; }
+      .small { font: 15px sans-serif; fill:#2f3a45; }
+      .caption { font: 21px sans-serif; font-weight:700; fill:#17202a; }
+      .formula { font: 18px sans-serif; fill:#263238; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="560" fill="#ffffff"/>
+  <text x="44" y="48" class="caption">二维梯形例子：内部剖切面非正交角计算</text>
+
+  <!-- Coordinate mapping scaled: P00(120,420), P10(520,420), P01(120,220), P11(520,20) -->
+  <polygon class="sub" points="120,420 320,420 320,270 120,320"/>
+  <polygon class="shape" points="120,420 520,420 520,20 120,220"/>
+  <path class="edgeTop" d="M120,220 L520,20"/>
+  <path class="split" d="M320,420 L320,270"/>
+  <path class="dash" d="M120,320 L520,120"/>
+  <path class="dash" d="M320,420 L520,320"/>
+
+  <!-- Points -->
+  <circle class="point" cx="120" cy="420" r="5"/>
+  <circle class="point" cx="520" cy="420" r="5"/>
+  <circle class="point" cx="120" cy="220" r="5"/>
+  <circle class="point" cx="520" cy="20" r="5"/>
+  <text x="78" y="445" class="small">P00</text>
+  <text x="528" y="445" class="small">P10</text>
+  <text x="78" y="220" class="small">P01</text>
+  <text x="528" y="24" class="small">P11</text>
+
+  <!-- Centers corresponding to (1/4,1/4), (3/4,1/4), parent average -->
+  <circle class="center" cx="220" cy="357.5" r="6"/>
+  <circle class="center" cx="420" cy="332.5" r="6"/>
+  <circle class="center" cx="320" cy="270" r="6"/>
+  <text x="184" y="382" class="small">c_left</text>
+  <text x="431" y="354" class="small">c_right</text>
+  <text x="330" y="266" class="small">c_parent</text>
+
+  <path class="dvec" d="M220,357.5 L420,332.5"/>
+  <text x="352" y="304" class="label">d_int = (0.5, 0.125)</text>
+
+  <path class="nvec" d="M320,345 L396,345"/>
+  <text x="398" y="318" class="small">n_int</text>
+
+  <!-- Top face normal and center line -->
+  <path class="dvec" d="M320,270 L320,120"/>
+  <path class="nvec" d="M320,120 L260,92"/>
+  <text x="330" y="194" class="small">d_top</text>
+  <text x="226" y="100" class="small">n_top</text>
+  <path d="M320,210 A60,60 0 0 0 278,168" stroke="#8e44ad" stroke-width="2.2" fill="none"/>
+  <text x="264" y="190" class="label">45°</text>
+
+  <rect x="600" y="120" width="340" height="315" rx="6" fill="#f7f9fb" stroke="#d0d7de"/>
+  <text x="626" y="160" class="formula">映射: x = ξ, y = η(1 + ξ)</text>
+  <text x="626" y="210" class="formula">母单元上边: θ_top = 45°</text>
+  <text x="626" y="260" class="formula">内部剖切边:</text>
+  <text x="626" y="294" class="formula">cos θ_int = 0.5 /</text>
+  <text x="626" y="324" class="formula">sqrt(0.5² + 0.125²)</text>
+  <text x="626" y="364" class="formula">θ_int ≈ 14.0°</text>
+  <text x="626" y="410" class="small">该例子是验证，不是任意畸变单元的全局证明。</text>
+</svg>
