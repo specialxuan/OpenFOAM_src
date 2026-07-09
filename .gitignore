@@ -4,10 +4,14 @@
 __pycache__/
 mcp.json
 *.svg
+!fastDynamicFvMesh/Doc/Figures/amr_mesh_quality/*.svg
 *.cvg
 *.sta
 .venv_fdm/
 .codex
+.omo/
+package.json
+package-lock.json
 mesh_accuracy_efficiency_comparison.md
 Plan_1-5_Finished.md
 Plan.md

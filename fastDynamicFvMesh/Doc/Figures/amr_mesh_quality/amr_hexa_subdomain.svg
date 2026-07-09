@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="520" viewBox="0 0 980 520" role="img" aria-labelledby="title desc">
+  <title id="title">2x2x2 AMR 子域采样示意图</title>
+  <desc id="desc">母六面体被参数中面切分为八个子单元，其中一个角部子单元由边中点、面中点和体心组成。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#34495e"/>
+    </marker>
+    <style>
+      .axis { stroke:#34495e; stroke-width:2.4; marker-end:url(#arrow); fill:none; }
+      .edge { stroke:#203040; stroke-width:2.8; fill:none; stroke-linejoin:round; }
+      .grid { stroke:#718093; stroke-width:1.7; fill:none; stroke-dasharray:7 5; }
+      .highlight { fill:#4aa3df; fill-opacity:0.28; stroke:#1d6fa5; stroke-width:2.4; }
+      .point { fill:#111827; }
+      .newpoint { fill:#e67e22; stroke:#ffffff; stroke-width:1.4; }
+      .label { font: 18px sans-serif; fill:#17202a; }
+      .small { font: 15px sans-serif; fill:#2f3a45; }
+      .caption { font: 21px sans-serif; font-weight:700; fill:#17202a; }
+      .formula { font: 17px sans-serif; fill:#263238; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="520" fill="#ffffff"/>
+  <text x="44" y="46" class="caption">母单元参数空间的 2x2x2 子域划分</text>
+
+  <!-- Cube points: front A B C D, back E F G H -->
+  <polygon points="118,160 358,160 448,82 208,82" fill="#eef6fb" stroke="none"/>
+  <polygon points="358,160 448,82 448,322 358,400" fill="#e8f1f8" stroke="none"/>
+  <polygon points="118,160 358,160 358,400 118,400" fill="#f8fbfd" stroke="none"/>
+
+  <!-- Highlight child at (0,0,0) corner -->
+  <polygon class="highlight" points="118,280 238,280 283,241 163,241"/>
+  <polygon class="highlight" points="238,280 283,241 283,361 238,400"/>
+  <polygon class="highlight" points="118,280 238,280 238,400 118,400"/>
+
+  <!-- Outer cube edges -->
+  <path class="edge" d="M118,160 L358,160 L448,82 L208,82 L118,160"/>
+  <path class="edge" d="M118,400 L358,400 L448,322 L208,322 L118,400"/>
+  <path class="edge" d="M118,160 L118,400 M358,160 L358,400 M448,82 L448,322 M208,82 L208,322"/>
+
+  <!-- Internal split lines -->
+  <path class="grid" d="M238,160 L238,400 M118,280 L358,280"/>
+  <path class="grid" d="M163,121 L163,361 M208,202 L448,202"/>
+  <path class="grid" d="M118,280 L208,202 M238,280 L328,202 M358,280 L448,202"/>
+  <path class="grid" d="M238,160 L328,82 M238,400 L328,322"/>
+  <path class="grid" d="M163,121 L403,121 M163,361 L403,361 M328,82 L328,322 M403,121 L403,361"/>
+
+  <!-- Points -->
+  <circle class="point" cx="118" cy="400" r="4.5"/>
+  <circle class="newpoint" cx="238" cy="400" r="5.5"/>
+  <circle class="newpoint" cx="118" cy="280" r="5.5"/>
+  <circle class="newpoint" cx="163" cy="361" r="5.5"/>
+  <circle class="newpoint" cx="238" cy="280" r="5.5"/>
+  <circle class="newpoint" cx="283" cy="361" r="5.5"/>
+  <circle class="newpoint" cx="163" cy="241" r="5.5"/>
+  <circle class="newpoint" cx="283" cy="241" r="5.5"/>
+
+  <text x="80" y="424" class="small">P000</text>
+  <text x="227" y="425" class="small">边中点</text>
+  <text x="42" y="286" class="small">边中点</text>
+  <text x="286" y="245" class="small">体心</text>
+  <text x="156" y="234" class="small">面中点</text>
+  <text x="132" y="466" class="label">蓝色角部子单元 = 母单元参数子域 [0,1/2]^3</text>
+
+  <!-- Axes -->
+  <path class="axis" d="M610,430 L760,430"/>
+  <path class="axis" d="M610,430 L610,350"/>
+  <path class="axis" d="M610,430 L690,360"/>
+  <text x="768" y="435" class="label">ξ</text>
+  <text x="597" y="340" class="label">η</text>
+  <text x="696" y="357" class="label">ζ</text>
+
+  <rect x="560" y="88" width="360" height="238" rx="6" fill="#f7f9fb" stroke="#d0d7de"/>
+  <text x="584" y="126" class="caption">新增点来源</text>
+  <text x="584" y="168" class="formula">边中点: (P_A + P_B) / 2</text>
+  <text x="584" y="208" class="formula">面中点: (P_1 + P_2 + P_3 + P_4) / 4</text>
+  <text x="584" y="248" class="formula">体心: Σ P_ijk / 8</text>
+  <text x="584" y="290" class="formula">这些点都是 x_P(ξ,η,ζ) 的子域采样</text>
+</svg>

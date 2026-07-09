@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="520" viewBox="0 0 980 520" role="img" aria-labelledby="title desc">
+  <title id="title">子单元 Jacobian 与体积缩放</title>
+  <desc id="desc">子单元参数到母单元参数的仿射变换使 Jacobian 三列同时缩放一半，因此行列式缩放为八分之一。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#2c3e50"/>
+    </marker>
+    <style>
+      .box { fill:#f8fbfd; stroke:#203040; stroke-width:2.4; }
+      .sub { fill:#4aa3df; fill-opacity:0.25; stroke:#1d6fa5; stroke-width:2.4; }
+      .grid { stroke:#7f8c8d; stroke-width:1.5; stroke-dasharray:6 5; }
+      .arrow { stroke:#2c3e50; stroke-width:2.4; marker-end:url(#arrow); fill:none; }
+      .label { font: 18px sans-serif; fill:#17202a; }
+      .small { font: 15px sans-serif; fill:#2f3a45; }
+      .caption { font: 21px sans-serif; font-weight:700; fill:#17202a; }
+      .formula { font: 20px sans-serif; fill:#263238; }
+      .formulaSmall { font: 17px sans-serif; fill:#263238; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="520" fill="#ffffff"/>
+  <text x="44" y="48" class="caption">从子单元局部参数到母单元参数</text>
+
+  <!-- Parent parameter square/cube abstraction -->
+  <rect x="70" y="116" width="260" height="260" class="box"/>
+  <path class="grid" d="M200,116 L200,376 M70,246 L330,246"/>
+  <rect x="70" y="246" width="130" height="130" class="sub"/>
+  <text x="93" y="316" class="label">子域</text>
+  <text x="80" y="402" class="small">母参数域 [0,1]^3 的二维投影</text>
+  <text x="55" y="110" class="small">η</text>
+  <text x="338" y="383" class="small">ξ</text>
+
+  <path class="arrow" d="M374,246 C430,246 450,246 506,246"/>
+  <text x="390" y="224" class="small">T_abc(r,s,t)</text>
+
+  <rect x="548" y="116" width="260" height="260" class="box"/>
+  <path class="grid" d="M678,116 L678,376 M548,246 L808,246"/>
+  <rect x="548" y="246" width="130" height="130" class="sub"/>
+  <path class="arrow" d="M582,337 L660,337"/>
+  <path class="arrow" d="M582,337 L582,260"/>
+  <text x="669" y="343" class="small">r</text>
+  <text x="570" y="252" class="small">s</text>
+  <text x="548" y="402" class="small">子单元重新参数化为 [0,1]^3</text>
+
+  <rect x="126" y="420" width="728" height="70" rx="6" fill="#f7f9fb" stroke="#d0d7de"/>
+  <text x="154" y="451" class="formula">J_C(r,s,t) = 1/2 J_P(T_abc(r,s,t))</text>
+  <text x="154" y="477" class="formulaSmall">det J_C = 1/8 det J_P(T_abc),  因此仿射母单元中 V_C = V_P / 8</text>
+</svg>

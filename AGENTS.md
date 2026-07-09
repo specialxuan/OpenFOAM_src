@@ -1,71 +1,96 @@
-# Repository Agent Notes
+# PROJECT KNOWLEDGE BASE
 
-## Build system (OpenFOAM wmake)
+**Generated:** 2026-07-09 15:54:45 CST
+**Commit:** 00cc102
+**Branch:** master
 
-This is an OpenFOAM v2412 user-code repository. Do NOT use cmake/make.
-All commands require a loaded OpenFOAM environment (the user's shell has it).
+## OVERVIEW
+
+OpenFOAM v2412 user-code repository containing a modal-superposition dynamic mesh library, three custom FSI-capable solver families, and case/modal automation scripts. Build with OpenFOAM `wmake`; do not introduce cmake/make workflows.
+
+## STRUCTURE
+
+```text
+src/
+|-- fastDynamicFvMesh/      # shared dynamic mesh library + bilingual docs
+|-- fsiCoupling/            # header-only solver-side FSI control helpers
+|-- myInterFoam/            # VOF solver family, overset and three-phase variants
+|-- myPimpleFoam/           # incompressible PIMPLE solver family
+|-- myRhoPimpleFoam/        # compressible PIMPLE solver family
+|-- scripts/                # smoke, mesh, modal, and pipeline workflows
+|-- DEVELOPMENT.md          # source/generated/local file policy
+`-- AGENTS.md               # repository-wide rules
+```
+
+## WHERE TO LOOK
+
+| Task | Location | Notes |
+|---|---|---|
+| Dynamic mesh runtime | `fastDynamicFvMesh/fastDynamicFvMesh/` | `update()`, AMR, restart, force assembly, diagnostics |
+| Mesh library docs | `fastDynamicFvMesh/README.md`, `fastDynamicFvMesh/Doc/快速动网格程序手册.md` | Must stay synced with library code |
+| Solver FSI loops | `myPimpleFoam/myPimpleFoam.C`, `myInterFoam/myInterFoam.C`, `myRhoPimpleFoam/myRhoPimpleFoam.C` | All include `fsiCoupling.H` |
+| Shared FSI controls | `fsiCoupling/fsiCoupling.H` | Reads `fsiCoupling`, `maxFsiIter`, `fsiTolerance`; reads `fsiResidual` |
+| Three-phase VOF variant | `myInterFoam/interMixingFoam/` | Nested multi-source executable and local mixture models |
+| Compressible variant behavior | `myRhoPimpleFoam/` | Pressure/energy/FSI coupling spans main and equation headers |
+| Smoke validation | `scripts/smoke_fastDynamicFvMesh.sh` | Copies baseline zips to temp dirs, builds library, runs cases |
+| Mesh/modal/FSI pipeline | `scripts/pipeline/` | Staged automation with mesh/mode consistency guard |
+| File policy | `DEVELOPMENT.md`, `.gitignore` | Source vs generated vs local-only rules |
+
+## CODE MAP
+
+LSP is not configured for OpenFOAM `.C/.H` extensions in this harness. Codegraph/text search identifies these central nodes.
+
+| Symbol/File | Type | Location | Refs | Role |
+|---|---|---:|---:|---|
+| `fastDynamicFvMesh` | class | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMesh.H` | central | `dynamicRefineFvMesh` subclass, modal state, AMR state, caches |
+| `fastDynamicFvMesh::update()` | method | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshMain.C` | central | Runtime mesh update orchestration |
+| `readControls()` | method | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshIO.C` | internal | Runtime dictionary parsing and compatibility checks |
+| `readModeShapes()` / `ensureModeShapesForCurrentMesh()` | methods | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshModeMapping.C` | internal | Mode CSV mapping, AMR remap, shared-point sync |
+| `calcModalForces()` | method | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshForces.C` | internal | Pressure/shear/structural force projection |
+| `solveStructuralDynamics()` | method | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshSolver.C` | internal | Wilson-Theta modal dynamics |
+| `fsiPimpleControl` | class | `fsiCoupling/fsiCoupling.H` | 3 solver mains | PIMPLE criteria plus FSI convergence |
+| `readFsiResidual()` | function | `fsiCoupling/fsiCoupling.H` | 3 solver mains | Solver-side force residual convergence |
+| `myPimpleFoam.C` | main | `myPimpleFoam/` | executable | Incompressible FSI solver |
+| `myInterFoam.C` | main | `myInterFoam/` | executable | Two-phase VOF FSI solver |
+| `myRhoPimpleFoam.C` | main | `myRhoPimpleFoam/` | executable | Compressible FSI solver |
+| `interMixingFoam.C` | main | `myInterFoam/interMixingFoam/` | executable | Three-phase VOF solver with local mixture models |
+
+## CONVENTIONS
+
+- Use `wmake` only. Library target: `wmake libso fastDynamicFvMesh`. Solver targets: `wmake myPimpleFoam`, `wmake myInterFoam`, `wmake myRhoPimpleFoam`.
+- OpenFOAM environment must already be loaded. Outputs go to `$FOAM_USER_LIBBIN` and `$FOAM_USER_APPBIN`.
+- `fastDynamicFvMesh/fastDynamicFvMesh/` is split by subsystem: `Main`, `Update`, `IO`, `ModeMapping`, `Forces`, `Solver`, `AMR`, `Diagnostics`.
+- New dictionary keys need safe defaults preserving current behavior. Removing/renaming keys requires a deprecation warning path.
+- Changes under `fastDynamicFvMesh/fastDynamicFvMesh/` must update both English and Chinese docs, build the library, and run a smoke path.
+- Runtime-control, file-format, or workflow changes must update example case configs and `dynamicMeshDict` guidance.
+- Baseline archives live at `/root/Workspace/case_damfailure.zip` and `/root/Workspace/case_transient.zip`; copy them to temp run dirs before testing.
+
+## ANTI-PATTERNS (THIS PROJECT)
+
+- Do not use cmake/make or create parallel build systems.
+- Do not edit baseline case archives directly.
+- Do not commit `*/lnInclude/`, `*/linux64GccDPInt32Opt/`, `*/.cache/`, `__pycache__/`, `.venv_fdm/`, `.codex`, `.vscode/mcp.json`, `*.cvg`, or `*.sta`.
+- Do not rely on `refinementFaceMapTolerance` as live behavior; it is deprecated, warned, and ignored.
+- Do not use geometric fallback for AMR-generated points; topology lineage/mapping rules are mandatory.
+- Do not reuse previous time-step mesh compression flux after topology changes.
+- Do not claim AMR is unconditionally stable or that refinement can never degrade mesh quality.
+- Do not treat stale CalculiX outputs or old FSI logs as production mode sources.
+
+## COMMANDS
 
 ```bash
-# Build the shared library (shared by all solvers):
 wmake libso fastDynamicFvMesh
-
-# Build solver executables (run from src root or from their directories):
 wmake myPimpleFoam
 wmake myInterFoam
 wmake myRhoPimpleFoam
+scripts/smoke_fastDynamicFvMesh.sh --dry-run
+scripts/smoke_fastDynamicFvMesh.sh --end-time 0.01
+scripts/pipeline/run_mesh_independence_automation.sh --stage check
 ```
 
-Build configuration lives in `Make/files` and `Make/options` files per component.
-Build artifacts go to `$FOAM_USER_LIBBIN` (libraries) and `$FOAM_USER_APPBIN` (executables).
+## NOTES
 
-## Source layout
-
-| Directory | Type | Build |
-|---|---|---|
-| `fastDynamicFvMesh/` | Shared library | `wmake libso fastDynamicFvMesh` |
-| `myPimpleFoam/` | Solver executables | `wmake myPimpleFoam` |
-| `myInterFoam/` | Solver executables | `wmake myInterFoam` |
-| `myRhoPimpleFoam/` | Solver executables | `wmake myRhoPimpleFoam` |
-| `fsiCoupling/` | Shared header | (none — `#include`d by all three solver families) |
-
-Each solver directory may contain sub-variants (e.g., `overPimpleDyMFoam/`, `SRFPimpleFoam/`).
-`fsiCoupling/fsiCoupling.H` provides the shared `fsiPimpleControl` (extends PIMPLE convergence) and `fsiCouplingControls` struct.
-
-## Baseline case policy
-
-Two baseline case archives exist at `/root/Workspace/`:
-- `case_damfailure.zip` — uses `myInterFoam`
-- `case_transient.zip` — uses `myPimpleFoam`
-
-For any testing/analysis: copy the archive to a temporary directory, do NOT modify
-baselines directly. Use `scripts/smoke_fastDynamicFvMesh.sh` as the standard smoke test runner.
-
-## fastDynamicFvMesh change policy
-
-When modifying ANY file under `fastDynamicFvMesh/fastDynamicFvMesh/`, you MUST:
-
-1. Update `fastDynamicFvMesh/README.md` (English)
-2. Update `fastDynamicFvMesh/Doc/快速动网格程序手册.md` (Chinese)
-3. Run `wmake libso fastDynamicFvMesh` and confirm it compiles
-4. Run at least one smoke test exercising the changed path
-
-If a change modifies runtime controls, file formats, or run workflow, also update
-example case configs and `dynamicMeshDict` accordingly.
-
-## Backward compatibility
-
-- New dictionary keys must have safe defaults that preserve existing behavior.
-- Do not remove or rename existing dictionary keys without a deprecation warning path.
-
-## Key reference files
-
-- `DEVELOPMENT.md` — file categorization (source vs. generated vs. local), draw.io conventions (tracked in git)
-- `Plan.md` — development roadmap and priorities (gitignored, local-only)
-- `Plan_1-5_Finished.md` — record of completed priorities 1-5 (gitignored, local-only)
-- `AGARD4456_FSI_work_log.md`, `AGARD4456_M0499_FSI_steps.md` — FSI case notes (gitignored, local-only)
-
-## Do NOT commit
-
-- `*/lnInclude/`, `*/linux64GccDPInt32Opt/`, `*/.cache/` (OpenFOAM build artifacts)
-- `__pycache__/`, `*.cvg`, `*.sta`
-- Local config: `.vscode/mcp.json`, `.codex`, `.venv_fdm/`
+- `scripts/smoke_fastDynamicFvMesh.sh` builds the library, extracts both baseline zips under `RUN_ROOT`, reads solver applications from `system/controlDict`, and logs under `RUN_ROOT/logs`.
+- For AMR/restart runs, prefer reconstructing in an isolated mirror case before syncing reconstructed times back into the main case.
+- `scripts/pipeline/run_mesh_independence_automation.sh` refuses FSI if `mode/FluidNodeCoor.csv` node count differs from mesh point count unless `--allow-stale-mode` is used for diagnostics.
+- Diagram workflow: edit `.drawio` sources first, keep final PNG/JPG only when needed, delete temporary SVG/debug exports.
