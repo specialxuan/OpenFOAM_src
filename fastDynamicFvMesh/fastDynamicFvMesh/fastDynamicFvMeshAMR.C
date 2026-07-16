@@ -14,6 +14,8 @@ Description
 #include "Pstream.H"
 #include "fvcGrad.H"
 #include "mapPolyMesh.H"
+#include <fstream>
+#include <iomanip>
 
 namespace Foam
 {
@@ -69,6 +71,336 @@ bool fastDynamicFvMesh::cellPassesRefinementSizeFloor(const label celli) const
     }
 
     return true;
+}
+
+void fastDynamicFvMesh::resetAmrLayerDiagnosticsState() const
+{
+    amrLayerDiagnosticsCandidateCell_.clear();
+    amrLayerDiagnosticsIndicatorCell_.setSize(0);
+    amrLayerDiagnosticsLower_ = 0.0;
+    amrLayerDiagnosticsUpper_ = 0.0;
+    amrLayerDiagnosticsLayerCells_ = 0;
+    amrLayerDiagnosticsNearbyCells_ = 0;
+    amrLayerDiagnosticsCandidates_ = 0;
+    amrLayerDiagnosticsSelected_ = 0;
+    amrLayerDiagnosticsBelowLower_ = 0;
+    amrLayerDiagnosticsAboveUpper_ = 0;
+    amrLayerDiagnosticsRejectedSizeFloor_ = 0;
+    amrLayerDiagnosticsRejectedBase_ = 0;
+    amrLayerDiagnosticsUnrefinePoints_ = 0;
+    amrLayerDiagnosticsPendingSummary_ = false;
+}
+
+void fastDynamicFvMesh::captureAmrLayerDiagnostics(
+    const scalar lowerRefineLevel, const scalar upperRefineLevel,
+    const label maxCells, const label maxRefinement,
+    const bitSet& candidateCell, const labelList& selectedCells) const
+{
+    if (!amrLayerDiagnosticsEnabled_)
+    {
+        return;
+    }
+
+    const label nCells = this->nCells();
+    if (!nCells)
+    {
+        resetAmrLayerDiagnosticsState();
+        return;
+    }
+
+    const scalarField indicatorCell = refinementIndicatorCellField(this->V());
+    const vectorField& centres = this->C();
+    const labelList& levels = this->meshCutter().cellLevel();
+    const bitSet& diagnosticCandidateCell =
+        amrLayerDiagnosticsCandidateCell_.size() == nCells
+      ? amrLayerDiagnosticsCandidateCell_
+      : candidateCell;
+
+    boolList inLayer(nCells, false);
+    boolList selected(nCells, false);
+    boolList diagnostic(nCells, false);
+    labelList neighborDepth(nCells, -1);
+
+    scalar localNearestDist = GREAT;
+    forAll(centres, celli)
+    {
+        localNearestDist = min(
+            localNearestDist, mag(centres[celli].z() - amrLayerDiagnosticsZ_));
+    }
+    const scalar nearestDist = returnReduce(localNearestDist, minOp<scalar>());
+    const scalar layerTol = max(SMALL, 1e-9);
+
+    forAll(centres, celli)
+    {
+        const scalar zDist = mag(centres[celli].z() - amrLayerDiagnosticsZ_);
+        if
+        (
+            amrLayerDiagnosticsThickness_ > 0
+          ? zDist <= amrLayerDiagnosticsThickness_
+          : mag(zDist - nearestDist) <= layerTol
+        )
+        {
+            inLayer[celli] = true;
+            diagnostic[celli] = true;
+            neighborDepth[celli] = 0;
+        }
+    }
+
+    forAll(selectedCells, i)
+    {
+        const label celli = selectedCells[i];
+        if (celli >= 0 && celli < nCells)
+        {
+            selected[celli] = true;
+            diagnostic[celli] = true;
+            if (neighborDepth[celli] < 0)
+            {
+                neighborDepth[celli] = 0;
+            }
+        }
+    }
+
+    for (const label celli : diagnosticCandidateCell)
+    {
+        if (celli >= 0 && celli < nCells)
+        {
+            diagnostic[celli] = true;
+            if (neighborDepth[celli] < 0)
+            {
+                neighborDepth[celli] = 0;
+            }
+        }
+    }
+
+    const labelListList& cellNbrs = this->cellCells();
+    for (label depth = 0; depth < amrLayerDiagnosticsNeighborDepth_; ++depth)
+    {
+        bool changed = false;
+        forAll(cellNbrs, celli)
+        {
+            if (neighborDepth[celli] != depth)
+            {
+                continue;
+            }
+
+            forAll(cellNbrs[celli], nbrI)
+            {
+                const label nbr = cellNbrs[celli][nbrI];
+                if (nbr >= 0 && nbr < nCells && neighborDepth[nbr] < 0)
+                {
+                    neighborDepth[nbr] = depth + 1;
+                    diagnostic[nbr] = true;
+                    changed = true;
+                }
+            }
+        }
+
+        if (!changed)
+        {
+            break;
+        }
+    }
+
+    fileName outPath = this->time().path()
+        / (amrLayerDiagnosticsFilePrefix_ + "_cells_proc"
+           + Foam::name(Pstream::myProcNo()) + ".csv");
+    if (Pstream::parRun())
+    {
+        outPath = this->time().path().path()
+            / (amrLayerDiagnosticsFilePrefix_ + "_cells_proc"
+               + Foam::name(Pstream::myProcNo()) + ".csv");
+    }
+
+    std::ofstream out(outPath.c_str(), std::ios::app);
+    if (!out.good())
+    {
+        WarningInFunction << "Unable to open " << outPath
+                          << " for writing." << endl;
+        resetAmrLayerDiagnosticsState();
+        return;
+    }
+
+    if (!amrLayerDiagnosticsCellHeaderWritten_)
+    {
+        out << "time,timeIndex,proc,cellI,centerX,centerY,centerZ,cellLevel,"
+               "volume,minEdgeLength,indicator,lower,upper,inBottomLayer,"
+               "neighborDepth,baseCandidate,passesSizeFloor,selectedForRefine,"
+               "reason\n";
+        amrLayerDiagnosticsCellHeaderWritten_ = true;
+    }
+
+    out << std::setprecision(12);
+
+    const label cachedUnrefinePoints = amrLayerDiagnosticsUnrefinePoints_;
+    resetAmrLayerDiagnosticsState();
+    amrLayerDiagnosticsUnrefinePoints_ = cachedUnrefinePoints;
+    amrLayerDiagnosticsCandidateCell_ = candidateCell;
+    amrLayerDiagnosticsIndicatorCell_ = indicatorCell;
+    amrLayerDiagnosticsLower_ = lowerRefineLevel;
+    amrLayerDiagnosticsUpper_ = upperRefineLevel;
+
+    label rows = 0;
+    forAll(diagnostic, celli)
+    {
+        if (!diagnostic[celli])
+        {
+            continue;
+        }
+
+        const bool isCandidate = diagnosticCandidateCell.test(celli);
+        const bool passesSizeFloor = cellPassesRefinementSizeFloor(celli);
+        word reason("selected");
+
+        if (selected[celli])
+        {
+            reason = "selected";
+            ++amrLayerDiagnosticsSelected_;
+        }
+        else if (!isCandidate)
+        {
+            if (indicatorCell[celli] < lowerRefineLevel)
+            {
+                reason = "belowLowerThreshold";
+                ++amrLayerDiagnosticsBelowLower_;
+            }
+            else if (indicatorCell[celli] > upperRefineLevel)
+            {
+                reason = "aboveUpperThreshold";
+                ++amrLayerDiagnosticsAboveUpper_;
+            }
+            else
+            {
+                reason = "notCandidateByDynamicRefine";
+            }
+        }
+        else if (!passesSizeFloor)
+        {
+            const scalar childVolume = this->V()[celli] / 8.0;
+            if
+            (
+                refinementMinCellVolume_ > 0
+             && childVolume < refinementMinCellVolume_
+            )
+            {
+                reason = "belowMinCellVolume";
+            }
+            else
+            {
+                reason = "belowMinEdgeLength";
+            }
+            ++amrLayerDiagnosticsRejectedSizeFloor_;
+        }
+        else if (levels[celli] >= maxRefinement)
+        {
+            reason = "alreadyAtMaxRefinement";
+            ++amrLayerDiagnosticsRejectedBase_;
+        }
+        else
+        {
+            reason = "candidateButNotSelectedByBaseAMR";
+            ++amrLayerDiagnosticsRejectedBase_;
+        }
+
+        if (inLayer[celli])
+        {
+            ++amrLayerDiagnosticsLayerCells_;
+        }
+        if (neighborDepth[celli] >= 0)
+        {
+            ++amrLayerDiagnosticsNearbyCells_;
+        }
+        if (isCandidate)
+        {
+            ++amrLayerDiagnosticsCandidates_;
+        }
+
+        if
+        (
+            amrLayerDiagnosticsMaxRows_ <= 0
+         || rows < amrLayerDiagnosticsMaxRows_
+        )
+        {
+            out << this->time().value() << ',' << this->time().timeIndex()
+                << ',' << Pstream::myProcNo() << ',' << celli << ','
+                << centres[celli].x() << ',' << centres[celli].y() << ','
+                << centres[celli].z() << ',' << levels[celli] << ','
+                << this->V()[celli] << ',' << cellMinEdgeLength(celli) << ','
+                << indicatorCell[celli] << ',' << lowerRefineLevel << ','
+                << upperRefineLevel << ',' << inLayer[celli] << ','
+                << neighborDepth[celli] << ',' << isCandidate << ','
+                << passesSizeFloor << ',' << selected[celli] << ',' << reason
+                << '\n';
+
+            ++rows;
+        }
+    }
+
+    amrLayerDiagnosticsPendingSummary_ = true;
+}
+
+void fastDynamicFvMesh::writeAmrLayerDiagnosticsSummary() const
+{
+    if (!amrLayerDiagnosticsEnabled_ || !amrLayerDiagnosticsPendingSummary_)
+    {
+        return;
+    }
+
+    const label nLayer = returnReduce(
+        amrLayerDiagnosticsLayerCells_, sumOp<label>());
+    const label nNearby = returnReduce(
+        amrLayerDiagnosticsNearbyCells_, sumOp<label>());
+    const label nCandidates = returnReduce(
+        amrLayerDiagnosticsCandidates_, sumOp<label>());
+    const label nSelected = returnReduce(
+        amrLayerDiagnosticsSelected_, sumOp<label>());
+    const label nBelowLower = returnReduce(
+        amrLayerDiagnosticsBelowLower_, sumOp<label>());
+    const label nAboveUpper = returnReduce(
+        amrLayerDiagnosticsAboveUpper_, sumOp<label>());
+    const label nRejectedSizeFloor = returnReduce(
+        amrLayerDiagnosticsRejectedSizeFloor_, sumOp<label>());
+    const label nRejectedBase = returnReduce(
+        amrLayerDiagnosticsRejectedBase_, sumOp<label>());
+    const label nUnrefinePoints = returnReduce(
+        amrLayerDiagnosticsUnrefinePoints_, sumOp<label>());
+
+    if (Pstream::master())
+    {
+        fileName outPath = this->time().path()
+            / (amrLayerDiagnosticsFilePrefix_ + "_summary.csv");
+        if (Pstream::parRun())
+        {
+            outPath = this->time().path().path()
+                / (amrLayerDiagnosticsFilePrefix_ + "_summary.csv");
+        }
+
+        std::ofstream out(outPath.c_str(), std::ios::app);
+        if (!out.good())
+        {
+            WarningInFunction << "Unable to open " << outPath
+                              << " for writing." << endl;
+            resetAmrLayerDiagnosticsState();
+            return;
+        }
+
+        if (!amrLayerDiagnosticsSummaryHeaderWritten_)
+        {
+            out << "time,timeIndex,nLayerCells,nNearbyCells,nCandidate,"
+                   "nSelected,nBelowLower,nAboveUpper,nRejectedSizeFloor,"
+                   "nRejectedBase,nUnrefinePoints,lower,upper\n";
+            amrLayerDiagnosticsSummaryHeaderWritten_ = true;
+        }
+
+        out << std::setprecision(12)
+            << this->time().value() << ',' << this->time().timeIndex() << ','
+            << nLayer << ',' << nNearby << ',' << nCandidates << ','
+            << nSelected << ',' << nBelowLower << ',' << nAboveUpper << ','
+            << nRejectedSizeFloor << ',' << nRejectedBase << ','
+            << nUnrefinePoints << ',' << amrLayerDiagnosticsLower_ << ','
+            << amrLayerDiagnosticsUpper_ << '\n';
+    }
+
+    resetAmrLayerDiagnosticsState();
 }
 
 void fastDynamicFvMesh::clearRefinementGradIndicatorCache() const
@@ -219,6 +551,14 @@ void fastDynamicFvMesh::selectRefineCandidates(const scalar lowerRefineLevel,
     dynamicRefineFvMesh::selectRefineCandidates(
         lowerRefineLevel, upperRefineLevel, indicatorCell, candidateCell);
 
+    if (amrLayerDiagnosticsEnabled_)
+    {
+        amrLayerDiagnosticsCandidateCell_ = candidateCell;
+        amrLayerDiagnosticsIndicatorCell_ = indicatorCell;
+        amrLayerDiagnosticsLower_ = lowerRefineLevel;
+        amrLayerDiagnosticsUpper_ = upperRefineLevel;
+    }
+
     if (refinementMinCellVolume_ <= 0 && refinementMinEdgeLength_ <= 0)
     {
         return;
@@ -238,8 +578,12 @@ labelList fastDynamicFvMesh::selectRefineCells(const label maxCells,
 {
     if (refinementMinCellVolume_ <= 0 && refinementMinEdgeLength_ <= 0)
     {
-        return dynamicRefineFvMesh::selectRefineCells(
+        const labelList selectedCells = dynamicRefineFvMesh::selectRefineCells(
             maxCells, maxRefinement, candidateCell);
+        captureAmrLayerDiagnostics(amrLayerDiagnosticsLower_,
+            amrLayerDiagnosticsUpper_, maxCells, maxRefinement, candidateCell,
+            selectedCells);
+        return selectedCells;
     }
 
     bitSet sizeFloorFiltered(candidateCell);
@@ -271,8 +615,12 @@ labelList fastDynamicFvMesh::selectRefineCells(const label maxCells,
              << " candidate cells." << endl;
     }
 
-    return dynamicRefineFvMesh::selectRefineCells(
+    const labelList selectedCells = dynamicRefineFvMesh::selectRefineCells(
         maxCells, maxRefinement, sizeFloorFiltered);
+    captureAmrLayerDiagnostics(amrLayerDiagnosticsLower_,
+        amrLayerDiagnosticsUpper_, maxCells, maxRefinement, candidateCell,
+        selectedCells);
+    return selectedCells;
 }
 
 labelList fastDynamicFvMesh::selectUnrefinePoints(const scalar unrefineLevel,
@@ -280,8 +628,13 @@ labelList fastDynamicFvMesh::selectUnrefinePoints(const scalar unrefineLevel,
 {
     const scalarField indicatorPoint = refinementIndicatorPointField(pFld);
 
-    return dynamicRefineFvMesh::selectUnrefinePoints(
+    const labelList selectedPoints = dynamicRefineFvMesh::selectUnrefinePoints(
         unrefineLevel, markedCell, indicatorPoint);
+    if (amrLayerDiagnosticsEnabled_)
+    {
+        amrLayerDiagnosticsUnrefinePoints_ = selectedPoints.size();
+    }
+    return selectedPoints;
 }
 
 void fastDynamicFvMesh::updateMesh(const mapPolyMesh& mpm)
