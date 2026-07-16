@@ -275,6 +275,58 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Whether cached runtime-AMR gradient indicator is valid
     mutable bool refinementGradIndicatorCacheValid_;
 
+    //- Enable bottom-layer runtime-AMR decision diagnostics
+    bool amrLayerDiagnosticsEnabled_;
+
+    //- Target z coordinate for bottom-layer AMR diagnostics
+    scalar amrLayerDiagnosticsZ_;
+
+    //- Diagnostic layer half-thickness; <=0 selects nearest z layer
+    scalar amrLayerDiagnosticsThickness_;
+
+    //- Face-neighbor expansion depth around selected/candidate cells
+    label amrLayerDiagnosticsNeighborDepth_;
+
+    //- Maximum per-rank diagnostic cell rows per AMR call; <=0 disables limit
+    label amrLayerDiagnosticsMaxRows_;
+
+    //- File prefix for AMR layer diagnostic CSV outputs
+    word amrLayerDiagnosticsFilePrefix_;
+
+    //- Header state for AMR layer summary output
+    mutable bool amrLayerDiagnosticsSummaryHeaderWritten_;
+
+    //- Header state for AMR layer per-rank cell output
+    mutable bool amrLayerDiagnosticsCellHeaderWritten_;
+
+    //- Cached AMR layer candidate mask for current updateTopology call
+    mutable bitSet amrLayerDiagnosticsCandidateCell_;
+
+    //- Cached AMR layer indicator values for current updateTopology call
+    mutable scalarField amrLayerDiagnosticsIndicatorCell_;
+
+    //- Cached lower refine threshold for current updateTopology call
+    mutable scalar amrLayerDiagnosticsLower_;
+
+    //- Cached upper refine threshold for current updateTopology call
+    mutable scalar amrLayerDiagnosticsUpper_;
+
+    //- Cached local summary counts for current updateTopology call
+    mutable label amrLayerDiagnosticsLayerCells_;
+    mutable label amrLayerDiagnosticsNearbyCells_;
+    mutable label amrLayerDiagnosticsCandidates_;
+    mutable label amrLayerDiagnosticsSelected_;
+    mutable label amrLayerDiagnosticsBelowLower_;
+    mutable label amrLayerDiagnosticsAboveUpper_;
+    mutable label amrLayerDiagnosticsRejectedSizeFloor_;
+    mutable label amrLayerDiagnosticsRejectedBase_;
+
+    //- Cached local unrefine point count for current updateTopology call
+    mutable label amrLayerDiagnosticsUnrefinePoints_;
+
+    //- True when an AMR layer summary is ready to write
+    mutable bool amrLayerDiagnosticsPendingSummary_;
+
     //- ===== AMR reference-face mapping/cache for force consistency =====
 
     //- Whether reference FSI face cache has been initialized
@@ -377,6 +429,18 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Select unrefine points using the configured runtime-AMR indicator
     virtual labelList selectUnrefinePoints(const scalar unrefineLevel,
         const bitSet& markedCell, const scalarField& pFld) const;
+
+    //- Reset cached AMR layer diagnostic state before/after an AMR call
+    void resetAmrLayerDiagnosticsState() const;
+
+    //- Write bottom-layer AMR decision diagnostics for selected/candidate cells
+    void captureAmrLayerDiagnostics(const scalar lowerRefineLevel,
+        const scalar upperRefineLevel, const label maxCells,
+        const label maxRefinement, const bitSet& candidateCell,
+        const labelList& selectedCells) const;
+
+    //- Flush cached bottom-layer AMR summary after updateTopology completes
+    void writeAmrLayerDiagnosticsSummary() const;
 
     //- Calculate modal forces from fluid pressure and shear stress
     void calcModalForces();

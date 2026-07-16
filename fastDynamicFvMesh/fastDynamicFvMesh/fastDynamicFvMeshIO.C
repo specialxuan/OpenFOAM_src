@@ -346,6 +346,16 @@ void fastDynamicFvMesh::readControls()
         "refinementFaceMapTolerance", refinementFaceMapTolerance);
     fdmDict.readIfPresent("refinementMinCellVolume", refinementMinCellVolume_);
     fdmDict.readIfPresent("refinementMinEdgeLength", refinementMinEdgeLength_);
+    fdmDict.readIfPresent("amrLayerDiagnostics", amrLayerDiagnosticsEnabled_);
+    fdmDict.readIfPresent("amrLayerDiagnosticsZ", amrLayerDiagnosticsZ_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsThickness", amrLayerDiagnosticsThickness_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsNeighborDepth", amrLayerDiagnosticsNeighborDepth_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsMaxRows", amrLayerDiagnosticsMaxRows_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsFilePrefix", amrLayerDiagnosticsFilePrefix_);
 
     if (dynamicMeshDict.found("dynamicRefineFvMeshCoeffs"))
     {
@@ -488,6 +498,39 @@ void fastDynamicFvMesh::readControls()
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
     }
 
+    if (amrLayerDiagnosticsThickness_ < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'amrLayerDiagnosticsThickness' must be >= 0 in "
+            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (amrLayerDiagnosticsNeighborDepth_ < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'amrLayerDiagnosticsNeighborDepth' must be >= 0 in "
+            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (amrLayerDiagnosticsMaxRows_ < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'amrLayerDiagnosticsMaxRows' must be >= 0 in "
+            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (amrLayerDiagnosticsEnabled_ && amrLayerDiagnosticsFilePrefix_.empty())
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'amrLayerDiagnosticsFilePrefix' cannot be empty when "
+            << "'amrLayerDiagnostics' is enabled in sub-dictionary '"
+            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << exit(FatalIOError);
+    }
+
     if (refinementUseGradIndicator_ && refinementGradIndicatorField_.empty())
     {
         FatalIOErrorInFunction(dynamicMeshDict)
@@ -512,6 +555,16 @@ void fastDynamicFvMesh::readControls()
                  << "' as |grad(" << refinementGradIndicatorField_
                  << ")| with dynamicRefineFvMesh thresholds." << endl;
         }
+    }
+
+    if (Pstream::master() && amrLayerDiagnosticsEnabled_)
+    {
+        Info << "Runtime AMR bottom-layer diagnostics enabled: z="
+             << amrLayerDiagnosticsZ_ << ", thickness="
+             << amrLayerDiagnosticsThickness_ << ", neighborDepth="
+             << amrLayerDiagnosticsNeighborDepth_ << ", maxRows="
+             << amrLayerDiagnosticsMaxRows_ << ", filePrefix='"
+             << amrLayerDiagnosticsFilePrefix_ << "'." << endl;
     }
 
     if (structuralForceEnabled_)

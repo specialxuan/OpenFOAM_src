@@ -49,6 +49,7 @@ bool fastDynamicFvMesh::beginUpdateStep(const label currentTimeIndex)
         if (!trackAmrTimingEnabled_)
         {
             dynamicRefineFvMesh::updateTopology();
+            writeAmrLayerDiagnosticsSummary();
         }
         else
         {
@@ -60,6 +61,7 @@ bool fastDynamicFvMesh::beginUpdateStep(const label currentTimeIndex)
             const scalar amrStartClockTime = this->time().elapsedClockTime();
 
             dynamicRefineFvMesh::updateTopology();
+            writeAmrLayerDiagnosticsSummary();
 
             const scalar localCpu =
                 this->time().elapsedCpuTime() - amrStartCpuTime;

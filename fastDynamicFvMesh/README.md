@@ -76,6 +76,24 @@ At each mesh `update()`:
     - `refinementMinEdgeLength` (minimum estimated child-edge length),
     - any candidate violating either threshold is removed at refine-candidate stage, so it is excluded from both refine selection and unrefine-protection marking,
     - remaining candidates then follow the normal `dynamicRefineFvMesh` 2:1-consistency expansion,
+  - optional bottom-layer AMR decision diagnostics:
+    - enable by `amrLayerDiagnostics true` in `fastDynamicFvMeshCoeffs`,
+    - `amrLayerDiagnosticsZ` sets the target z coordinate (default `0`),
+    - `amrLayerDiagnosticsThickness > 0` selects cells within that z-distance;
+      when it is `0`, the nearest local/global z layer to the target is used,
+    - `amrLayerDiagnosticsNeighborDepth` adds face-neighbor cells around
+      bottom-layer/candidate/selected cells,
+    - `amrLayerDiagnosticsMaxRows` limits per-rank detailed cell rows without
+      changing summary counts,
+    - outputs `amr_layer_diagnostics_summary.csv` and
+      `amr_layer_diagnostics_cells_proc<N>.csv` with each cell's AMR indicator,
+      threshold state, final selection state, and reason such as
+      `belowLowerThreshold`, `belowMinCellVolume`, `alreadyAtMaxRefinement`, or
+      `candidateButNotSelectedByBaseAMR`,
+    - base `dynamicRefineFvMesh` rejections caused by max-cells, protected-cell,
+      or 2:1 consistency internals are grouped as
+      `candidateButNotSelectedByBaseAMR` unless OpenFOAM base internals are also
+      instrumented,
   - in integrated/implicit FSI loops, topology changes can alter mesh point count within a PIMPLE iteration; solver-side displacement-change checks must guard against `points.size()` changes before computing `gMax(mag(points - points0))`,
 - startup mapping supports refined meshes with strict topology interpolation:
   - when a refined startup mesh is detected (`pointLevel>0` exists), geometric CSV mapping is restricted to level-0 points only,
@@ -162,6 +180,12 @@ fastDynamicFvMeshCoeffs
     writeDiagnostics   false;
     trackTiming        true;
     trackAmrTiming     false;
+    amrLayerDiagnostics false;
+    amrLayerDiagnosticsZ 0;
+    amrLayerDiagnosticsThickness 0;
+    amrLayerDiagnosticsNeighborDepth 1;
+    amrLayerDiagnosticsMaxRows 0;
+    amrLayerDiagnosticsFilePrefix amr_layer_diagnostics;
 }
 
 dynamicRefineFvMeshCoeffs

@@ -65,3 +65,19 @@ Then run a short smoke FSI:
 
 Use `--allow-stale-mode` only for diagnostic experiments, not for production
 mesh-independence results.
+
+## Case-local myInterFoam runner
+
+`run_myInterFoam_case.sh` is a reusable runner template for an existing
+`myInterFoam` OpenFOAM case. Copy it into a case root and run it there:
+
+```bash
+cp scripts/pipeline/run_myInterFoam_case.sh /path/to/case/run_myInterFoam.sh
+cd /path/to/case
+./run_myInterFoam.sh -f 8
+```
+
+Modes are `-f` fresh run, `-r` restart from `startTime`, `-c` continue from
+`latestTime`, and `-s` solve with an existing decomposition. All successful
+modes reconstruct with `reconstructParMesh -constant` followed by
+`reconstructPar`.
