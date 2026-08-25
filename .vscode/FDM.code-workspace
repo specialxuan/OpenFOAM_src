@@ -1,0 +1,26 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "/root/Workspace"
+		}
+	],
+	"settings": {
+		"files.watcherExclude": {
+			"**/linux64GccDPInt32Opt/**": true,
+			"**/lnInclude/**": true,
+			"**/.cache/**": true,
+			"**/.venv_fdm/**": true,
+			"**/.git/**": true,
+			"**/.omo/**": true,
+			"**/.opencode/**": true
+		},
+		"search.exclude": {
+			"**/linux64GccDPInt32Opt": true,
+			"**/lnInclude": true,
+			"**/.venv_fdm": true
+		}
+	}
+}

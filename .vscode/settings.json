@@ -33,5 +33,6 @@
         "**/.cache": true,
         "package-lock.json": true,
         "package.json": true,
+        ".clang-format": true,
     },
 }
