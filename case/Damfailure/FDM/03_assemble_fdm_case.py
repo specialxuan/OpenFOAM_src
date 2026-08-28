@@ -798,7 +798,7 @@ def main(argv):
 
     # ---- ParaView OpenFOAMReader anchor ------------------------------------
     # An empty case.foam in the case root tells ParaView's OpenFOAMReader to
-    # load the case directory (required by 05_export_fdm_video.py).
+        # load the case directory (required by 06_export_fdm_video.py).
     _write(os.path.join(out_dir, "case.foam"), "")
     print("[FDM 03] Wrote case.foam (ParaView anchor)")
 
