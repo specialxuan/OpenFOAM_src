@@ -19,8 +19,8 @@ Usage:
     python3 04_run_fdm.py --case /path/to/case -f --dry-run
 
 Modes:
-    -f, --fresh      clean all results, run checkMesh (+decomposePar), solve
-                     from startTime, then reconstruct (parallel).
+    -f, --fresh      clean all results, run checkMesh (+decomposePar), then
+                     solve from startTime. Step 05 reconstructs parallel output.
     -r, --restart    keep mesh/decomposition, clean results, solve from
                      startTime (skips checkMesh/decomposePar).
     -c, --continue   keep everything, solve from latestTime.
@@ -29,7 +29,7 @@ The solver is started as a blocking child (Popen + live tail of the log), so a
 parent-process exit never orphans/kills the run.  Log files are written inside
 the case directory:
 
-    log.checkMesh  log.decomposePar  log.interFoam_serial | log.interFoam_parallel_N  log.reconstructPar
+    log.checkMesh  log.decomposePar  log.interFoam_serial | log.interFoam_parallel_N
 
 Time-estimation model (calibrated on measured dam-failure runs):
 
@@ -671,7 +671,6 @@ def validate_tools(foam_env, mode, nprocs):
         checks.append(("checkMesh", os.path.join(appbin, "checkMesh"), "x"))
     if nprocs > 1:
         checks.append(("decomposePar", os.path.join(appbin, "decomposePar"), "x"))
-        checks.append(("reconstructPar", os.path.join(appbin, "reconstructPar"), "x"))
         if not shutil.which("mpirun"):
             error("mpirun not found on PATH (required for parallel runs)")
             return False
@@ -760,6 +759,14 @@ def verify_results(case_dir, end_time, log_file, nprocs):
     end_dir = find_time_dir(case_dir, end_time)
     if end_dir is not None:
         log("OK: end-time directory '%s' exists" % end_dir)
+    elif nprocs > 1:
+        processor_end = find_time_dir(os.path.join(case_dir, "processor0"), end_time)
+        if processor_end is not None:
+            log("OK: processor0 end-time directory '%s' exists; "
+                "step 05 will reconstruct parallel results" % processor_end)
+        else:
+            problems.append("no processor0 time directory found for endTime %s"
+                            % _fmt_num(end_time))
     else:
         problems.append("no time directory found for endTime %s"
                         % _fmt_num(end_time))
@@ -858,7 +865,7 @@ def main(argv):
     mode_nodes = read_mode_node_count(case_dir)
 
     # ---- header -----------------------------------------------------------
-    raw("[FDM-PIPE] ===== 步骤 4/5: FDM 运行 =====")
+    raw("[FDM-PIPE] ===== 步骤 4/6: FDM 运行 =====")
     log("FDM run (fastDynamicFvMesh + myInterFoam)")
     log("--- OpenFOAM bashrc: %s" % foam_env["bashrc"])
     log("--- Case directory: %s" % case_dir)
@@ -1025,8 +1032,6 @@ def main(argv):
         log("--- Dry run: solver would run:")
         show(solver_cmd)
         log("--- Solver log: %s" % solver_log)
-        if nprocs > 1:
-            show(os.path.join(foam_env["FOAM_APPBIN"], "reconstructPar"))
         log("Dry run complete (no commands executed).")
         return 0
 
@@ -1041,18 +1046,6 @@ def main(argv):
         error("myInterFoam failed (exit %d); see %s" % (code, solver_log))
         _restore_overrides(case_dir, args, ctrl)
         return code
-
-    # ---- reconstruct (parallel) -------------------------------------------
-    if nprocs > 1:
-        log("--- Running reconstructPar -> log.reconstructPar")
-        recon_cmd = os.path.join(foam_env["FOAM_APPBIN"], "reconstructPar")
-        code, out = run_capture(recon_cmd, case_dir, bashrc,
-                                log_file="log.reconstructPar")
-        if code != 0:
-            error("reconstructPar failed; see log.reconstructPar")
-            _restore_overrides(case_dir, args, ctrl)
-            return 2
-        log("--- Reconstruction complete")
 
     # ---- restore optional overrides ---------------------------------------
     _restore_overrides(case_dir, args, ctrl)
@@ -1070,8 +1063,9 @@ def main(argv):
         % (_fmt_num(end_time), est["n_steps"],
            ("%ss" % format(exec_t, ".2f")) if exec_t is not None else "?",
            nprocs))
-    log("Run complete. Logs: log.checkMesh, log.decomposePar, %s, log.reconstructPar"
-        % solver_log)
+    log("Run complete. Logs: log.checkMesh, log.decomposePar, %s" % solver_log)
+    if nprocs > 1:
+        log("Parallel results remain under processor*/; run step 05 to reconstruct")
     return 0
 
 
