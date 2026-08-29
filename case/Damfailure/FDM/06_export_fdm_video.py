@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""06_export_fdm_video.py - 用 ParaView (pvpython) 把 FDM OpenFOAM 结果导出为逐帧 PNG
+"""06_export_fdm_video.py - 导出 FDM PNG 帧并合成 MP4
 
 FDM = fastDynamicFvMesh + myInterFoam。读取 case.foam，按 alpha.water 云图着色
-（白底 + 蓝色水相），逐时间步渲染并保存 PNG，之后可用 ffmpeg 合成 MP4。
+（白底 + 蓝色水相），逐时间步保存 PNG，并默认用 ffmpeg 合成 25 fps MP4。
 
 用法:
   xvfb-run -a pvpython 06_export_fdm_video.py \
       --case <case_dir> --out <out_dir> [--res 1280x720] [--field alpha.water] \
-      [--no-wireframe] [--wire-color 0,0,0]
+      [--no-wireframe] [--wire-color 0,0,0] [--framerate 25]
+      [--mp4-path <path>] [--no-mp4]
 
  关键经验 (ParaView 5.11.2):
   - Ubuntu paraview 是 X11 编译版, 必须 xvfb-run 提供 DISPLAY
@@ -21,6 +22,8 @@ FDM = fastDynamicFvMesh + myInterFoam。读取 case.foam，按 alpha.water 云�
 import argparse
 import glob
 import os
+import shutil
+import subprocess
 import sys
 
 from paraview.simple import *
@@ -53,6 +56,38 @@ def parse_color(s):
     return vals
 
 
+def default_mp4_path(frames_dir):
+    return os.path.join(os.path.dirname(os.path.normpath(frames_dir)),
+                        "fdm_result.mp4")
+
+
+def encode_mp4(frames_dir, framerate, mp4_path):
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        sys.stderr.write("[FDM ERR] 找不到 ffmpeg; PNG 帧已保留在 %s\n" % frames_dir)
+        return 3
+    parent = os.path.dirname(os.path.abspath(mp4_path))
+    os.makedirs(parent, exist_ok=True)
+    command = [
+        ffmpeg, "-y", "-nostdin", "-hide_banner", "-loglevel", "error",
+        "-framerate", str(framerate),
+        "-i", os.path.join(frames_dir, "frame_%04d.png"),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        mp4_path,
+    ]
+    result = subprocess.run(
+        command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        text=True, check=False)
+    if result.returncode != 0:
+        sys.stderr.write("[FDM ERR] ffmpeg 合成失败 (exit %d): %s\n"
+                         % (result.returncode, result.stderr.strip()))
+        if os.path.isfile(mp4_path):
+            os.remove(mp4_path)
+        return 3
+    print("[FDM 06] MP4 输出: %s (%d fps)" % (mp4_path, framerate))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="FDM OpenFOAM 结果 -> 逐帧 PNG (alpha.water 云图)"
@@ -74,6 +109,14 @@ def main():
                     help="render the t=0 initial-state frame first (default: on)")
     ap.add_argument("--no-t0", dest="include_t0", action="store_false",
                     help="skip the t=0 initial-state frame (start at first written time step)")
+    ap.add_argument("--mp4", dest="mp4", action="store_true", default=True,
+                    help="合成 MP4 (默认开启)")
+    ap.add_argument("--no-mp4", dest="mp4", action="store_false",
+                    help="只输出 PNG 帧, 不合成 MP4")
+    ap.add_argument("--framerate", "--fps", type=int, default=25,
+                    help="MP4 帧率 (默认 25)")
+    ap.add_argument("--mp4-path", default=None,
+                    help="MP4 输出路径 (默认 <out 的父目录>/fdm_result.mp4)")
     args = ap.parse_args()
 
     # pvpython 会用 vtkPythonStdStreamCaptureHelper 替换 sys.stdout, 非 TTY 下其
@@ -85,6 +128,9 @@ def main():
     print("[FDM-PIPE] ===== 步骤 6/6: 视频导出 =====")
 
     W, H = parse_res(args.res)
+    if args.framerate <= 0:
+        sys.stderr.write("[FDM ERR] --framerate 必须为正整数\n")
+        return 2
     wire_color = parse_color(args.wire_color)
     os.makedirs(args.out, exist_ok=True)
     for stale_frame in glob.glob(os.path.join(args.out, "frame_*.png")):
@@ -214,11 +260,16 @@ def main():
         print("[FDM 06] --- saved %s (t=%.6g)" % (fname, t))
 
     print("[FDM 06] 帧数: %d  输出: %s" % (n_steps, args.out))
+    mp4_status = 0
+    if args.mp4:
+        mp4_path = args.mp4_path or default_mp4_path(args.out)
+        mp4_status = encode_mp4(args.out, args.framerate, mp4_path)
     # pvpython 在 xvfb 下渲染完成后, Python 正常退出时 ParaView/X teardown 会抛
     # 无害 GLXBadContext 导致退出码非 0 (帧已全部生成)。用 os._exit(0) 绕过该
-    # X 清理阶段, 干净退出。
+    # X 清理阶段；MP4 必须在此之前完成。
     sys.stdout.flush()
-    os._exit(0)
+    sys.stderr.flush()
+    os._exit(mp4_status)
 
 
 if __name__ == "__main__":

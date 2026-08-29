@@ -3,6 +3,7 @@
 #  Damfailure preCICE 流水线驱动脚本
 #
 #  驱动顺序: 01 网格生成 -> 03 组装算例 -> 04 preCICE 双求解器运行 -> 05 视频导出
+#            -> 06 位移后处理
 #            (preCICE 无独立 02 模态脚本; run_modal_analysis.py 是可选验证)
 #
 #  支持: 全流程 / 部分流程 (--steps)、命令行参数控制、无参数交互询问、--dry-run
@@ -33,12 +34,12 @@ usage() {
     cat <<EOF
 用法: $0 [选项]
 
-驱动 Damfailure preCICE 四脚本流水线:
-  01 网格生成 -> 03 组装算例 -> 04 preCICE 运行 -> 05 视频导出
+驱动 Damfailure preCICE 五脚本流水线:
+  01 网格生成 -> 03 组装算例 -> 04 preCICE 运行 -> 05 视频导出 -> 06 位移后处理
 
 选项 (全部可选; 不带任何参数时交互询问):
   --case-root <dir>      算例根目录 (默认 $CASE_ROOT)
-  --steps <list>         运行步骤, 逗号分隔 1/3/4/5 (默认 $STEPS), 如 "3,4"
+  --steps <list>         运行步骤, 逗号分隔 1/3/4/5/6 (默认 $STEPS), 如 "3,4"; 含 5 则自动导出视频 (帧+MP4)
   --res <N>              网格 x 向密度 (传给 01, 默认 $RES)
   --z-layers <N>         z 向层数 (传给 01, 默认 $Z_LAYERS)
   --end-time <T>         仿真时长 (传给 03/04/05, 默认 $END_TIME)
@@ -49,7 +50,7 @@ usage() {
   --gate-e <E>           门材料杨氏模量 Pa (非默认时透传给 03, 默认 $GATE_E)
   --gate-nu <V>          门材料泊松比 (非默认时透传给 03, 默认 $GATE_NU)
   --gate-rho <R>         门材料密度 kg/m3 (非默认时透传给 03, 默认 $GATE_RHO)
-  --video / --no-video   是否导出视频 (默认交互询问; 非交互默认否)
+  --video / --no-video   覆盖 steps 的视频行为 (默认随 steps 含 5 自动导出; --no-video 强制关闭)
   --dry-run              只打印将执行的命令, 不执行
   -h, --help             显示本帮助
 
@@ -57,6 +58,7 @@ usage() {
   $0 --dry-run --video                                # 预览全流程 + 视频
   $0 --steps 1,3 --res 30 --z-layers 4               # 只跑网格+组装(小网格)
   $0 --steps 3,4 --case-root /root/Workspace/x       # 只组装+运行
+  $0 --steps 6 --case-root /root/Workspace/x         # 只做位移后处理 (需先跑 3/4)
   $0 --end-time 0.02                                  # 短算例全流程
 EOF
 }
@@ -123,13 +125,13 @@ if [ "$INTERACTIVE" -eq 1 ]; then
     read -p "导出视频? [y/N]: " inp
     case "${inp:-}" in
         y|Y|yes|Yes|YES) VIDEO=yes ;;
-        *)               VIDEO=no ;;
+        *)               VIDEO="" ;;   # 未定: 由 steps 是否含 5 决定
     esac
     echo
 fi
 
-# 非交互且未显式指定 --video/--no-video 时, 默认不导出视频
-[ -z "$VIDEO" ] && VIDEO=no
+# 非交互且未显式指定 --video/--no-video 时, VIDEO 保持未定 ("随步骤"):
+# 是否合成视频由步骤列表是否含 5 决定 (含 5 自动导出; 不含 5 不导出)
 
 # --------------------------------------------------------------------------- #
 #  OpenFOAM 环境 (非强制; 01/04 内部会自行 source bashrc)
@@ -147,14 +149,14 @@ fi
 export PYTHONUNBUFFERED=1
 
 # --------------------------------------------------------------------------- #
-#  步骤校验 (只接受 1,3,4,5)
+#  步骤校验 (只接受 1,3,4,5,6)
 # --------------------------------------------------------------------------- #
 validate_steps() {
     local s
     for s in $(echo "$STEPS" | tr ',' ' '); do
         case "$s" in
-            1|3|4|5) ;;
-            *) error "非法步骤 '$s' (只接受 1,3,4,5, 逗号分隔; preCICE 无 02 模态脚本)"; return 1 ;;
+            1|3|4|5|6) ;;
+            *) error "非法步骤 '$s' (只接受 1,3,4,5,6, 逗号分隔; preCICE 无 02 模态脚本)"; return 1 ;;
         esac
     done
     return 0
@@ -179,6 +181,10 @@ check_deps() {
             [ -d "$CASE_ROOT/pc_case/fluid-openfoam" ] || \
                 warn "步骤 5 需要组装算例 $CASE_ROOT/pc_case/fluid-openfoam (先跑步骤 3/4)"
             ;;
+        6)
+            [ -d "$CASE_ROOT/pc_case/fluid-openfoam" ] || \
+                warn "步骤 6 需要 preCICE 算例 $CASE_ROOT/pc_case/fluid-openfoam (先跑步骤 3/4)"
+            ;;
     esac
 }
 
@@ -191,7 +197,7 @@ GATE_ARGS=""
 [ "$GATE_RHO" != "2500.0" ] && GATE_ARGS+=" --gate-rho $GATE_RHO"
 
 # --------------------------------------------------------------------------- #
-#  捕获 + 过滤执行器 (步骤 1/3/5 及视频合成)
+#  捕获 + 过滤执行器 (步骤 1/3/5/6 及视频合成)
 #  子脚本完整 stdout/stderr 落盘到 $1, 控制台只实时显示带 [FDM/[PRECICE 前缀的
 #  主要信息行 (log/warn/error); 工具原始输出 (blockMesh/checkMesh/ccx/pvpython/
 #  foamToVTK/ffmpeg 等无前缀行) 仅保留在日志, 不透传到控制台.
@@ -208,6 +214,43 @@ run_script() {
 }
 
 # --------------------------------------------------------------------------- #
+#  视频合成辅助
+# --------------------------------------------------------------------------- #
+
+# 判断步骤列表是否包含某步骤 (如 steps_contains 5)
+steps_contains() {
+    echo ",$STEPS," | grep -q ",$1,"
+}
+
+# ffmpeg 把步骤 5 生成的 PNG 帧合成 MP4 (含帧目录检查 / DRY_RUN 处理)
+synthesize_video() {
+    ffmpeg_cmd="ffmpeg -y -framerate 10 -i '$CASE_ROOT/frames/frame_%04d.png' -c:v libx264 -pix_fmt yuv420p '$CASE_ROOT/precice_result.mp4'"
+    echo "[PRECICE-PIPE] 视频合成: $ffmpeg_cmd"
+    if [ "$DRY_RUN" -eq 0 ]; then
+        if [ ! -d "$CASE_ROOT/frames" ]; then
+            error "未找到帧目录 $CASE_ROOT/frames (需要先运行步骤 5)"
+            exit 1
+        fi
+        if ! run_script "$CASE_ROOT/run_video.log" "$ffmpeg_cmd"; then
+            error "视频合成失败"
+            exit 1
+        fi
+        echo "[PRECICE-PIPE] 视频输出: $CASE_ROOT/precice_result.mp4"
+    fi
+}
+
+# 合成触发决策 (优先级: --video 强制 > --no-video 强制关闭 > steps 含 5 自动)
+maybe_synthesize_video() {
+    if [ "$VIDEO" = "yes" ]; then
+        synthesize_video
+    elif [ "$VIDEO" = "no" ]; then
+        :
+    elif steps_contains 5; then
+        synthesize_video
+    fi
+}
+
+# --------------------------------------------------------------------------- #
 #  执行单个步骤
 # --------------------------------------------------------------------------- #
 run_step() {
@@ -218,6 +261,7 @@ run_step() {
         3) cmd="python3 '$SCRIPT_DIR/03_assemble_precice_case.py' --mesh-dir '$CASE_ROOT/mesh/fluid-openfoam' --solid-dir '$CASE_ROOT/mesh/solid-calculix' --out-dir '$CASE_ROOT/pc_case' --end-time $END_TIME --delta-t $DELTA_T --write-interval $WRITE_INTERVAL --nprocs $NPROCS"$GATE_ARGS ;;
         4) cmd="python3 '$SCRIPT_DIR/04_run_precice.py' -f --case '$CASE_ROOT/pc_case' --end-time $END_TIME --nprocs $NPROCS --solid-threads $SOLID_THREADS" ;;
         5) cmd="xvfb-run -a pvpython '$SCRIPT_DIR/05_export_precice_video.py' --case '$CASE_ROOT/pc_case' --out '$CASE_ROOT/frames' --end-time $END_TIME" ;;
+        6) cmd="python3 '$SCRIPT_DIR/06_postprocess.py' --case '$CASE_ROOT/pc_case/fluid-openfoam' --out-dir '$CASE_ROOT/postprocess'" ;;
     esac
 
     echo "[PRECICE-PIPE] 步骤 $step: $cmd"
@@ -242,8 +286,10 @@ run_step() {
                 return 1
             fi
         fi
+        # 出帧成功后合成视频: steps 含 5 自动; --no-video 强制关闭
+        maybe_synthesize_video
     else
-        # 步骤 1/3: 捕获过滤, 只透传带 [FDM/[PRECICE 前缀的主要行, 工具原始输出仅落盘
+        # 步骤 1/3/6: 捕获过滤, 只透传带 [FDM/[PRECICE 前缀的主要行, 工具原始输出仅落盘
         if ! run_script "$CASE_ROOT/run_step_$step.log" "$cmd"; then
             error "步骤 $step 执行失败, 流水线中止"
             return 1
@@ -254,19 +300,28 @@ run_step() {
 # --------------------------------------------------------------------------- #
 #  打印配置摘要
 # --------------------------------------------------------------------------- #
-echo "[PRECICE-PIPE] ===== Damfailure preCICE 四步流水线 (步骤 $STEPS) ====="
+echo "[PRECICE-PIPE] ===== Damfailure preCICE 五步流水线 (步骤 $STEPS) ====="
 echo "[PRECICE-PIPE] 算例根目录 : $CASE_ROOT"
 echo "[PRECICE-PIPE] 步骤       : $STEPS"
 echo "[PRECICE-PIPE] 网格       : --res $RES --z-layers $Z_LAYERS"
 echo "[PRECICE-PIPE] 仿真       : endTime=$END_TIME deltaT=$DELTA_T writeInterval=$WRITE_INTERVAL"
 echo "[PRECICE-PIPE] 并行       : $NPROCS 流体进程 / $SOLID_THREADS 固体线程"
 echo "[PRECICE-PIPE] 门材料     : E=$GATE_E nu=$GATE_NU rho=$GATE_RHO${GATE_ARGS:+ (透传: ${GATE_ARGS# }) }"
-echo "[PRECICE-PIPE] 视频       : $VIDEO"
+if [ "$VIDEO" = "yes" ]; then
+    VIDEO_STATE="强制是 (--video)"
+elif [ "$VIDEO" = "no" ]; then
+    VIDEO_STATE="强制否 (--no-video)"
+elif steps_contains 5; then
+    VIDEO_STATE="随步骤5 (含 5, 自动合成)"
+else
+    VIDEO_STATE="随步骤5 (不含 5, 不合成)"
+fi
+echo "[PRECICE-PIPE] 视频       : $VIDEO_STATE"
 [ "$DRY_RUN" -eq 1 ] && echo "[PRECICE-PIPE] DRY-RUN    : 只打印命令, 不执行"
 echo
 
 # --------------------------------------------------------------------------- #
-#  按步骤顺序执行 (去重 + 数值排序, 保证 1 < 3 < 4 < 5)
+#  按步骤顺序执行 (去重 + 数值排序, 保证 1 < 3 < 4 < 5 < 6)
 # --------------------------------------------------------------------------- #
 for s in $(echo "$STEPS" | tr ',' '\n' | sort -u -n); do
     run_step "$s"
@@ -274,21 +329,14 @@ done
 
 # --------------------------------------------------------------------------- #
 #  视频合成 (步骤 5 生成 PNG 帧后, 用 ffmpeg 合成 MP4)
+#  - dry-run 预览: 步骤 5 分支提前返回未触发合成, 这里按决策打印合成命令
+#  - 实跑: 步骤 5 分支已合成 (steps 含 5 自动 / --video 强制 / --no-video 关闭);
+#    这里仅兜底 --video 且 steps 不含 5 (步骤 5 未运行 -> 无帧, 报错提示)
 # --------------------------------------------------------------------------- #
-if [ "$VIDEO" = "yes" ]; then
-    ffmpeg_cmd="ffmpeg -y -framerate 10 -i '$CASE_ROOT/frames/frame_%04d.png' -c:v libx264 -pix_fmt yuv420p '$CASE_ROOT/precice_result.mp4'"
-    echo "[PRECICE-PIPE] 视频合成: $ffmpeg_cmd"
-    if [ "$DRY_RUN" -eq 0 ]; then
-        if [ ! -d "$CASE_ROOT/frames" ]; then
-            error "未找到帧目录 $CASE_ROOT/frames (需要先运行步骤 5)"
-            exit 1
-        fi
-        if ! run_script "$CASE_ROOT/run_video.log" "$ffmpeg_cmd"; then
-            error "视频合成失败"
-            exit 1
-        fi
-        echo "[PRECICE-PIPE] 视频输出: $CASE_ROOT/precice_result.mp4"
-    fi
+if [ "$DRY_RUN" -eq 1 ]; then
+    maybe_synthesize_video
+elif [ "$VIDEO" = "yes" ] && ! steps_contains 5; then
+    synthesize_video
 fi
 
 echo

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """05_export_precice_video.py - 用 ParaView (pvpython) 把 preCICE fluid-openfoam 结果导出为逐帧 PNG
 
-参考 FDM 05_export_fdm_video.py, 但读取 preCICE 组装的算例:
+参考 FDM 06_export_fdm_video.py, 但读取 preCICE 组装的算例:
   --case <out-dir>  -> <out-dir>/fluid-openfoam/case.foam
 
 按 alpha.water 云图着色 (白底 + 蓝色水相) + 白色底网格线框, 逐时间步渲染 PNG,
@@ -12,10 +12,12 @@
       --case /path/to/precice_case --out /path/to/frames [--res 1280x720] \
       [--end-time 0.02] [--mp4]
 
-关键经验 (ParaView 5.11.2, 与 FDM 05 相同):
+ 关键经验 (ParaView 5.11.2, 与 FDM 05 相同):
   - OpenFOAMReader 无 GetNumberOfTimeSteps, 用 TimestepValues
   - 动画场景默认只有 10 帧, 用 GetTimeKeeper().Time 推进
-  - 叠加第二个 representation (网格线框) 必须用 servermanager.CreateRepresentation
+  - 网格线用 ExtractSurface(外表面) + "Surface With Edges", 不叠加独立 Wireframe rep,
+    避免 AMR 内部 hex 体对角线在准 2D 投影下形成斜三角线
+  - 若 xvfb/OSMesa 下仍出现边线伪影, 用 --no-wireframe 导出纯 Surface 画面
 """
 import argparse
 import glob
@@ -24,7 +26,6 @@ import shutil
 import subprocess
 import sys
 
-from paraview import servermanager
 from paraview.simple import *
 
 
@@ -104,6 +105,9 @@ def main():
 
     # ---- 1. 加载 OpenFOAM case ----
     reader = OpenFOAMReader(FileName=case_foam)
+    # 保留 AMR 粗细过渡处的多面体，避免 Surface With Edges 显示
+    # Decomposepolyhedra 生成的 pyramid/tetra 三角面内部边。
+    reader.Decomposepolyhedra = 0
     reader.UpdatePipeline()
 
     timesteps = list(reader.TimestepValues) if reader.TimestepValues else []
@@ -188,15 +192,24 @@ def main():
     # ---- 3. 视图设置 (白底) ----
     view = GetActiveViewOrCreate("RenderView")
     view.ViewSize = [W, H]
+    # pvpython 批处理下直接设 Background 不生效 (实测仍是默认 82,87,110 深蓝灰),
+    # 必须经调色板加载白底; 该颜色同时是网格外边框和挡板空洞的透出色。
+    LoadPalette("WhiteBackground")
     view.Background = [1.0, 1.0, 1.0]
     view.OrientationAxesVisibility = 0
 
-    # ---- 4. 显示设置 (alpha.water 蓝白云图) ----
-    disp = GetDisplayProperties(reader, view)
-    disp.Representation = "Surface"
-    disp.Interpolation = "Flat"
+    # ---- 4. 显示设置: ExtractSurface(外表面) + Surface With Edges ----
+    # 关键: ExtractSurface 只提取外表面边界 patch 的面, 这些面在 x-y/x-z 平面,
+    # 边规则正交, 无 AMR 内部 hex 的体对角线斜边 -> 消除视频斜三角线.
+    es = ExtractSurface(Input=reader)
+    es.UpdatePipeline()
+    disp = GetDisplayProperties(es, view)
+    disp.Representation = "Surface With Edges" if args.wireframe else "Surface"
+    disp.Interpolation = "Flat"                  # 单元色不平滑, VOF 界面更锐利
     disp.Ambient = 1.0
     disp.Diffuse = 0.0
+    disp.EdgeColor = wire_color                  # 仅 Surface With Edges 时可见
+    disp.LineWidth = 0.5
     disp.ColorArrayName = [assoc, args.field]
     lut = GetColorTransferFunction(args.field)
     lut.RGBPoints = [0.0, 1.0, 1.0, 1.0,   # alpha=0 -> 白
@@ -206,20 +219,15 @@ def main():
     disp.RescaleTransferFunctionToDataRange(False)
     lut.RescaleTransferFunction(0.0, 1.0)
 
-    # ---- 4b. 网格线框叠加 ----
-    if args.wireframe:
-        disp_wire = servermanager.CreateRepresentation(reader, view)
-        disp_wire.Representation = "Wireframe"
-        disp_wire.ColorArrayName = None
-        disp_wire.AmbientColor = wire_color
-        disp_wire.DiffuseColor = wire_color
-        disp_wire.LineWidth = 1.0
-        disp_wire.UpdateVTKObjects()
+    # 注: 不再叠加独立 Wireframe representation (旧 4b 段已删除)。独立 Wireframe 会画
+    # 所有 z 层 hex 的三角剖分/体斜边, 在准 2D 多 z 层投影下重叠成密集"斜三角线"。
+    # "Surface With Edges" 只画 ExtractSurface 外表面边；若软件渲染仍暴露 AMR
+    # 表面三角化/悬挂节点边, --no-wireframe 切到纯 Surface 作为严格无斜线路径。
 
     # ---- 5. 相机: 正对 z 平面 ----
     cx, cy, cz = 0.292, 0.1825, 0.006
     view.CameraParallelProjection = 1
-    view.CameraPosition = [cx, cy, 0.5]
+    view.CameraPosition = [cx, cy, 1.0]
     view.CameraFocalPoint = [cx, cy, cz]
     view.CameraViewUp = [0, 1, 0]
     view.CameraParallelScale = 0.21
@@ -229,6 +237,7 @@ def main():
     for i, t in enumerate(timesteps):
         tk.Time = t
         reader.UpdatePipeline()
+        es.UpdatePipeline()
         view.Update()
         fname = os.path.join(out_dir, "frame_%04d.png" % i)
         SaveScreenshot(fname, view, ImageResolution=[W, H])

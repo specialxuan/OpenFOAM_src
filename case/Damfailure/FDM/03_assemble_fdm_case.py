@@ -15,7 +15,8 @@ existing case directory.  It only:
 
     1. copies constant/polyMesh from --mesh-dir
     2. copies mode/ from --mode-dir
-    3. writes every other file from embedded templates
+     3. writes every other file from embedded templates, or copies --settings-dir
+        when supplied
     4. verifies the mode node count matches the polyMesh point count
 
 Only the Python standard library is used.
@@ -27,7 +28,7 @@ Usage:
         --out-dir  /path/to/fdm_case \\
          [--end-time 0.5] [--write-interval 50] [--delta-t 0.001] [--nprocs 8] \\
         [--amr] [--amr-interval N] [--amr-lower-refine N] [--amr-unrefine N] \\
-        [--amr-max-refinement N] [--amr-max-cells N]
+         [--amr-max-refinement N] [--amr-max-cells N] [--settings-dir DIR]
 """
 
 import argparse
@@ -51,6 +52,8 @@ FOAM_HEADER = """/*--------------------------------*- C++ -*--------------------
 
 DIVIDER = "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //"
 END_DIVIDER = "// ************************************************************************* //"
+CASE_DESCRIPTION_SOURCE = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, "CaseDescription.md"))
 
 
 def _dict_file(object_name, location, body):
@@ -95,6 +98,154 @@ def _write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
+
+
+def _read_text(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+def _dict_value(text, key, default="N/A"):
+    match = re.search(r"(?m)^\s*%s\s+([^;]+);" % re.escape(key), text)
+    return match.group(1).strip() if match else default
+
+
+def copy_settings(case_dir, settings_dir):
+    """Copy prepared settings while preserving the assembled mesh and mode."""
+    settings_dir = os.path.abspath(settings_dir)
+    if not os.path.isdir(settings_dir):
+        raise RuntimeError("settings directory not found: %s" % settings_dir)
+    copied = []
+    for name in ("constant", "system", "0", "case.foam"):
+        source = os.path.join(settings_dir, name)
+        if not os.path.exists(source):
+            continue
+        destination = os.path.join(case_dir, name)
+        if os.path.isdir(source):
+            for root, _dirs, files in os.walk(source):
+                relative = os.path.relpath(root, source)
+                excluded = ("polyMesh", "fsiRestart")
+                if any(relative == item or relative.startswith(item + os.sep)
+                       for item in excluded):
+                    continue
+                target_root = destination if relative == "." else os.path.join(destination, relative)
+                os.makedirs(target_root, exist_ok=True)
+                for filename in files:
+                    if relative == "." and filename == "CaseDescription.md":
+                        continue
+                    source_file = os.path.join(root, filename)
+                    target_file = os.path.join(target_root, filename)
+                    shutil.copy2(source_file, target_file)
+                    copied.append(os.path.relpath(target_file, case_dir))
+        else:
+            shutil.copy2(source, destination)
+            copied.append(name)
+    if not copied:
+        raise RuntimeError("settings directory has no supported settings: %s" % settings_dir)
+    return copied
+
+
+def write_case_description(case_dir, args):
+    """Copy the foundational case description and append resolved settings."""
+    with open(CASE_DESCRIPTION_SOURCE, "r", encoding="utf-8") as fh:
+        foundation = fh.read().replace("\r\n", "\n").rstrip()
+    dynamic_mesh = _read_text(os.path.join(case_dir, "constant", "dynamicMeshDict"))
+    control = _read_text(os.path.join(case_dir, "system", "controlDict"))
+    fv_solution = _read_text(os.path.join(case_dir, "system", "fvSolution"))
+    fv_schemes = _read_text(os.path.join(case_dir, "system", "fvSchemes"))
+    decompose_path = os.path.join(case_dir, "system", "decomposeParDict")
+    decompose = _read_text(decompose_path) if os.path.isfile(decompose_path) else ""
+    settings_note = (
+        "预写设置目录: `%s`。以下内容为复制后的实际文件。"
+        % os.path.abspath(args.settings_dir)
+        if args.settings_dir else
+        "设置由 `03_assemble_fdm_case.py` 的内嵌模板生成。")
+    appendix = """
+
+## 本次组装的求解参数
+
+以下内容由 `03_assemble_fdm_case.py` 根据本次组装实际写入的文件生成。
+%s
+
+### 时间与运行
+
+| 参数 | 值 |
+|---|---:|
+| 求解器 | `myInterFoam` |
+| `endTime` | `%s s` |
+| `deltaT` | `%s s` |
+| `writeControl` | `%s` |
+| `writeInterval` | `%s` |
+| 并行子域数 | `%s` |
+| AMR | `%s` |
+
+### FSI 与 AMR
+
+| 参数 | 值 |
+|---|---:|
+| `theta` | `%s` |
+| `fsiPatches` | `%s` |
+| `mappingTolerance` | `%s` |
+| `couplingRelaxation` | `%s` |
+| `refineInterval` | `%s` |
+| `lowerRefineLevel` | `%s` |
+| `upperRefineLevel` | `%s` |
+| `unrefineLevel` | `%s` |
+| `nBufferLayers` | `%s` |
+| `maxRefinement` | `%s` |
+| `maxCells` | `%s` |
+| `refinementMinCellVolume` | `%s` |
+| `refinementMinEdgeLength` | `%s` |
+
+### 关键 OpenFOAM 字典
+
+#### `constant/dynamicMeshDict`
+
+```foam
+%s
+```
+
+#### `system/controlDict`
+
+```foam
+%s
+```
+
+#### `system/fvSolution`
+
+```foam
+%s
+```
+
+#### `system/fvSchemes`
+
+```foam
+%s
+```
+""" % (settings_note, _dict_value(control, "endTime"),
+         _dict_value(control, "deltaT"), _dict_value(control, "writeControl"),
+         _dict_value(control, "writeInterval"),
+         _dict_value(decompose, "numberOfSubdomains", "1"),
+         "enabled" if "dynamicRefineFvMeshCoeffs" in dynamic_mesh else "disabled",
+         _dict_value(dynamic_mesh, "theta"), _dict_value(dynamic_mesh, "fsiPatches"),
+         _dict_value(dynamic_mesh, "mappingTolerance"),
+         _dict_value(dynamic_mesh, "couplingRelaxation"),
+         _dict_value(dynamic_mesh, "refineInterval"),
+         _dict_value(dynamic_mesh, "lowerRefineLevel"),
+         _dict_value(dynamic_mesh, "upperRefineLevel"),
+         _dict_value(dynamic_mesh, "unrefineLevel"),
+         _dict_value(dynamic_mesh, "nBufferLayers"),
+         _dict_value(dynamic_mesh, "maxRefinement"),
+         _dict_value(dynamic_mesh, "maxCells"),
+         _dict_value(dynamic_mesh, "refinementMinCellVolume"),
+         _dict_value(dynamic_mesh, "refinementMinEdgeLength"),
+         dynamic_mesh.rstrip(), control.rstrip(), fv_solution.rstrip(),
+         fv_schemes.rstrip())
+    case_root = os.path.dirname(os.path.normpath(case_dir))
+    _write(os.path.join(case_root, "CaseDescription.md"), foundation + appendix)
+    stale_case_description = os.path.join(case_dir, "CaseDescription.md")
+    if os.path.isfile(stale_case_description):
+        os.remove(stale_case_description)
 
 
 # --------------------------------------------------------------------------- #
@@ -160,10 +311,10 @@ _AMR_REFINE_BODY = """dynamicRefineFvMeshCoeffs
 """
 
 
-def build_dynamic_mesh_dict(amr=False, amr_interval=1, amr_lower_refine=20,
-                            amr_unrefine=8, amr_nbuffer=3, amr_max_refine=1,
-                            amr_max_cells=500000, amr_min_cell_vol=9.999995e-10,
-                            amr_min_edge=0.0009999995):
+def build_dynamic_mesh_dict(amr=False, amr_interval=1, amr_lower_refine=12,
+                            amr_unrefine=4, amr_nbuffer=4, amr_max_refine=1,
+                            amr_max_cells=500000, amr_min_cell_vol=5e-10,
+                            amr_min_edge=0.0005):
     """Render constant/dynamicMeshDict body.  Without amr the output is
     byte-identical to the pre-AMR baseline (no meshRefinementSupport, no
     dynamicRefineFvMeshCoeffs block).  With amr, the four refinement-support
@@ -216,10 +367,10 @@ value           (0 -9.81 0);
 """
 
 
-def write_constant(case_dir, amr=False, amr_interval=1, amr_lower_refine=20,
-                   amr_unrefine=8, amr_nbuffer=3, amr_max_refine=1,
-                   amr_max_cells=500000, amr_min_cell_vol=9.999995e-10,
-                   amr_min_edge=0.0009999995):
+def write_constant(case_dir, amr=False, amr_interval=1, amr_lower_refine=12,
+                   amr_unrefine=4, amr_nbuffer=4, amr_max_refine=1,
+                   amr_max_cells=500000, amr_min_cell_vol=5e-10,
+                   amr_min_edge=0.0005):
     body = build_dynamic_mesh_dict(
         amr=amr, amr_interval=amr_interval, amr_lower_refine=amr_lower_refine,
         amr_unrefine=amr_unrefine, amr_nbuffer=amr_nbuffer,
@@ -699,6 +850,9 @@ def parse_args(argv):
                    help="dir containing FluidNodeCoor.csv + FluidNodeDisp*.csv")
     p.add_argument("--out-dir", required=True,
                    help="output case directory")
+    p.add_argument("--settings-dir", default=None,
+                   help="prepared settings root containing constant/, system/, 0/; "
+                        "copied over embedded defaults without replacing polyMesh")
     p.add_argument("--end-time", type=float, default=0.5,
                    help="controlDict endTime (default 0.5)")
     p.add_argument("--write-interval", type=int, default=50,
@@ -714,14 +868,18 @@ def parse_args(argv):
     p.add_argument("--amr-interval", type=int, default=1,
                    help="AMR refineInterval (steps between mesh refinement) "
                         "(default 1)")
-    p.add_argument("--amr-lower-refine", type=float, default=20,
-                   help="AMR lowerRefineLevel gradient threshold (default 20)")
-    p.add_argument("--amr-unrefine", type=float, default=8,
-                   help="AMR unrefineLevel (default 8)")
+    p.add_argument("--amr-lower-refine", type=float, default=12,
+                   help="AMR lowerRefineLevel gradient threshold (default 12)")
+    p.add_argument("--amr-unrefine", type=float, default=4,
+                   help="AMR unrefineLevel (default 4)")
     p.add_argument("--amr-max-refinement", type=int, default=1,
                    help="AMR maxRefinement levels (default 1)")
     p.add_argument("--amr-max-cells", type=int, default=500000,
                    help="AMR maxCells limit (default 500000)")
+    p.add_argument("--amr-min-cell-volume", type=float, default=5e-10,
+                   help="AMR minimum child-cell volume (default 5e-10)")
+    p.add_argument("--amr-min-edge-length", type=float, default=0.0005,
+                   help="AMR minimum child-edge length (default 0.0005 m)")
     return p.parse_args(argv)
 
 
@@ -777,8 +935,11 @@ def main(argv):
     write_constant(out_dir, amr=args.amr, amr_interval=args.amr_interval,
                    amr_lower_refine=args.amr_lower_refine,
                    amr_unrefine=args.amr_unrefine,
+                   amr_nbuffer=4,
                    amr_max_refine=args.amr_max_refinement,
-                   amr_max_cells=args.amr_max_cells)
+                   amr_max_cells=args.amr_max_cells,
+                   amr_min_cell_vol=args.amr_min_cell_volume,
+                   amr_min_edge=args.amr_min_edge_length)
     if args.amr:
         print("[FDM 03] AMR: enabled (interval=%d, lowerRefine=%s, "
               "unrefine=%s, maxRefinement=%d, maxCells=%d)"
@@ -790,16 +951,41 @@ def main(argv):
     write_zero_dir(out_dir)
     write_system(out_dir, args.end_time, args.delta_t, args.write_interval,
                  args.nprocs)
+    if args.settings_dir:
+        try:
+            copied_settings = copy_settings(out_dir, args.settings_dir)
+        except (OSError, RuntimeError) as exc:
+            print("[FDM ERR] failed to copy --settings-dir: %s" % exc)
+            return 1
+        print("[FDM 03] Copied prepared settings: %s"
+              % ", ".join(copied_settings))
+    required_settings = (
+        os.path.join(out_dir, "constant", "dynamicMeshDict"),
+        os.path.join(out_dir, "system", "controlDict"),
+        os.path.join(out_dir, "system", "fvSolution"),
+        os.path.join(out_dir, "system", "fvSchemes"),
+    )
+    missing_settings = [path for path in required_settings if not os.path.isfile(path)]
+    if missing_settings:
+        print("[FDM ERR] assembled settings missing: %s"
+              % ", ".join(missing_settings))
+        return 1
+    write_case_description(out_dir, args)
     print("[FDM 03] Wrote constant/{dynamicMeshDict,transportProperties,"
           "turbulenceProperties,g}")
     print("[FDM 03] Wrote 0/{U,p,p_rgh,k,omega,nut,alpha.water}")
     print("[FDM 03] Wrote system/{controlDict,fvSchemes,fvSolution,setFieldsDict%s}"
           % (",decomposeParDict" if args.nprocs > 1 else ""))
+    print("[FDM 03] Wrote %s with solver parameters"
+          % os.path.join(os.path.dirname(os.path.normpath(out_dir)),
+                         "CaseDescription.md"))
 
     # ---- ParaView OpenFOAMReader anchor ------------------------------------
     # An empty case.foam in the case root tells ParaView's OpenFOAMReader to
         # load the case directory (required by 06_export_fdm_video.py).
-    _write(os.path.join(out_dir, "case.foam"), "")
+    case_foam = os.path.join(out_dir, "case.foam")
+    if not os.path.isfile(case_foam):
+        _write(case_foam, "")
     print("[FDM 03] Wrote case.foam (ParaView anchor)")
 
     print("")
