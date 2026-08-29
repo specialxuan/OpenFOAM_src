@@ -21,18 +21,4 @@
         "Turb",
         "wmake"
     ],
-    "files.exclude": {
-        "**/.agents": true,
-        "**/.codegraph": true,
-        "**/.omo": true,
-        "**/.opencode": true,
-        "**/.codex": true,
-        "**/.venv_fdm": true,
-        "**/linux64GccDPInt32Opt": true,
-        "**/lnInclude": true,
-        "**/.cache": true,
-        "package-lock.json": true,
-        "package.json": true,
-        ".clang-format": true,
-    },
 }

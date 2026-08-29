@@ -816,6 +816,8 @@ def parse_args(argv):
                    help="override endTime in controlDict (e.g. 0.5)")
     p.add_argument("--write-interval", type=int, default=None,
                    help="override writeInterval in controlDict")
+    p.add_argument("--delta-t", type=float, default=None,
+                   help="temporarily override deltaT in controlDict")
     p.add_argument("--taskset", default=None,
                    help="optional CPU affinity mask for the solver "
                         "(e.g. '0-7')")
@@ -857,7 +859,10 @@ def main(argv):
     # ---- read case configuration -----------------------------------------
     ctrl = read_control_dict(case_dir)
     end_time = args.end_time if args.end_time is not None else ctrl["endTime"]
-    delta_t = ctrl["deltaT"]
+    delta_t = args.delta_t if args.delta_t is not None else ctrl["deltaT"]
+    if delta_t is None or not math.isfinite(delta_t) or delta_t <= 0:
+        error("--delta-t/deltaT must be a finite positive value")
+        return 2
     write_interval = (args.write_interval if args.write_interval is not None
                       else ctrl["writeInterval"])
 
@@ -1026,6 +1031,10 @@ def main(argv):
         if not dry:
             set_control_dict_value(case_dir, "writeControl", "timeStep")
             set_control_dict_value(case_dir, "writeInterval", write_interval)
+    if args.delta_t is not None:
+        log("--- Override deltaT = %s (restored after run)" % _fmt_num(delta_t))
+        if not dry:
+            set_control_dict_value(case_dir, "deltaT", delta_t)
 
     # ---- dry run: stop here ----------------------------------------------
     if dry:
@@ -1077,6 +1086,8 @@ def _restore_overrides(case_dir, args, ctrl):
             set_control_dict_value(case_dir, "writeControl",
                                    ctrl.get("writeControl", "timeStep"))
             set_control_dict_value(case_dir, "writeInterval", ctrl["writeInterval"])
+        if args.delta_t is not None:
+            set_control_dict_value(case_dir, "deltaT", ctrl["deltaT"])
     except Exception as exc:
         error("failed to restore controlDict overrides: %s" % exc)
 

@@ -8,19 +8,47 @@
 		}
 	],
 	"settings": {
-		"files.watcherExclude": {
-			"**/linux64GccDPInt32Opt/**": true,
-			"**/lnInclude/**": true,
-			"**/.cache/**": true,
-			"**/.venv_fdm/**": true,
+		"files.exclude": {
+			".clang-format": true,
+			"**/.agents": true,
+			"**/.cache": true,
+			"**/.codegraph": true,
+			"**/.codex": true,
 			"**/.git/**": true,
-			"**/.omo/**": true,
-			"**/.opencode/**": true
-		},
-		"search.exclude": {
+			"**/.omo": true,
+			"**/.opencode": true,
+			"**/.venv_fdm": true,
 			"**/linux64GccDPInt32Opt": true,
 			"**/lnInclude": true,
-			"**/.venv_fdm": true
+			"**/__pycache__": true,
+			"package-lock.json": true,
+			"package.json": true
+		},
+		"files.watcherExclude": {
+			"**/.cache/**": true,
+			"**/.codegraph/**": true,
+			"**/.codex/**": true,
+			"**/.git/**": true,
+			"**/.omo/**": true,
+			"**/.opencode/**": true,
+			"**/.venv_fdm/**": true,
+			"**/linux64GccDPInt32Opt/**": true,
+			"**/lnInclude/**": true,
+			"**/__pycache__/**":true,
+			"/root/Workspace/**": true
+		},
+		"search.exclude": {
+			"**/.cache/**": true,
+			"**/.codegraph/**": true,
+			"**/.codex/**": true,
+			"**/.git/**": true,
+			"**/.omo/**": true,
+			"**/.opencode/**": true,
+			"**/.venv_fdm": true,
+			"**/linux64GccDPInt32Opt": true,
+			"**/lnInclude": true,
+			"**/__pycache__/**": true,
+			"/root/Workspace/**": true
 		}
 	}
 }

@@ -20,10 +20,14 @@ RES=115
 Z_LAYERS=12
 END_TIME=0.5
 WRITE_INTERVAL=50
+DELTA_T=""        # 空值: 使用组装设置中的 deltaT
 VIDEO=""          # "" 未定(交互询问) / "yes" / "no"
 NPROCS=8
 AMR="no"          # "yes" / "no" (默认关闭)
+SETTINGS_DIR=""   # 可选: 传给 03 的预写设置目录
 DRY_RUN=0
+STEP_04_FAILED=0
+STEP_04_RC=0
 
 usage() {
     cat <<EOF
@@ -35,14 +39,16 @@ usage() {
 
 选项 (全部可选; 不带任何参数时交互询问):
   --case-root <dir>      算例根目录 (默认 $CASE_ROOT)
-  --steps <list>         运行步骤, 逗号分隔 1-6 (默认 $STEPS), 如 "3,4"; 含 6 则自动导出视频 (帧+MP4)
+  --steps <list>         运行步骤, 逗号分隔 1-6 (默认 $STEPS), 如 "3,4"; 步骤 6 默认导出 PNG+MP4
   --res <N>              网格 x 向密度 (传给 01, 默认 $RES)
   --z-layers <N>         z 向层数 (传给 01, 默认 $Z_LAYERS)
   --end-time <T>         仿真时长 (传给 03/04, 默认 $END_TIME)
   --write-interval <N>   输出间隔步数 (默认 $WRITE_INTERVAL)
-  --video / --no-video   覆盖 steps 的视频行为 (默认随 steps 含 6 自动导出; --no-video 强制关闭)
+  --delta-t <dt>         时间步长, 传给步骤 3/4 (默认使用设置文件)
+  --video / --no-video   步骤 6 是否合成 MP4 (--no-video 仍保留 PNG 帧)
   --nprocs <N>           并行进程数 (传给 03/04, 默认 $NPROCS)
   --amr                  启用动态自适应网格 (dynamic AMR, 传给 03, 默认关闭)
+  --settings-dir <dir>   预写算例设置目录, 传给步骤 03 覆盖内嵌默认配置
   --dry-run              只打印将执行的命令, 不执行
   -h, --help             显示本帮助
 
@@ -72,10 +78,12 @@ while [ $# -gt 0 ]; do
         --z-layers)        Z_LAYERS="${2:?--z-layers 需要一个参数}"; shift 2 ;;
         --end-time)        END_TIME="${2:?--end-time 需要一个参数}"; shift 2 ;;
         --write-interval)  WRITE_INTERVAL="${2:?--write-interval 需要一个参数}"; shift 2 ;;
+        --delta-t)          DELTA_T="${2:?--delta-t 需要一个参数}"; shift 2 ;;
         --video)           VIDEO=yes; shift ;;
         --no-video)        VIDEO=no; shift ;;
         --nprocs)          NPROCS="${2:?--nprocs 需要一个参数}"; shift 2 ;;
         --amr)             AMR=yes; shift ;;
+        --settings-dir)    SETTINGS_DIR="${2:?--settings-dir 需要一个参数}"; shift 2 ;;
         --dry-run)         DRY_RUN=1; shift ;;
         -h|--help)         usage; exit 0 ;;
         *)                 error "未知选项: $1"; usage >&2; exit 2 ;;
@@ -102,7 +110,7 @@ if [ "$INTERACTIVE" -eq 1 ]; then
     read -p "导出视频? [y/N]: " inp
     case "${inp:-}" in
         y|Y|yes|Yes|YES) VIDEO=yes ;;
-        *)               VIDEO="" ;;   # 未定: 由 steps 是否含 5 决定
+        *)               VIDEO="" ;;   # 未定: 由 steps 是否含 6 决定
     esac
 
     read -p "并行进程数 --nprocs (默认 $NPROCS): " inp
@@ -113,6 +121,9 @@ if [ "$INTERACTIVE" -eq 1 ]; then
         y|Y|yes|Yes|YES) AMR=yes ;;
         *)               AMR=no ;;
     esac
+
+    read -p "预写设置目录 --settings-dir (默认不使用): " inp
+    if [ -n "${inp:-}" ]; then SETTINGS_DIR="$inp"; fi
     echo
 fi
 
@@ -198,40 +209,11 @@ run_script() {
 }
 
 # --------------------------------------------------------------------------- #
-#  视频合成辅助
+#  视频行为辅助
 # --------------------------------------------------------------------------- #
 
-# 判断步骤列表是否包含某步骤 (如 steps_contains 6)
 steps_contains() {
     echo ",$STEPS," | grep -q ",$1,"
-}
-
-# ffmpeg 把步骤 6 生成的 PNG 帧合成 MP4 (含帧目录检查 / DRY_RUN 处理)
-synthesize_video() {
-    ffmpeg_cmd="ffmpeg -y -framerate 10 -i '$CASE_ROOT/frames/frame_%04d.png' -c:v libx264 -pix_fmt yuv420p '$CASE_ROOT/fdm_result.mp4'"
-    echo "[FDM-PIPE] 视频合成: $ffmpeg_cmd"
-    if [ "$DRY_RUN" -eq 0 ]; then
-        if [ ! -d "$CASE_ROOT/frames" ]; then
-            error "未找到帧目录 $CASE_ROOT/frames (需要先运行步骤 6)"
-            exit 1
-        fi
-        if ! run_script "$CASE_ROOT/run_video.log" "$ffmpeg_cmd"; then
-            error "视频合成失败"
-            exit 1
-        fi
-        echo "[FDM-PIPE] 视频输出: $CASE_ROOT/fdm_result.mp4"
-    fi
-}
-
-# 合成触发决策 (优先级: --video 强制 > --no-video 强制关闭 > steps 含 6 自动)
-maybe_synthesize_video() {
-    if [ "$VIDEO" = "yes" ]; then
-        synthesize_video
-    elif [ "$VIDEO" = "no" ]; then
-        :
-    elif steps_contains 6; then
-        synthesize_video
-    fi
 }
 
 # --------------------------------------------------------------------------- #
@@ -246,12 +228,28 @@ run_step() {
         3) cmd="python3 '$SCRIPT_DIR/03_assemble_fdm_case.py' --mesh-dir '$CASE_ROOT/mesh/fluid-openfoam' --mode-dir '$CASE_ROOT/modal_ve/mode' --out-dir '$CASE_ROOT/fdm_case' --end-time $END_TIME --write-interval $WRITE_INTERVAL --nprocs $NPROCS" ;;
         4) cmd="python3 '$SCRIPT_DIR/04_run_fdm.py' -f --case '$CASE_ROOT/fdm_case' --end-time $END_TIME --write-interval $WRITE_INTERVAL --nprocs $NPROCS" ;;
         5) cmd="python3 '$SCRIPT_DIR/05_postprocess.py' --case '$CASE_ROOT/fdm_case' --out-dir '$CASE_ROOT/postprocess'" ;;
-        6) cmd="xvfb-run -a pvpython '$SCRIPT_DIR/06_export_fdm_video.py' --case '$CASE_ROOT/fdm_case' --out '$CASE_ROOT/frames'" ;;
+        6)
+            cmd="xvfb-run -a pvpython '$SCRIPT_DIR/06_export_fdm_video.py' --case '$CASE_ROOT/fdm_case' --out '$CASE_ROOT/frames' --mp4-path '$CASE_ROOT/fdm_result.mp4'"
+            [ "$VIDEO" = "no" ] && cmd+=" --no-mp4"
+            ;;
     esac
 
     # AMR 只影响 03 生成的 constant/dynamicMeshDict (运行期由 fastDynamicFvMesh 执行)
     if [ "$step" -eq 3 ] && [ "$AMR" = "yes" ]; then
         cmd+=" --amr"
+    fi
+    if [ "$step" -eq 3 ] && [ -n "$SETTINGS_DIR" ]; then
+        if [ "$DRY_RUN" -eq 0 ] && [ ! -d "$SETTINGS_DIR" ]; then
+            error "--settings-dir 不存在或不是目录: $SETTINGS_DIR"
+            return 1
+        fi
+        cmd+=" --settings-dir '$SETTINGS_DIR'"
+    fi
+    if [ "$step" -eq 3 ] && [ -n "$DELTA_T" ]; then
+        cmd+=" --delta-t '$DELTA_T'"
+    fi
+    if [ "$step" -eq 4 ] && [ -n "$DELTA_T" ]; then
+        cmd+=" --delta-t '$DELTA_T'"
     fi
 
     echo "[FDM-PIPE] 步骤 $step: $cmd"
@@ -269,20 +267,21 @@ run_step() {
         # ParaView OpenFOAMReader 需要 case.foam 锚点文件; 03 不生成, 沿用仓库 touch 约定
         mkdir -p "$CASE_ROOT/fdm_case"
         [ -f "$CASE_ROOT/fdm_case/case.foam" ] || touch "$CASE_ROOT/fdm_case/case.foam"
-        # 步骤 6: pvpython 在 xvfb 下渲染完成后可能抛无害 GLXBadContext 导致非零退出码,
-        # 但只要帧文件已生成即视为成功。捕获过滤: 只透传 [FDM 前缀行, 完整输出落盘。
+        # 步骤 6: 非零退出只有在所需产物完整时才按 GLX teardown 警告处理。
         if ! run_script "$CASE_ROOT/run_step_6.log" "$cmd"; then
-            if ls "$CASE_ROOT"/frames/frame_*.png >/dev/null 2>&1; then
-                warn "步骤 6: pvpython 退出码非 0 (xvfb GLX 清理错误) 但帧已生成, 视为成功"
+            frames_ok=0
+            mp4_ok=0
+            ls "$CASE_ROOT"/frames/frame_*.png >/dev/null 2>&1 && frames_ok=1
+            [ -s "$CASE_ROOT/fdm_result.mp4" ] && mp4_ok=1
+            if [ "$frames_ok" -eq 1 ] && { [ "$VIDEO" = "no" ] || [ "$mp4_ok" -eq 1 ]; }; then
+                warn "步骤 6: 非零退出但 PNG/MP4 产物完整, 按无害 GLX 清理错误处理"
             else
-                error "步骤 6 执行失败: 未生成任何帧 (pvpython 非零退出)"
+                error "步骤 6 执行失败: PNG 或 MP4 产物不完整, 详见 run_step_6.log"
                 return 1
             fi
         fi
-        # 出帧成功后合成视频: steps 含 6 自动; --no-video 强制关闭
-        maybe_synthesize_video
     else
-        # 步骤 1/2/3/6: 捕获过滤, 只透传带 [FDM 前缀的主要行, 工具原始输出仅落盘
+        # 步骤 1/2/3/5: 捕获过滤, 只透传带 [FDM 前缀的主要行, 工具原始输出仅落盘
         if ! run_script "$CASE_ROOT/run_step_$step.log" "$cmd"; then
             error "步骤 $step 执行失败, 流水线中止"
             return 1
@@ -298,16 +297,18 @@ echo "[FDM-PIPE] 算例根目录 : $CASE_ROOT"
 echo "[FDM-PIPE] 步骤       : $STEPS"
 echo "[FDM-PIPE] 网格       : --res $RES --z-layers $Z_LAYERS"
 echo "[FDM-PIPE] 仿真       : endTime=$END_TIME writeInterval=$WRITE_INTERVAL"
+echo "[FDM-PIPE] 时间步长    : ${DELTA_T:-使用组装设置}"
 echo "[FDM-PIPE] 并行       : $NPROCS 进程"
 echo "[FDM-PIPE] AMR         : $AMR"
+echo "[FDM-PIPE] 设置来源    : ${SETTINGS_DIR:-内嵌默认模板}"
 if [ "$VIDEO" = "yes" ]; then
-    VIDEO_STATE="强制是 (--video)"
+    VIDEO_STATE="步骤6默认合成 MP4 (--video)"
 elif [ "$VIDEO" = "no" ]; then
-    VIDEO_STATE="强制否 (--no-video)"
+    VIDEO_STATE="仅保留 PNG (--no-video)"
 elif steps_contains 6; then
-    VIDEO_STATE="随步骤6 (含 6, 自动合成)"
+    VIDEO_STATE="步骤6默认合成 MP4 (25 fps)"
 else
-    VIDEO_STATE="随步骤6 (不含 6, 不合成)"
+    VIDEO_STATE="不含步骤6"
 fi
 echo "[FDM-PIPE] 视频       : $VIDEO_STATE"
 [ "$DRY_RUN" -eq 1 ] && echo "[FDM-PIPE] DRY-RUN    : 只打印命令, 不执行"
@@ -317,20 +318,23 @@ echo
 #  按步骤顺序执行 (去重 + 数值排序, 保证 1 < 2 < 3 < 4 < 5 < 6)
 # --------------------------------------------------------------------------- #
 for s in $(echo "$STEPS" | tr ',' '\n' | sort -u -n); do
-    run_step "$s"
+    if [ "$s" -eq 4 ]; then
+        set +e
+        run_step "$s"
+        STEP_04_RC=$?
+        set -e
+        if [ "$STEP_04_RC" -ne 0 ]; then
+            STEP_04_FAILED=1
+            error "步骤 4 执行失败 (exit $STEP_04_RC), 继续尝试步骤 5/6"
+        fi
+    else
+        run_step "$s"
+    fi
 done
-
-# --------------------------------------------------------------------------- #
-#  视频合成 (步骤 6 生成 PNG 帧后, 用 ffmpeg 合成 MP4)
-#  - dry-run 预览: 步骤 6 分支提前返回未触发合成, 这里按决策打印合成命令
-#  - 实跑: 步骤 6 分支已合成 (steps 含 6 自动 / --video 强制 / --no-video 关闭);
-#    这里仅兜底 --video 且 steps 不含 6 (步骤 6 未运行 -> 无帧, 报错提示)
-# --------------------------------------------------------------------------- #
-if [ "$DRY_RUN" -eq 1 ]; then
-    maybe_synthesize_video
-elif [ "$VIDEO" = "yes" ] && ! steps_contains 6; then
-    synthesize_video
-fi
 
 echo
 echo "[FDM-PIPE] 流水线完成"
+if [ "$STEP_04_FAILED" -eq 1 ]; then
+    error "流水线完成但步骤 4 失败 (exit $STEP_04_RC)"
+    exit 1
+fi

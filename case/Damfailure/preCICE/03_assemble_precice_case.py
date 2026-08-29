@@ -972,6 +972,9 @@ def main(argv):
     # ---- root files ---------------------------------------------------------
     _write(os.path.join(out_dir, "precice-config.xml"),
            PRECICE_CONFIG_XML.replace(
+               '<time-window-size value="0.0005" />',
+               '<time-window-size value="%s" />' % _fmt_num(args.delta_t))
+           .replace(
                '<max-time value="0.5" />',
                '<max-time value="%s" />' % _fmt_num(args.precice_max_time)))
     _write(os.path.join(out_dir, "run-coupled.sh"), RUN_COUPLED_SH)
