@@ -293,12 +293,12 @@ run_step() {
 #  打印配置摘要
 # --------------------------------------------------------------------------- #
 echo "[FDM-PIPE] ===== Damfailure 六脚本流水线 (步骤 $STEPS) ====="
-echo "[FDM-PIPE] 算例根目录 : $CASE_ROOT"
-echo "[FDM-PIPE] 步骤       : $STEPS"
-echo "[FDM-PIPE] 网格       : --res $RES --z-layers $Z_LAYERS"
-echo "[FDM-PIPE] 仿真       : endTime=$END_TIME writeInterval=$WRITE_INTERVAL"
+echo "[FDM-PIPE] 算例根目录  : $CASE_ROOT"
+echo "[FDM-PIPE] 步骤        : $STEPS"
+echo "[FDM-PIPE] 网格        : --res $RES --z-layers $Z_LAYERS"
+echo "[FDM-PIPE] 仿真        : endTime=$END_TIME writeInterval=$WRITE_INTERVAL"
 echo "[FDM-PIPE] 时间步长    : ${DELTA_T:-使用组装设置}"
-echo "[FDM-PIPE] 并行       : $NPROCS 进程"
+echo "[FDM-PIPE] 并行        : $NPROCS 进程"
 echo "[FDM-PIPE] AMR         : $AMR"
 echo "[FDM-PIPE] 设置来源    : ${SETTINGS_DIR:-内嵌默认模板}"
 if [ "$VIDEO" = "yes" ]; then
@@ -306,12 +306,12 @@ if [ "$VIDEO" = "yes" ]; then
 elif [ "$VIDEO" = "no" ]; then
     VIDEO_STATE="仅保留 PNG (--no-video)"
 elif steps_contains 6; then
-    VIDEO_STATE="步骤6默认合成 MP4 (25 fps)"
+    VIDEO_STATE="步骤6默认合成 MP4 (30 fps)"
 else
     VIDEO_STATE="不含步骤6"
 fi
-echo "[FDM-PIPE] 视频       : $VIDEO_STATE"
-[ "$DRY_RUN" -eq 1 ] && echo "[FDM-PIPE] DRY-RUN    : 只打印命令, 不执行"
+echo "[FDM-PIPE] 视频        : $VIDEO_STATE"
+[ "$DRY_RUN" -eq 1 ] && echo "[FDM-PIPE] DRY-RUN     : 只打印命令, 不执行"
 echo
 
 # --------------------------------------------------------------------------- #

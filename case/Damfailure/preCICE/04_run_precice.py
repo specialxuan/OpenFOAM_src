@@ -20,8 +20,8 @@ fluid Time / endTime / percentage / 已跑 / 剩余 / 预计完成.
              (--solid-threads to change)
 
 Modes (mirror FDM 04):
-  -f, --fresh      clean all results, run checkMesh (+setFields, +decomposePar
-                   for parallel), solve from startTime, then reconstruct.
+   -f, --fresh      clean all results, run checkMesh (+setFields, +decomposePar
+                    for parallel), then solve from startTime.
   -r, --restart    keep mesh/decomposition, clean results, solve from startTime.
   -c, --continue   keep everything, solve from latestTime (fluid only; the
                    preCICE coupling itself always starts from time-window 0).
@@ -53,6 +53,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 # --------------------------------------------------------------------------- #
@@ -277,7 +278,7 @@ def read_control_dict(case_dir):
         "endTime": _dict_value_float(text, "endTime", 0.02),
         "deltaT": _dict_value_float(text, "deltaT", 0.0005),
         "writeControl": _dict_value(text, "writeControl", "runTime"),
-        "writeInterval": _dict_value_int(text, "writeInterval", 1),
+        "writeInterval": _dict_value_float(text, "writeInterval", 1.0),
     }
 
 
@@ -328,6 +329,7 @@ def read_precice_config(config_path):
 
 
 PRECICE_MAX_TIME_RE = re.compile(r'(<max-time\s+value=")[^"]+(")')
+PRECICE_WINDOW_RE = re.compile(r'(<time-window-size\s+value=")[^"]+(")')
 
 
 def patch_precice_max_time(config_path, value):
@@ -359,6 +361,33 @@ def restore_precice_max_time(config_path, original):
         return
     with open(config_path, "w", encoding="utf-8") as fh:
         fh.write(new_text)
+
+
+def patch_precice_window(config_path, value):
+    text = _read_text(config_path)
+    match = PRECICE_WINDOW_RE.search(text)
+    if not match:
+        return None
+    original = match.group(0)
+    updated, count = PRECICE_WINDOW_RE.subn(
+        r'\g<1>%s\2' % _fmt_num(value), text, count=1)
+    if count != 1:
+        return None
+    with open(config_path, "w", encoding="utf-8") as stream:
+        stream.write(updated)
+    return original
+
+
+def restore_precice_window(config_path, original):
+    if original is None:
+        return
+    text = _read_text(config_path)
+    updated, count = PRECICE_WINDOW_RE.subn(lambda _match: original, text, count=1)
+    if count != 1:
+        warn("could not restore <time-window-size> in %s" % config_path)
+        return
+    with open(config_path, "w", encoding="utf-8") as stream:
+        stream.write(updated)
 
 
 # --------------------------------------------------------------------------- #
@@ -428,6 +457,14 @@ def collect_processor_cleanup(fluid_dir, keep_mesh):
             if os.path.isdir(path):
                 targets.append(path)
     return targets
+
+
+def collect_precice_exchange_cleanup(case_dir):
+    run_dir = os.path.join(case_dir, "precice-run")
+    if not os.path.isdir(run_dir):
+        return []
+    return [os.path.join(run_dir, name) for name in os.listdir(run_dir)
+            if os.path.isdir(os.path.join(run_dir, name))]
 
 
 def remove_paths(paths):
@@ -567,6 +604,20 @@ def verify_run(case_dir, end_time, delta_t):
                         % miter.group(0))
     else:
         log("OK: no max-iterations / divergence marker in preCICE logs")
+
+    fluid_dir = os.path.join(case_dir, "fluid-openfoam")
+    processors = [path for path in glob.glob(os.path.join(fluid_dir, "processor*"))
+                  if os.path.isdir(path)]
+    if processors:
+        expected = _fmt_num(end_time)
+        missing = [path for path in processors
+                   if not os.path.isdir(os.path.join(path, expected))]
+        if missing:
+            problems.append("parallel fluid results do not reach endTime %s in: %s"
+                            % (expected, ", ".join(os.path.basename(path)
+                                                     for path in missing)))
+        else:
+            log("OK: processor results reach endTime %s" % expected)
 
     return problems
 
@@ -719,13 +770,15 @@ def parse_args(argv):
                    const="c", help="continue from latestTime")
     p.set_defaults(mode="f")
 
-    p.add_argument("--case", required=True,
+    p.add_argument("--case", required=False,
                    help="assembled preCICE case root (03 output)")
     p.add_argument("--end-time", type=float, default=None,
                    help="override fluid endTime in controlDict (default: short "
                         "0.02; pass 0.5 for the full run)")
     p.add_argument("--write-interval", type=float, default=None,
-                   help="override writeInterval (runTime) in controlDict")
+                    help="override writeInterval (runTime) in controlDict")
+    p.add_argument("--delta-t", type=float, default=None,
+                   help="temporarily override controlDict deltaT and preCICE time-window-size")
     p.add_argument("--nprocs", type=int, default=8,
                    help="fluid MPI processes (default 8)")
     p.add_argument("--solid-threads", type=int, default=8,
@@ -735,12 +788,19 @@ def parse_args(argv):
                    help="optional CPU affinity mask for the fluid solver "
                         "(e.g. '0-7')")
     p.add_argument("--dry-run", action="store_true",
-                   help="print plan + time estimate only; do not execute")
+                   help="print the coupled-run plan only; do not execute")
+    p.add_argument("--self-test", action="store_true",
+                   help="run the isolated override-restoration regression test and exit")
     return p.parse_args(argv)
 
 
 def main(argv):
     args = parse_args(argv)
+    if args.self_test:
+        return run_self_test()
+    if not args.case:
+        error("--case is required unless --self-test is used")
+        return 2
     case_dir = os.path.abspath(args.case)
     dry = args.dry_run
     mode = args.mode
@@ -779,7 +839,10 @@ def main(argv):
 
     # ---- read configuration -------------------------------------------------
     ctrl = read_control_dict(case_dir)
-    delta_t = ctrl["deltaT"]
+    delta_t = args.delta_t if args.delta_t is not None else ctrl["deltaT"]
+    if delta_t <= 0:
+        error("--delta-t must be positive")
+        return 2
     end_time = args.end_time if args.end_time is not None else ctrl["endTime"]
     if end_time <= 0:
         error("endTime must be positive (got %s)" % _fmt_num(end_time))
@@ -788,7 +851,8 @@ def main(argv):
                       else ctrl["writeInterval"])
 
     precice = read_precice_config(os.path.join(case_dir, "precice-config.xml"))
-    if "window" in precice and abs(precice["window"] - delta_t) > 1e-12:
+    if (args.delta_t is None and "window" in precice
+            and abs(precice["window"] - delta_t) > 1e-12):
         warn("controlDict deltaT (%s) != precice-config time-window-size (%s); "
              "coupling windows will NOT match fluid steps"
              % (_fmt_num(delta_t), _fmt_num(precice["window"])))
@@ -843,6 +907,15 @@ def main(argv):
             log("--- Removed: %s"
                 % (", ".join(os.path.basename(t) for t in targets)
                    if targets else "(nothing)"))
+        exchange_targets = collect_precice_exchange_cleanup(case_dir)
+        if dry:
+            log("      [dry-run] would remove stale preCICE exchanges: %s"
+                % (", ".join(os.path.basename(t) for t in exchange_targets)
+                   if exchange_targets else "(nothing)"))
+        else:
+            removed = remove_paths(exchange_targets)
+            log("--- Removed stale preCICE exchanges: %s"
+                % (", ".join(removed) if removed else "(nothing)"))
         if not dry:
             set_start_from(case_dir, "startTime")
         log("--- Set startFrom = startTime%s" % ("" if not dry else " [dry-run]"))
@@ -913,6 +986,15 @@ def main(argv):
             log("--- Removed: %s"
                 % (", ".join(os.path.basename(t) for t in targets)
                    if targets else "(nothing)"))
+        exchange_targets = collect_precice_exchange_cleanup(case_dir)
+        if dry:
+            log("      [dry-run] would remove stale preCICE exchanges: %s"
+                % (", ".join(os.path.basename(t) for t in exchange_targets)
+                   if exchange_targets else "(nothing)"))
+        else:
+            removed = remove_paths(exchange_targets)
+            log("--- Removed stale preCICE exchanges: %s"
+                % (", ".join(removed) if removed else "(nothing)"))
         if not dry:
             set_start_from(case_dir, "startTime")
         log("--- Set startFrom = startTime%s" % ("" if not dry else " [dry-run]"))
@@ -929,6 +1011,7 @@ def main(argv):
             set_start_from(case_dir, "latestTime")
         log("--- Set startFrom = latestTime%s" % ("" if not dry else " [dry-run]"))
 
+    config_path = os.path.join(case_dir, "precice-config.xml")
     # ---- apply optional overrides (restored after the run) -------------------
     if args.end_time is not None:
         log("--- Override endTime = %s (restored after run)" % _fmt_num(end_time))
@@ -939,13 +1022,23 @@ def main(argv):
             % _fmt_num(write_interval))
         if not dry:
             set_control_dict_value(case_dir, "writeInterval", write_interval)
+    orig_window = None
+    if args.delta_t is not None:
+        log("--- Override deltaT/time-window-size = %s (restored after run)"
+            % _fmt_num(delta_t))
+        if not dry:
+            set_control_dict_value(case_dir, "deltaT", delta_t)
+            orig_window = patch_precice_window(config_path, delta_t)
+            if orig_window is None:
+                error("could not patch <time-window-size> in precice-config.xml")
+                _restore_overrides(case_dir, args, ctrl)
+                return 2
 
     # ---- preCICE max-time is the real coupling end control ---------------------
     # The preciceAdapter overrides the fluid controlDict endTime to infinity
     # ("Only preCICE will control the simulation's endTime"), so a short run is
     # achieved by patching <max-time> in precice-config.xml, not the endTime.
     # The original tag is restored after the run.
-    config_path = os.path.join(case_dir, "precice-config.xml")
     orig_max_time = precice.get("max_time")
     log("--- precice-config.xml: <max-time> %s -> %s (adapter overrides fluid "
         "endTime to infinity; this is the true coupling stop)"
@@ -961,6 +1054,9 @@ def main(argv):
             error("could not patch <max-time> in precice-config.xml; the "
                   "coupling would run to its configured max-time instead of %s"
                   % _fmt_num(end_time))
+            if orig_window is not None:
+                restore_precice_window(config_path, orig_window)
+            _restore_overrides(case_dir, args, ctrl)
             return 2
 
     # ---- dry run: stop here --------------------------------------------------
@@ -970,23 +1066,20 @@ def main(argv):
         log("--- Dry run: coupled solvers would launch:")
         show("( cd %s && %s > precice-run/log.solid ) &" % (solid_dir, solid_cmd))
         show("( cd %s && %s > precice-run/log.fluid ) &" % (fluid_dir, fluid_cmd))
-        if nprocs > 1:
-            show(os.path.join(foam_env["FOAM_APPBIN"], "reconstructPar"))
         log("Dry run complete (no commands executed).")
         return 0
 
-    # ---- launch the coupled run ----------------------------------------------
-    fluid_cmd, solid_cmd = build_solver_commands(foam_env, nprocs,
-                                                 args.taskset, root)
-    log("--- Starting coupled run: interFoam (%s) + ccx_preCICE (%d threads)"
-        % ("parallel" if nprocs > 1 else "serial", solid_threads))
-    log("--- fluid: %s" % fluid_cmd)
-    log("--- solid: %s" % solid_cmd)
-    fluid_code, solid_code = run_coupled(
-        case_dir, fluid_cmd, solid_cmd, foam_env["bashrc"], nprocs,
-        solid_threads, end_time)
-
     try:
+        fluid_cmd, solid_cmd = build_solver_commands(foam_env, nprocs,
+                                                     args.taskset, root)
+        log("--- Starting coupled run: interFoam (%s) + ccx_preCICE (%d threads)"
+            % ("parallel" if nprocs > 1 else "serial", solid_threads))
+        log("--- fluid: %s" % fluid_cmd)
+        log("--- solid: %s" % solid_cmd)
+        fluid_code, solid_code = run_coupled(
+            case_dir, fluid_cmd, solid_cmd, foam_env["bashrc"], nprocs,
+            solid_threads, end_time)
+
         if fluid_code != 0:
             error("interFoam failed (exit %d); see precice-run/log.fluid"
                   % fluid_code)
@@ -995,20 +1088,6 @@ def main(argv):
             error("ccx_preCICE failed (exit %d); see precice-run/log.solid"
                   % solid_code)
             return solid_code
-
-        # ---- reconstruct (parallel) -------------------------------------------
-        if nprocs > 1:
-            log("--- Running reconstructPar -> log.reconstructPar")
-            recon_cmd = os.path.join(foam_env["FOAM_APPBIN"], "reconstructPar")
-            code, out = run_capture(recon_cmd, fluid_dir, foam_env["bashrc"],
-                                    log_file="log.reconstructPar")
-            if code != 0:
-                error("reconstructPar failed; see log.reconstructPar")
-                return 2
-            log("--- Reconstruction complete")
-
-        # ---- restore optional overrides ----------------------------------------
-        _restore_overrides(case_dir, args, ctrl)
 
         # ---- post-run verification ----------------------------------------------
         log("--- Verifying results")
@@ -1024,12 +1103,15 @@ def main(argv):
         log("endTime: %s  windows: %d  fluid ExecutionTime: %s"
             % (_fmt_num(end_time), n_steps,
                ("%ss" % format(exec_t, ".2f")) if exec_t is not None else "?"))
-        log("Run complete. Logs: precice-run/log.fluid, precice-run/log.solid"
-            "%s" % (", log.decomposePar, log.reconstructPar" if nprocs > 1 else ""))
+        log("Run complete. Logs: precice-run/log.fluid, precice-run/log.solid")
+        log("Run step 05_postprocess.py to reconstruct parallel fields and postprocess.")
         return 0
     finally:
         if orig_tag is not None:
             restore_precice_max_time(config_path, orig_tag)
+        if orig_window is not None:
+            restore_precice_window(config_path, orig_window)
+        _restore_overrides(case_dir, args, ctrl)
 
 
 def _restore_overrides(case_dir, args, ctrl):
@@ -1038,8 +1120,76 @@ def _restore_overrides(case_dir, args, ctrl):
             set_control_dict_value(case_dir, "endTime", ctrl["endTime"])
         if args.write_interval is not None:
             set_control_dict_value(case_dir, "writeInterval", ctrl["writeInterval"])
+        if args.delta_t is not None:
+            set_control_dict_value(case_dir, "deltaT", ctrl["deltaT"])
     except Exception as exc:
         error("failed to restore controlDict overrides: %s" % exc)
+
+
+def run_self_test():
+    with tempfile.TemporaryDirectory() as tmp:
+        case_dir = os.path.join(tmp, "pc_case")
+        fluid_dir = os.path.join(case_dir, "fluid-openfoam")
+        os.makedirs(os.path.join(fluid_dir, "system"))
+        os.makedirs(os.path.join(case_dir, "solid-calculix"))
+        control_path = os.path.join(fluid_dir, "system", "controlDict")
+        config_path = os.path.join(case_dir, "precice-config.xml")
+        with open(control_path, "w", encoding="utf-8") as stream:
+            stream.write("endTime 1;\ndeltaT 0.1;\nwriteInterval 0.01;\nstartFrom startTime;\n")
+        with open(config_path, "w", encoding="utf-8") as stream:
+            stream.write('<time-window-size value="0.1" />\n<max-time value="1" />\n')
+        open(os.path.join(case_dir, "solid-calculix", "dam_gate.inp"), "w").close()
+        exchange_dir = os.path.join(case_dir, "precice-run", "Solid-Fluid")
+        os.makedirs(exchange_dir)
+        open(os.path.join(exchange_dir, "exchange"), "w").close()
+        log_path = os.path.join(case_dir, "precice-run", "log.fluid")
+        open(log_path, "w").close()
+        for name in ("interFoam", "ccx_preCICE", "libpreciceAdapterFunctionObject.so"):
+            open(os.path.join(tmp, name), "w").close()
+
+        originals = {
+            "resolve": resolve_foam_env,
+            "cells": read_poly_mesh_cells,
+            "build": build_solver_commands,
+            "run": run_coupled,
+            "which": shutil.which,
+        }
+        try:
+            globals()["resolve_foam_env"] = lambda: {
+                "FOAM_APPBIN": tmp, "FOAM_USER_LIBBIN": tmp, "bashrc": tmp}
+            globals()["read_poly_mesh_cells"] = lambda _path: 1
+            globals()["build_solver_commands"] = lambda *_args: ("fluid", "solid")
+            globals()["run_coupled"] = lambda *_args: (_ for _ in ()).throw(
+                RuntimeError("forced launch failure"))
+            shutil.which = lambda name: os.path.join(tmp, "ccx_preCICE") if name == "ccx_preCICE" else originals["which"](name)
+            try:
+                main(["--case", case_dir, "--restart", "--nprocs", "1",
+                       "--end-time", "0.2", "--write-interval", "0.2", "--delta-t", "0.05"])
+            except RuntimeError as exc:
+                if str(exc) != "forced launch failure":
+                    return 1
+            else:
+                return 1
+        finally:
+            globals()["resolve_foam_env"] = originals["resolve"]
+            globals()["read_poly_mesh_cells"] = originals["cells"]
+            globals()["build_solver_commands"] = originals["build"]
+            globals()["run_coupled"] = originals["run"]
+            shutil.which = originals["which"]
+
+        control = _read_text(control_path)
+        config = _read_text(config_path)
+        restored = read_control_dict(case_dir)
+        if ("endTime 1;" not in control or "writeInterval 0.01;" not in control
+                or "deltaT 0.1;" not in control
+                or restored["writeInterval"] != 0.01
+                or 'time-window-size value="0.1"' not in config
+                or 'max-time value="1"' not in config
+                or os.path.exists(exchange_dir)
+                or not os.path.isfile(log_path)):
+            return 1
+    print("[PRECICE 04] SELF-TEST PASS")
+    return 0
 
 
 if __name__ == "__main__":

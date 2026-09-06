@@ -50,6 +50,8 @@ import subprocess
 import sys
 import time
 
+from display_width import display_width, pad_right
+
 # --------------------------------------------------------------------------- #
 #  Measured benchmark constants (time-estimation calibration)                  #
 # --------------------------------------------------------------------------- #
@@ -228,6 +230,7 @@ def run_stream(cmd, cwd, bashrc, log_file, end_time=None, delta_t=None,
 PROGRESS_PREFIXES = ("Time = ", "ExecutionTime = ", "Courant Number", "End")
 
 BAR_WIDTH = 20
+_last_progress_width = 0
 
 
 def _tail_live(log_path, pos):
@@ -295,6 +298,7 @@ def _fmt_eta(epoch):
 
 def _render_progress(label, cur_time, end_time, wall_elapsed, t0, final=False):
     """Single-line bar; final=True ends with a newline, else \\r overwrite."""
+    global _last_progress_width
     end = end_time or 0.0
     progress = min(1.0, cur_time / end) if end > 0 else 0.0
     filled = int(round(progress * BAR_WIDTH))
@@ -309,6 +313,8 @@ def _render_progress(label, cur_time, end_time, wall_elapsed, t0, final=False):
             % (label, bar, pct, _fmt_prog(cur_time), _fmt_prog(end),
                _fmt_wall(wall_elapsed), _fmt_wall(remaining),
                _fmt_eta(eta) if eta is not None else "--:--:--"))
+    line = pad_right(line, max(_last_progress_width, display_width(line)))
+    _last_progress_width = display_width(line)
     if final:
         print(line, flush=True)
     else:
@@ -548,16 +554,22 @@ def format_duration(seconds):
 
 def print_estimate(est, n_points, end_time, delta_t):
     log("预期计算时间估算:")
-    log("  网格单元: %s" % format(est["n_cells"], ","))
+    labels = ["网格单元", "网格点数", "时间步数", "进程数", "预计耗时", "说明"]
+    label_width = max(display_width(label) for label in labels)
+
+    def item(label, value):
+        log("  %s: %s" % (pad_right(label, label_width), value))
+
+    item("网格单元", format(est["n_cells"], ","))
     if n_points is not None:
-        log("  网格点数: %s" % format(n_points, ","))
-    log("  时间步数: %d (endTime %s, deltaT %s)"
-        % (est["n_steps"], _fmt_num(end_time), _fmt_num(delta_t)))
-    log("  进程数: %d" % est["nprocs"])
-    log("  预计耗时: ~%s s (~%s)"
-        % (format(int(round(est["seconds"])), ","), format_duration(est["seconds"])))
-    log("  说明: 基于实测标定 (51,792 单元串行 0.5s = 9,664s; "
-        "181,200 单元 8 核 = 5,510s)")
+        item("网格点数", format(n_points, ","))
+    item("时间步数", "%d (endTime %s, deltaT %s)"
+         % (est["n_steps"], _fmt_num(end_time), _fmt_num(delta_t)))
+    item("进程数", "%d" % est["nprocs"])
+    item("预计耗时", "~%s s (~%s)"
+         % (format(int(round(est["seconds"])), ","), format_duration(est["seconds"])))
+    item("说明", "基于实测标定 (51,792 单元串行 0.5s = 9,664s; "
+         "181,200 单元 8 核 = 5,510s)")
 
 
 # --------------------------------------------------------------------------- #

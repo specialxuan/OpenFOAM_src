@@ -32,7 +32,7 @@ This script produces:
         `-- run.sh                  (ccx_preCICE debug launcher, OMP=1)
 
 Every dictionary / field template is taken verbatim from the verified baseline
-zip precice_damfailure_fine_noAMR.zip (all values are the zip's exact values).
+zip (all values are the zip's exact values).
 
 The solid material follows the FDM baseline (E=1e6, nu=0, rho=2500), NOT the
 zip template's 1.4e6/0.4/10000.  Overridable via
@@ -53,6 +53,9 @@ import os
 import re
 import shutil
 import sys
+
+CASE_DESCRIPTION_SOURCE = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, "CaseDescription.md"))
 
 # --------------------------------------------------------------------------- #
 #  OpenFOAM file header                                                        #
@@ -162,12 +165,45 @@ def check_fluid_mesh(mesh_dir):
     return problems
 
 
-def check_solid_inp(solid_path):
-    """Verify the CalculiX deck exists with the GATE material + Ninterface nset."""
+INCLUDE_INPUT_RE = re.compile(
+    r"^\s*\*INCLUDE\b[^\n]*?\bINPUT\s*=\s*([^,\s]+)", re.M | re.I)
+
+
+def _solid_deck_sources(solid_path, solid_dir):
+    """Read a deck and its local includes, rejecting files outside solid_dir."""
+    root = os.path.realpath(solid_dir)
+    pending = [os.path.realpath(solid_path)]
+    visited = set()
+    sources = []
+    problems = []
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        if os.path.commonpath((root, path)) != root:
+            problems.append("solid deck include escapes solid_dir: %s" % path)
+            continue
+        if not os.path.isfile(path):
+            problems.append("included file not found: %s" % path)
+            continue
+        text = _read_text(path)
+        sources.append((path, text))
+        for match in INCLUDE_INPUT_RE.finditer(text):
+            name = match.group(1).strip('"\'')
+            included = os.path.realpath(os.path.join(os.path.dirname(path), name))
+            pending.append(included)
+    return sources, problems
+
+
+def check_solid_inp(solid_path, solid_dir=None):
+    """Verify a CalculiX deck and its local includes have required cards."""
     if not os.path.isfile(solid_path):
         return ["solid deck not found: %s" % solid_path]
-    text = _read_text(solid_path)
-    problems = []
+    include_root = os.path.dirname(os.path.abspath(solid_path)) if solid_dir is None else solid_dir
+    sources, problems = _solid_deck_sources(solid_path, include_root)
+    main_text = sources[0][1]
+    text = "\n".join(source for _path, source in sources)
     if not re.search(r'^\*MATERIAL,\s*NAME\s*=\s*GATE\s*$', text, flags=re.M | re.I):
         problems.append("dam_gate.inp missing '*MATERIAL, NAME=GATE'")
     if not re.search(r'^\*ELASTIC\s*$', text, flags=re.M | re.I):
@@ -178,16 +214,142 @@ def check_solid_inp(solid_path):
         problems.append("dam_gate.inp missing '*NSET, NSET=Ninterface' "
                         "(preCICE solid adapter patch 'interface' -> 'Ninterface')")
     if not re.search(r'^\*DYNAMIC,\s*ALPHA\s*=\s*0\.0\s*,\s*DIRECT\s*$',
-                     text, flags=re.M | re.I):
+                     main_text, flags=re.M | re.I):
         problems.append("dam_gate.inp missing '*DYNAMIC, ALPHA=0.0, DIRECT' "
                         "(solid must march at the coupling time-window)")
     return problems
+
+
+def copy_solid_includes(solid_path, solid_dir, output_dir):
+    """Copy validated local include files while preserving their deck paths."""
+    sources, problems = _solid_deck_sources(solid_path, solid_dir)
+    if problems:
+        raise RuntimeError("; ".join(problems))
+    root = os.path.realpath(solid_dir)
+    for source, _text in sources:
+        if os.path.realpath(source) == os.path.realpath(solid_path):
+            continue
+        relative = os.path.relpath(source, root)
+        target = os.path.join(output_dir, relative)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copy2(source, target)
 
 
 def copy_tree(src, dst):
     if os.path.isdir(dst):
         shutil.rmtree(dst)
     shutil.copytree(src, dst)
+
+
+def copy_settings(case_root, settings_dir):
+    settings_dir = os.path.abspath(settings_dir)
+    if not os.path.isdir(settings_dir):
+        raise RuntimeError("settings directory not found: %s" % settings_dir)
+    copied = []
+    for participant, protected in (("fluid-openfoam", ("constant/polyMesh",)),
+                                   ("solid-calculix", ("dam_gate.inp",))):
+        source = os.path.join(settings_dir, participant)
+        destination = os.path.join(case_root, participant)
+        if not os.path.isdir(source):
+            continue
+        for root, _dirs, files in os.walk(source):
+            relative = os.path.relpath(root, source)
+            if any(relative == value or relative.startswith(value + os.sep)
+                   for value in protected):
+                continue
+            for filename in files:
+                item = filename if relative == "." else os.path.join(relative, filename)
+                if item in protected:
+                    continue
+                target = os.path.join(destination, item)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copy2(os.path.join(root, filename), target)
+                copied.append(os.path.join(participant, item))
+    for filename in ("precice-config.xml", "run-coupled.sh"):
+        source = os.path.join(settings_dir, filename)
+        if os.path.isfile(source):
+            shutil.copy2(source, os.path.join(case_root, filename))
+            copied.append(filename)
+    if not copied:
+        raise RuntimeError("settings directory has no supported participant settings: %s" % settings_dir)
+    return copied
+
+
+def set_dictionary_value(path, key, value):
+    text = _read_text(path)
+    updated, count = re.subn(r'(^\s*%s\s+)[^\s;]+(\s*;)' % re.escape(key),
+                             r'\g<1>%s\2' % _fmt_num(value), text, count=1,
+                             flags=re.M)
+    if count != 1:
+        raise RuntimeError("missing '%s' in %s" % (key, path))
+    _write(path, updated)
+
+
+def set_precice_window(path, value):
+    text = _read_text(path)
+    updated, count = re.subn(r'(<time-window-size\s+value=")[^"]+(")',
+                             r'\g<1>%s\2' % _fmt_num(value), text, count=1)
+    if count != 1:
+        raise RuntimeError("missing time-window-size in %s" % path)
+    _write(path, updated)
+
+
+def write_case_description(case_root, args):
+    foundation = _read_text(CASE_DESCRIPTION_SOURCE).replace("\r\n", "\n").rstrip()
+    fluid = os.path.join(case_root, "fluid-openfoam")
+    appendix = """
+
+## preCICE 本次组装
+
+本目录由 `03_assemble_precice_case.py` 生成。%s
+
+| 参数 | 值 |
+|---|---:|
+| Fluid participant | `interFoam` |
+| Solid participant | `ccx_preCICE` |
+| `endTime` | `%s s` |
+| `deltaT` / time-window-size | `%s s` |
+| `writeInterval` | `%s` |
+| fluid subdomains | `%s` |
+| gate E / nu / rho | `%s / %s / %s` |
+
+### Effective Configuration
+
+#### `precice-config.xml`
+```xml
+%s
+```
+
+#### `fluid-openfoam/system/controlDict`
+```foam
+%s
+```
+
+#### `fluid-openfoam/system/preciceDict`
+```foam
+%s
+```
+
+#### `solid-calculix/config.yml`
+```yaml
+%s
+```
+""" % (("设置覆盖来自 `%s`。参与者覆盖优先于内嵌模板的 `endTime`、"
+         "`writeInterval` 和 `numberOfSubdomains`；CLI `deltaT`/time-window-size"
+         " 与 gate material 会在覆盖后重新写入以保持耦合和材料一致性。"
+         % os.path.abspath(args.settings_dir)) if args.settings_dir else
+       "设置使用内嵌模板。",
+       _fmt_num(args.end_time), _fmt_num(args.delta_t), _fmt_num(args.write_interval),
+       _fmt_num(args.nprocs), _fmt_num(args.gate_e), _fmt_num(args.gate_nu),
+       _fmt_num(args.gate_rho), _read_text(os.path.join(case_root, "precice-config.xml")).rstrip(),
+       _read_text(os.path.join(fluid, "system", "controlDict")).rstrip(),
+       _read_text(os.path.join(fluid, "system", "preciceDict")).rstrip(),
+       _read_text(os.path.join(case_root, "solid-calculix", "config.yml")).rstrip())
+    workflow_root = os.path.dirname(os.path.normpath(case_root))
+    _write(os.path.join(workflow_root, "CaseDescription.md"), foundation + appendix)
+    stale_description = os.path.join(case_root, "CaseDescription.md")
+    if os.path.isfile(stale_description):
+        os.remove(stale_description)
 
 
 # --------------------------------------------------------------------------- #
@@ -905,7 +1067,9 @@ def parse_args(argv):
                    help="solid-calculix directory produced by 01_generate_mesh.py "
                         "(contains dam_gate.inp)")
     p.add_argument("--out-dir", required=True,
-                   help="assembled preCICE case root directory")
+                    help="assembled preCICE case root directory")
+    p.add_argument("--settings-dir", default=None,
+                   help="participant-aware settings overlay; never replaces fluid polyMesh or solid deck")
     p.add_argument("--end-time", type=float, default=0.02,
                    help="fluid endTime in system/controlDict (default 0.02 = short)")
     p.add_argument("--delta-t", type=float, default=0.0005,
@@ -945,8 +1109,8 @@ def main(argv):
     log("Assembling preCICE case -> %s" % out_dir)
 
     # ---- validate inputs --------------------------------------------------
-    problems = check_fluid_mesh(mesh_dir) + check_solid_inp(
-        os.path.join(solid_dir, "dam_gate.inp"))
+    solid_path = os.path.join(solid_dir, "dam_gate.inp")
+    problems = check_fluid_mesh(mesh_dir) + check_solid_inp(solid_path, solid_dir)
     if problems:
         for pr in problems:
             error(pr)
@@ -965,9 +1129,6 @@ def main(argv):
     # ---- copy + patch solid deck ------------------------------------------
     log("copying dam_gate.inp (material -> E=%s nu=%s rho=%s)"
         % (_fmt_num(args.gate_e), _fmt_num(args.gate_nu), _fmt_num(args.gate_rho)))
-    patch_solid_material(os.path.join(solid_dir, "dam_gate.inp"),
-                         os.path.join(solid_out, "dam_gate.inp"),
-                         args.gate_e, args.gate_nu, args.gate_rho)
 
     # ---- root files ---------------------------------------------------------
     _write(os.path.join(out_dir, "precice-config.xml"),
@@ -1026,7 +1187,38 @@ def main(argv):
     # ---- solid config ---------------------------------------------------------
     _write(os.path.join(solid_out, "config.yml"), CONFIG_YML)
     _write(os.path.join(solid_out, "run.sh"), RUN_SH)
+    copy_solid_includes(solid_path, solid_dir, solid_out)
     log("wrote solid-calculix/config.yml + run.sh")
+
+    if args.settings_dir:
+        try:
+            copied = copy_settings(out_dir, args.settings_dir)
+        except (OSError, RuntimeError) as exc:
+            error("failed to copy --settings-dir: %s" % exc)
+            return 1
+        log("copied participant settings: %s" % ", ".join(copied))
+    try:
+        set_dictionary_value(os.path.join(fluid_out, "system", "controlDict"),
+                             "deltaT", args.delta_t)
+        set_precice_window(os.path.join(out_dir, "precice-config.xml"), args.delta_t)
+    except (OSError, RuntimeError) as exc:
+        error("failed to synchronize effective delta-t: %s" % exc)
+        return 1
+    patch_solid_material(solid_path,
+                         os.path.join(solid_out, "dam_gate.inp"),
+                         args.gate_e, args.gate_nu, args.gate_rho)
+    required = [os.path.join(out_dir, value) for value in (
+        "precice-config.xml", "run-coupled.sh", "fluid-openfoam/constant/polyMesh/points",
+        "fluid-openfoam/system/controlDict", "fluid-openfoam/system/preciceDict",
+        "fluid-openfoam/system/fvSchemes", "fluid-openfoam/system/fvSolution",
+        "fluid-openfoam/0/alpha.water", "solid-calculix/dam_gate.inp",
+        "solid-calculix/config.yml")]
+    missing = [path for path in required if not os.path.isfile(path)]
+    if missing:
+        error("assembled case missing required files: %s" % ", ".join(missing))
+        return 1
+    write_case_description(out_dir, args)
+    log("wrote CaseDescription.md with effective participant configuration")
 
     # ---- summary ---------------------------------------------------------------
     log("=== summary ===")

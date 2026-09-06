@@ -2,12 +2,13 @@
 """06_export_fdm_video.py - 导出 FDM PNG 帧并合成 MP4
 
 FDM = fastDynamicFvMesh + myInterFoam。读取 case.foam，按 alpha.water 云图着色
-（白底 + 蓝色水相），逐时间步保存 PNG，并默认用 ffmpeg 合成 25 fps MP4。
+（白底 + 蓝色水相），逐时间步保存 PNG，并默认用 ffmpeg 合成 30 fps 的高质量 H.264
+帧内编码 MP4。
 
 用法:
   xvfb-run -a pvpython 06_export_fdm_video.py \
-      --case <case_dir> --out <out_dir> [--res 1280x720] [--field alpha.water] \
-      [--no-wireframe] [--wire-color 0,0,0] [--framerate 25]
+       --case <case_dir> --out <out_dir> [--res 1920x1080] [--field alpha.water] \
+       [--no-wireframe] [--wire-color 0,0,0] [--framerate 30]
       [--mp4-path <path>] [--no-mp4]
 
  关键经验 (ParaView 5.11.2):
@@ -30,14 +31,14 @@ from paraview.simple import *
 
 
 def parse_res(res):
-    """'1280x720' -> (1280, 720)"""
+    """'1920x1080' -> (1920, 1080)"""
     try:
         w, h = res.lower().split("x")
         w, h = int(w), int(h)
         assert w > 0 and h > 0
         return w, h
     except Exception:
-        sys.stderr.write("[FDM ERR] 无效的 --res '%s', 应为 WxH (如 1280x720)\n" % res)
+        sys.stderr.write("[FDM ERR] 无效的 --res '%s', 应为 WxH (如 1920x1080)\n" % res)
         sys.exit(2)
 
 
@@ -72,7 +73,9 @@ def encode_mp4(frames_dir, framerate, mp4_path):
         ffmpeg, "-y", "-nostdin", "-hide_banner", "-loglevel", "error",
         "-framerate", str(framerate),
         "-i", os.path.join(frames_dir, "frame_%04d.png"),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        "-c:v", "libx264", "-preset", "slow", "-crf", "16",
+        "-x264-params", "keyint=1:min-keyint=1:scenecut=0",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
         mp4_path,
     ]
     result = subprocess.run(
@@ -95,7 +98,7 @@ def main():
     ap.add_argument("--case", required=True, help="OpenFOAM case 目录 (含 case.foam)")
     ap.add_argument("--out", default="/root/Workspace/video_frames",
                     help="输出 PNG 目录 (默认 /root/Workspace/video_frames)")
-    ap.add_argument("--res", default="1280x720", help="分辨率 WxH (默认 1280x720)")
+    ap.add_argument("--res", default="1920x1080", help="分辨率 WxH (默认 1920x1080)")
     ap.add_argument("--field", default="alpha.water", help="着色场 (默认 alpha.water)")
     ap.add_argument("--end-time", type=float, default=None,
                     help="渲染到该时间截止 (默认 None = 渲染全部已有时步)")
@@ -113,8 +116,8 @@ def main():
                     help="合成 MP4 (默认开启)")
     ap.add_argument("--no-mp4", dest="mp4", action="store_false",
                     help="只输出 PNG 帧, 不合成 MP4")
-    ap.add_argument("--framerate", "--fps", type=int, default=25,
-                    help="MP4 帧率 (默认 25)")
+    ap.add_argument("--framerate", "--fps", type=int, default=30,
+                    help="MP4 帧率 (默认 30)")
     ap.add_argument("--mp4-path", default=None,
                     help="MP4 输出路径 (默认 <out 的父目录>/fdm_result.mp4)")
     args = ap.parse_args()

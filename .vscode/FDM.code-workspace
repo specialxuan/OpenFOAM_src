@@ -8,6 +8,8 @@
 		}
 	],
 	"settings": {
+		"editor.fontFamily": "Sarasa Term SC Nerd",
+		"terminal.integrated.fontFamily": "Sarasa Term SC Nerd",
 		"files.exclude": {
 			".clang-format": true,
 			"**/.agents": true,
@@ -34,7 +36,7 @@
 			"**/.venv_fdm/**": true,
 			"**/linux64GccDPInt32Opt/**": true,
 			"**/lnInclude/**": true,
-			"**/__pycache__/**":true,
+			"**/__pycache__/**": true,
 			"/root/Workspace/**": true
 		},
 		"search.exclude": {
