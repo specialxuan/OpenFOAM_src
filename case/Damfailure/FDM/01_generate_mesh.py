@@ -29,6 +29,8 @@ import shutil
 import subprocess
 import sys
 
+from display_width import pad_right
+
 # --- optional mesh rendering (numpy/matplotlib) ---------------------------
 try:
     import numpy as _np
@@ -1294,7 +1296,8 @@ def report_boundary_layers(log, counts, delta, blockmesh_stdout,
     relaxed = 0
     for name, bi, direction, end in WALL_FIRST_CELL:
         if bi >= len(parsed) or parsed[bi].get(direction) is None:
-            log.raw("  %-10s : block %d %s data missing" % (name, bi, direction))
+            log.raw("  %s : block %d %s data missing"
+                    % (pad_right(name, 10), bi, direction))
             ok = False
             continue
         beg, fin = parsed[bi][direction]
@@ -1310,8 +1313,8 @@ def report_boundary_layers(log, counts, delta, blockmesh_stdout,
         else:
             relaxed += 1
             status = "(relaxed: expansion limited)"
-        log.raw("  %-10s : %.4f mm  (%+.1f%%)  %s"
-                % (name, actual * 1e3, rel * 100, status))
+        log.raw("  %s : %.4f mm  (%+.1f%%)  %s"
+                % (pad_right(name, 10), actual * 1e3, rel * 100, status))
     if relaxed:
         log.warn("boundary-layer: %d wall(s) relaxed first-layer thickness "
                  "(expansion ratio capped at %.2f); delta not met exactly, "

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""06_postprocess.py - 提取 preCICE 挡板右上角位移时间序列并输出独立 CSV
+"""05_postprocess.py - 提取 preCICE 挡板右上角位移时间序列并输出独立 CSV
 
 数据源: preCICE 流体侧算例 (pc_case/fluid-openfoam):
-  - 常量网格:  <case>/constant/polyMesh/points  (仅用于坐标定位节点)
-  - 位移场:    <case>/<t>/pointDisplacement
+   - 常量网格:  <pc_case>/fluid-openfoam/constant/polyMesh/points
+   - 位移场:    <pc_case>/fluid-openfoam/<t>/pointDisplacement
                (OpenFOAM pointVectorField, internalField 为累计位移,
                 按点序排列, 无内嵌坐标)
 位移 = pointDisplacement(t)[node], 其中 node 是挡板右上角节点,
@@ -31,7 +31,7 @@
 所有数值均从日志读取, 读不到打 N/A 并在报告中注明缺失来源, 不中断主流程。
 
 用法:
-  python3 06_postprocess.py --case <fluid-openfoam_dir> \
+   python3 05_postprocess.py --case <pc_case> \
       [--out-dir <dir>] [--node-x 0.304] [--node-y 0.08] [--node-z 0.0] \
       [--res <N>] [--perf|--no-perf] [--md] [--fluid-log <path>] [--solid-log <path>]
 
@@ -39,7 +39,7 @@
   - preCICE 耦合过程会残留只有 uniform/ 的中间时步 (如 0.0095, 无
     pointDisplacement), 本脚本以 pointDisplacement 文件存在与否过滤;
     t=0 位移恒为零 (由常量网格承载基线), 从首个写盘时步开始。
-  - 并行运行存在 processor*/ 子目录, 但已 reconstruct 到顶层; 优先读顶层
+   - 并行运行存在 processor*/ 子目录; stage 5 reconstructPar 后优先读顶层
     <t>/pointDisplacement, 顶层缺失但 processor0 存在时 warn 并跳过。
   - 仅用 python3 标准库解析 OpenFOAM 文本 (re + 纯文本), 无第三方依赖。
 """
@@ -47,7 +47,9 @@ import argparse
 import glob
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -98,6 +100,54 @@ def locate_node(points, nx, ny, nz, tol=1e-4):
             % (nx, ny, nz, tol, n_match, best,
                points[best][0], points[best][1], points[best][2]))
     return best
+
+
+def numeric_time_names(directory):
+    names = set()
+    for path in glob.glob(os.path.join(directory, "[0-9]*")):
+        if not os.path.isdir(path):
+            continue
+        try:
+            float(os.path.basename(path))
+        except ValueError:
+            continue
+        names.add(os.path.basename(path))
+    return names
+
+
+def needs_reconstruction(fluid_dir):
+    return bool(numeric_time_names(os.path.join(fluid_dir, "processor0"))
+                - numeric_time_names(fluid_dir))
+
+
+def locate_openfoam_bashrc():
+    for path in ("/usr/lib/openfoam/openfoam2412/etc/bashrc",
+                 "/opt/openfoam2412/etc/bashrc"):
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def reconstruct_parallel_results(fluid_dir):
+    if not needs_reconstruction(fluid_dir):
+        print("[PRECICE 05] 无待重建并行时步, 跳过 reconstructPar")
+        return True
+    bashrc = locate_openfoam_bashrc()
+    if bashrc is None:
+        sys.stderr.write("[PRECICE ERR] 找不到 OpenFOAM bashrc, 无法运行 reconstructPar\n")
+        return False
+    log_path = os.path.join(fluid_dir, "log.reconstructPar")
+    command = 'source "%s" >/dev/null 2>&1 && reconstructPar' % bashrc
+    print("[PRECICE 05] 并行场重建: reconstructPar")
+    with open(log_path, "w", encoding="utf-8") as stream:
+        result = subprocess.run(["bash", "-c", command], cwd=fluid_dir,
+                                stdout=stream, stderr=subprocess.STDOUT,
+                                check=False)
+    if result.returncode:
+        sys.stderr.write("[PRECICE ERR] reconstructPar 失败, 详见 %s\n" % log_path)
+        return False
+    print("[PRECICE 05] 并行结果重建完成")
+    return True
 
 
 # ---- 性能报告: 日志读取辅助 (纯标准库, 全部从日志/算例文件读取, 不硬编码) ----
@@ -259,8 +309,8 @@ def collect_precice_step_markers(case, out_dir):
       1 网格 = mesh/fluid-openfoam/constant/polyMesh/points
       3 组装 = pc_case/precice-config.xml
       4 运行 = pc_case/precice-run/log.fluid (或 log.solid)
-      5 视频 = 帧 PNG
-      6 后处理 = postprocess/precice_gate_topright_disp.csv
+      5 后处理 = postprocess/precice_gate_topright_disp.csv
+      6 视频 = 帧 PNG
     """
     parent = os.path.dirname(os.path.normpath(case))
     root = os.path.dirname(parent)
@@ -283,8 +333,8 @@ def collect_precice_step_markers(case, out_dir):
         (1, "网格生成", mesh_pts, get_mtime(mesh_pts)),
         (3, "算例组装", cfg[1], cfg[0]),
         (4, "FSI 运行", run_log, min_mtime([run_log])[0]),
-        (5, "视频导出", video_png, min_mtime([video_png])[0]),
-        (6, "后处理", post_csv, get_mtime(post_csv)),
+        (5, "并行重建/后处理", post_csv, get_mtime(post_csv)),
+        (6, "视频导出", video_png, min_mtime([video_png])[0]),
     ]
     return markers
 
@@ -292,7 +342,7 @@ def collect_precice_step_markers(case, out_dir):
 def write_perf_report(path, lines):
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")
-    print("[PRECICE 06] 性能报告: %s" % path)
+    print("[PRECICE 05] 性能报告: %s" % path)
 
 
 def build_precice_perf_report(case, out_dir, csv_path, rows,
@@ -551,12 +601,47 @@ def build_precice_perf_report(case, out_dir, csv_path, rows,
         sys.stderr.write("[PRECICE WARN] 写性能报告失败: %s\n" % e)
 
 
-def main():
+def write_test_vectors(path, vectors):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as stream:
+        stream.write("%d\n(\n%s\n)\n" % (
+            len(vectors), "\n".join("(%s %s %s)" % vector for vector in vectors)))
+
+
+def run_self_test():
+    with tempfile.TemporaryDirectory() as tmp:
+        case_root = os.path.join(tmp, "pc_case")
+        fluid_dir = os.path.join(case_root, "fluid-openfoam")
+        out_dir = os.path.join(tmp, "postprocess")
+        vectors = [(0, 0, 0), (0.304, 0.08, 0)]
+        write_test_vectors(os.path.join(fluid_dir, "constant", "polyMesh", "points"), vectors)
+        write_test_vectors(os.path.join(fluid_dir, "processor0", "0.01", "pointDisplacement"),
+                           [(0, 0, 0), (0.002, 0.001, 0)])
+        bashrc = os.path.join(tmp, "bashrc")
+        with open(bashrc, "w", encoding="utf-8") as stream:
+            stream.write("reconstructPar() { mkdir -p 0.01; cp processor0/0.01/pointDisplacement 0.01/; }\n")
+        original_bashrc = locate_openfoam_bashrc
+        try:
+            globals()["locate_openfoam_bashrc"] = lambda: bashrc
+            if main(["--case", case_root, "--out-dir", out_dir, "--no-perf"]) != 0:
+                return 1
+        finally:
+            globals()["locate_openfoam_bashrc"] = original_bashrc
+        csv_path = os.path.join(out_dir, "precice_gate_topright_disp.csv")
+        text = read_log(csv_path)
+        if (text is None or "0.01,0.002,0.001,0" not in text
+                or not os.path.isfile(os.path.join(fluid_dir, "log.reconstructPar"))):
+            return 1
+    print("[PRECICE 05] SELF-TEST PASS")
+    return 0
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(
         description="提取 preCICE 挡板右上角位移时间序列并输出 CSV"
     )
-    ap.add_argument("--case", required=True,
-                    help="preCICE 流体算例目录 (fluid-openfoam 根, 含 constant/polyMesh/points 与 <t>/pointDisplacement)")
+    ap.add_argument("--case", required=False,
+                    help="assembled preCICE case root (contains fluid-openfoam)")
     ap.add_argument("--out-dir", default=None,
                     help="输出 CSV 目录 (默认 算例根目录/postprocess, 即 <case 的父目录的父目录>/postprocess, 自动创建)")
     ap.add_argument("--node-x", type=float, default=0.304,
@@ -577,20 +662,35 @@ def main():
                     help="fluid 求解器日志路径 (默认 glob <case>/precice-run/log.fluid* 推断)")
     ap.add_argument("--solid-log", default=None,
                     help="solid 求解器日志路径 (默认 glob <case>/precice-run/log.solid* 推断)")
-    args = ap.parse_args()
+    ap.add_argument("--no-reconstruct", action="store_true",
+                    help="skip reconstructPar when processor results are pending")
+    ap.add_argument("--self-test", action="store_true",
+                    help="run an isolated fixed-topology extraction test and exit")
+    args = ap.parse_args(argv)
+
+    if args.self_test:
+        return run_self_test()
+    if not args.case:
+        ap.error("--case is required unless --self-test is used")
 
     if args.perf is None:
         args.perf = True  # 默认 --perf 开
 
-    print("[PRECICE-PIPE] ===== 步骤 6: 挡板右上角位移后处理 =====")
+    print("[PRECICE-PIPE] ===== 步骤 5: 并行重建与挡板位移后处理 =====")
 
-    case = args.case
+    case_root = os.path.abspath(args.case)
+    case = os.path.join(case_root, "fluid-openfoam")
+    if not os.path.isdir(case):
+        sys.stderr.write("[PRECICE ERR] --case 缺少 fluid-openfoam: %s\n" % case_root)
+        return 2
     if args.out_dir:
         out_dir = args.out_dir
     else:
-        out_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.normpath(case))),
-                               "postprocess")
+        out_dir = os.path.join(case_root, "postprocess")
     os.makedirs(out_dir, exist_ok=True)
+
+    if not args.no_reconstruct and not reconstruct_parallel_results(case):
+        return 2
 
     # ---- 1. 常量网格 + 节点定位 (pointDisplacement 无内嵌坐标, 用常量网格定位) ----
     base_path = os.path.join(case, "constant", "polyMesh", "points")
@@ -598,7 +698,7 @@ def main():
         sys.stderr.write("[PRECICE ERR] 找不到常量网格 %s (需先用它定位节点)\n" % base_path)
         return 2
     n0, base = parse_vectors(base_path)
-    print("[PRECICE 06] 常量网格: %s (%d 点)" % (base_path, len(base)))
+    print("[PRECICE 05] 常量网格: %s (%d 点)" % (base_path, len(base)))
     if args.res is not None and len(base) != args.res:
         sys.stderr.write("[PRECICE WARN] --res %d 与实测网格点数 %d 不符 (仅警告, 不中断)\n"
                          % (args.res, len(base)))
@@ -608,7 +708,7 @@ def main():
         sys.stderr.write("[PRECICE ERR] 常量网格中找不到挡板右上角 (%g, %g, %g) 附近的节点\n"
                          % (args.node_x, args.node_y, args.node_z))
         return 2
-    print("[PRECICE 06] 挡板右上角节点 #%d: (%g, %g, %g)"
+    print("[PRECICE 05] 挡板右上角节点 #%d: (%g, %g, %g)"
           % (idx, base[idx][0], base[idx][1], base[idx][2]))
 
     # ---- 2. 收集数值时步目录 (过滤 t=0 与 uniform-only 中间步) ----
@@ -642,7 +742,7 @@ def main():
                     "[PRECICE WARN] 顶层 %s 缺失但 processor0 存在 (疑似未 reconstruct), 跳过 t=%g\n"
                     % (pd_path, t))
             else:
-                print("[PRECICE 06] t=%g 无 pointDisplacement (uniform-only 中间步), 过滤"
+                print("[PRECICE 05] t=%g 无 pointDisplacement (uniform-only 中间步), 过滤"
                       % t)
             continue
         n, disp = parse_vectors(pd_path)
@@ -654,7 +754,7 @@ def main():
             continue
         dx, dy, dz = disp[idx]
         rows.append((t, dx, dy, dz))
-        print("[PRECICE 06] t=%-6g dx=%.8g dy=%.8g dz=%.8g" % (t, dx, dy, dz))
+        print("[PRECICE 05] t=%-6g dx=%.8g dy=%.8g dz=%.8g" % (t, dx, dy, dz))
 
     # ---- 4. 写 CSV ----
     if not rows:
@@ -665,9 +765,9 @@ def main():
         f.write("Time,dx,dy,dz\n")
         for t, dx, dy, dz in rows:
             f.write("%.8g,%.8g,%.8g,%.8g\n" % (t, dx, dy, dz))
-    print("[PRECICE 06] 写入 %s (%d 行)" % (csv_path, len(rows)))
+    print("[PRECICE 05] 写入 %s (%d 行)" % (csv_path, len(rows)))
     if skipped:
-        print("[PRECICE 06] 跳过 %d 个时步: %s"
+        print("[PRECICE 05] 跳过 %d 个时步: %s"
               % (len(skipped), ", ".join("%g" % t for t in skipped)))
 
     # ---- 5. 性能分析报告 (默认开; 缺失日志仅 warn, 不影响返回码) ----
@@ -675,9 +775,9 @@ def main():
         build_precice_perf_report(case, out_dir, csv_path, rows,
                                   args.fluid_log, args.solid_log)
     else:
-        print("[PRECICE 06] --no-perf: 跳过性能报告, 仅输出位移 CSV")
+        print("[PRECICE 05] --no-perf: 跳过性能报告, 仅输出位移 CSV")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

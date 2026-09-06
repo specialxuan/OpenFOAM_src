@@ -313,7 +313,7 @@ _AMR_REFINE_BODY = """dynamicRefineFvMeshCoeffs
 
 def build_dynamic_mesh_dict(amr=False, amr_interval=1, amr_lower_refine=12,
                             amr_unrefine=4, amr_nbuffer=4, amr_max_refine=1,
-                            amr_max_cells=500000, amr_min_cell_vol=5e-10,
+                            amr_max_cells=500000, amr_min_cell_vol=0,
                             amr_min_edge=0.0005):
     """Render constant/dynamicMeshDict body.  Without amr the output is
     byte-identical to the pre-AMR baseline (no meshRefinementSupport, no
@@ -369,7 +369,7 @@ value           (0 -9.81 0);
 
 def write_constant(case_dir, amr=False, amr_interval=1, amr_lower_refine=12,
                    amr_unrefine=4, amr_nbuffer=4, amr_max_refine=1,
-                   amr_max_cells=500000, amr_min_cell_vol=5e-10,
+                   amr_max_cells=500000, amr_min_cell_vol=0,
                    amr_min_edge=0.0005):
     body = build_dynamic_mesh_dict(
         amr=amr, amr_interval=amr_interval, amr_lower_refine=amr_lower_refine,
@@ -876,8 +876,8 @@ def parse_args(argv):
                    help="AMR maxRefinement levels (default 1)")
     p.add_argument("--amr-max-cells", type=int, default=500000,
                    help="AMR maxCells limit (default 500000)")
-    p.add_argument("--amr-min-cell-volume", type=float, default=5e-10,
-                   help="AMR minimum child-cell volume (default 5e-10)")
+    p.add_argument("--amr-min-cell-volume", type=float, default=0,
+                   help="AMR minimum child-cell volume (default 0)")
     p.add_argument("--amr-min-edge-length", type=float, default=0.0005,
                    help="AMR minimum child-edge length (default 0.0005 m)")
     return p.parse_args(argv)

@@ -43,6 +43,8 @@ import shutil
 import subprocess
 import sys
 
+from display_width import display_width, pad_right, render_table
+
 # --------------------------------------------------------------------------- #
 #  Geometry / material defaults (from 01_generate_mesh.py + CaseDescription.md)  #
 # --------------------------------------------------------------------------- #
@@ -923,21 +925,46 @@ def export_mode_files(mode_dir, fluid_coords, n_gate_nodes, modes):
 def print_comparison(freqs_ccx, ref_ve, ref_bare):
     print("")
     print("[FDM 02] 模态频率对比")
-    print("阶数 | CalculiX组合 (Hz) | 论文右列VE (Hz) | 论文左列裸板 (Hz) | 误差 vs VE (%)")
-    print("-----+-------------------+-----------------+-------------------+----------------")
     n = min(len(freqs_ccx), len(ref_ve))
+    headers = ["阶数", "CalculiX组合 (Hz)", "论文右列VE (Hz)",
+               "论文左列裸板 (Hz)", "误差 vs VE (%)"]
+    rows = []
     for i in range(n):
         fc = freqs_ccx[i]
         rv = ref_ve[i]
         rb = ref_bare[i] if i < len(ref_bare) else float("nan")
         err = (fc - rv) / rv * 100.0
-        print("%4d | %17.4f | %15.4f | %17.4f | %+13.2f" % (i + 1, fc, rv, rb, err))
+        rows.append([str(i + 1), "%.4f" % fc, "%.4f" % rv,
+                     "%.4f" % rb, "%+.2f" % err])
+    table = render_table(headers, rows, {0, 1, 2, 3, 4})
+    print(table[0])
+    print("-+-".join("-" * display_width(part)
+                    for part in table[0].split(" | ")))
+    for line in table[1:]:
+        print(line)
     if len(freqs_ccx) > n:
         print("      （额外算出的阶数）")
+        extra_rows = []
         for i in range(n, len(freqs_ccx)):
-            print("%4d | %17.4f |                 |                   |" % (i + 1, freqs_ccx[i]))
+            extra_rows.append([str(i + 1), "%.4f" % freqs_ccx[i], "", "", ""])
+        for line in render_table(headers, extra_rows, {0, 1, 2, 3, 4},
+                                 [display_width(part)
+                                  for part in table[0].split(" | ")])[1:]:
+            print(line)
     print("")
     return n
+
+
+STATUS_LABELS = (
+    "流体块来源", "全分辨率单元", "coarse-fluid", "流体节点数", "流体单元数",
+    "流体 min_vol", "流体 E 范围", "流体节点集", "FSI 界面面片",
+    "挡板节点/单元", "挡板界面面片", "材料参数", "已生成组合 .inp", "ccx 运行结果",
+)
+STATUS_LABEL_WIDTH = max(display_width(label) for label in STATUS_LABELS)
+
+
+def print_status(label, value):
+    print("[FDM 02] %s : %s" % (pad_right(label, STATUS_LABEL_WIDTH), value))
 
 
 # --------------------------------------------------------------------------- #
@@ -994,21 +1021,22 @@ def main(argv):
         src = "hard-coded default counts (blockMeshDict not found)"
 
     n_cells_full = sum(b["nx"] * b["ny"] for b in blocks) * blocks[0]["nz"]
-    print("[FDM 02] 流体块来源   : %s" % src)
-    print("[FDM 02] 全分辨率单元 : %d" % n_cells_full)
+    print_status("流体块来源", src)
+    print_status("全分辨率单元", "%d" % n_cells_full)
 
     if args.coarse_fluid:
         blocks = coarsen_blocks(blocks, args.coarse_factor)
         n_cells = sum(b["nx"] * b["ny"] for b in blocks) * blocks[0]["nz"]
-        print("[FDM 02] coarse-fluid : factor=%d -> %d cells" % (args.coarse_factor, n_cells))
+        print_status("coarse-fluid", "factor=%d -> %d cells"
+                     % (args.coarse_factor, n_cells))
     else:
         n_cells = n_cells_full
 
     # ---- fluid mesh + layered stiffness --------------------------------
     print("[FDM 02] --- 重建流体网格 ...")
     fluid_coords, fluid_elements, fluid_meta = build_fluid_mesh(blocks)
-    print("[FDM 02] 流体节点数   : %d" % len(fluid_coords))
-    print("[FDM 02] 流体单元数   : %d (C3D8)" % len(fluid_elements))
+    print_status("流体节点数", "%d" % len(fluid_coords))
+    print_status("流体单元数", "%d (C3D8)" % len(fluid_elements))
 
     # volumes + layered stiffness
     volumes = []
@@ -1020,23 +1048,25 @@ def main(argv):
         print("[FDM WARN] %d fluid element(s) with non-positive volume" % neg)
     min_vol = min(volumes)
     fluid_E = [FLUID_BASE_E * (min_vol / v) ** FLUID_EXP for v in volumes]
-    print("[FDM 02] 流体 min_vol  : %.6e" % min_vol)
-    print("[FDM 02] 流体 E 范围   : [%.6g, %.6g] Pa" % (min(fluid_E), max(fluid_E)))
+    print_status("流体 min_vol", "%.6e" % min_vol)
+    print_status("流体 E 范围", "[%.6g, %.6g] Pa"
+                 % (min(fluid_E), max(fluid_E)))
 
     fluid_sets = collect_fluid_sets(blocks, fluid_meta, fluid_elements)
     fsi_nodes, wall_nodes, sym_nodes, fsi_faces = fluid_sets
-    print("[FDM 02] 流体节点集   : FSI=%d, wall=%d, sym=%d" %
-          (len(fsi_nodes), len(wall_nodes), len(sym_nodes)))
-    print("[FDM 02] FSI 界面面片 : %d (fluid)" % len(fsi_faces))
+    print_status("流体节点集", "FSI=%d, wall=%d, sym=%d"
+                 % (len(fsi_nodes), len(wall_nodes), len(sym_nodes)))
+    print_status("FSI 界面面片", "%d (fluid)" % len(fsi_faces))
 
     # ---- gate mesh ------------------------------------------------------
     gate_coords, gate_elements = build_gate_mesh(GATE_NX, GATE_NY, GATE_NZ)
     gate_nsets = build_gate_nsets(GATE_NX, GATE_NY, GATE_NZ)
     gate_iface_faces = gate_interface_faces(GATE_NX, GATE_NY, GATE_NZ)
-    print("[FDM 02] 挡板节点/单元 : %d / %d (C3D8)" % (len(gate_coords), len(gate_elements)))
-    print("[FDM 02] 挡板界面面片 : %d (gate)" % len(gate_iface_faces))
-    print("[FDM 02] 材料参数     : gate E=%.6g, nu=%.6g, rho=%.6g" %
-          (args.gate_e, args.gate_nu, args.gate_rho))
+    print_status("挡板节点/单元", "%d / %d (C3D8)"
+                 % (len(gate_coords), len(gate_elements)))
+    print_status("挡板界面面片", "%d (gate)" % len(gate_iface_faces))
+    print_status("材料参数", "gate E=%.6g, nu=%.6g, rho=%.6g"
+                 % (args.gate_e, args.gate_nu, args.gate_rho))
 
     # ---- write combined inp --------------------------------------------
     inp_path = os.path.join(out_dir, JOBNAME + ".inp")
@@ -1046,7 +1076,8 @@ def main(argv):
         args.n_modes, args.gate_e, args.gate_nu, args.gate_rho,
         export_mode=args.export_mode)
     size_mb = os.path.getsize(inp_path) / 1e6
-    print("[FDM 02] 已生成组合 .inp : %s (%.1f MB, %d 个流体材料)" % (inp_path, size_mb, n_mat))
+    print_status("已生成组合 .inp", "%s (%.1f MB, %d 个流体材料)"
+                 % (inp_path, size_mb, n_mat))
 
     if not args.run_ccx:
         print("[FDM 02] --no-run-ccx：仅生成 inp，跳过 ccx 求解。")
@@ -1064,7 +1095,7 @@ def main(argv):
         if os.path.isfile(dat_path):
             print(open(dat_path, "r", encoding="utf-8", errors="replace").read()[-3000:])
         return 1
-    print("[FDM 02] ccx 运行成功 (rc=0)，输出 %s" % dat_path)
+    print_status("ccx 运行结果", "成功 (rc=0)，输出 %s" % dat_path)
 
     # ---- parse + compare -------------------------------------------------
     freqs_ccx = parse_eigenfrequencies(dat_path, args.n_modes)

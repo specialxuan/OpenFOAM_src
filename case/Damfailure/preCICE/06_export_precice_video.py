@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
-"""05_export_precice_video.py - 用 ParaView (pvpython) 把 preCICE fluid-openfoam 结果导出为逐帧 PNG
-
-参考 FDM 06_export_fdm_video.py, 但读取 preCICE 组装的算例:
+"""参考 FDM 06_export_fdm_video.py, 但读取 preCICE 组装的算例:
   --case <out-dir>  -> <out-dir>/fluid-openfoam/case.foam
 
 按 alpha.water 云图着色 (白底 + 蓝色水相) + 白色底网格线框, 逐时间步渲染 PNG,
-之后可用 ffmpeg 合成 MP4 (或本脚本 --mp4 直接合成)。
+脚本默认以 30 fps、帧内压缩的 1080p H.264 在内部调用 ffmpeg 合成 MP4。
 
 用法 (需在 xvfb 下运行 pvpython):
-  xvfb-run -a pvpython 05_export_precice_video.py \
-      --case /path/to/precice_case --out /path/to/frames [--res 1280x720] \
-      [--end-time 0.02] [--mp4]
+   xvfb-run -a pvpython 06_export_precice_video.py \
+       --case /path/to/precice_case --out /path/to/frames [--res 1920x1080] \
+       [--end-time 0.02] [--mp4-path /path/to/precice_result.mp4]
 
  关键经验 (ParaView 5.11.2, 与 FDM 05 相同):
   - OpenFOAMReader 无 GetNumberOfTimeSteps, 用 TimestepValues
   - 动画场景默认只有 10 帧, 用 GetTimeKeeper().Time 推进
-  - 网格线用 ExtractSurface(外表面) + "Surface With Edges", 不叠加独立 Wireframe rep,
-    避免 AMR 内部 hex 体对角线在准 2D 投影下形成斜三角线
-  - 若 xvfb/OSMesa 下仍出现边线伪影, 用 --no-wireframe 导出纯 Surface 画面
+   - 网格线用 ExtractSurface + "Surface With Edges", 不叠加独立 Wireframe rep。
 """
 import argparse
 import glob
@@ -30,14 +26,14 @@ from paraview.simple import *
 
 
 def parse_res(res):
-    """'1280x720' -> (1280, 720)"""
+    """'1920x1080' -> (1920, 1080)"""
     try:
         w, h = res.lower().split("x")
         w, h = int(w), int(h)
         assert w > 0 and h > 0
         return w, h
     except Exception:
-        sys.stderr.write("[PRECICE ERR] 无效的 --res '%s', 应为 WxH (如 1280x720)\n" % res)
+        sys.stderr.write("[PRECICE ERR] 无效的 --res '%s', 应为 WxH (如 1920x1080)\n" % res)
         sys.exit(2)
 
 
@@ -55,6 +51,38 @@ def parse_color(s):
     return vals
 
 
+def default_mp4_path(frames_dir):
+    return os.path.join(os.path.dirname(os.path.normpath(frames_dir)),
+                        "precice_result.mp4")
+
+
+def encode_mp4(frames_dir, framerate, mp4_path):
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        sys.stderr.write("[PRECICE ERR] 找不到 ffmpeg; PNG 帧已保留在 %s\n" % frames_dir)
+        return 3
+    os.makedirs(os.path.dirname(os.path.abspath(mp4_path)), exist_ok=True)
+    command = [
+        ffmpeg, "-y", "-nostdin", "-hide_banner", "-loglevel", "error",
+        "-framerate", str(framerate),
+        "-i", os.path.join(frames_dir, "frame_%04d.png"),
+        "-c:v", "libx264", "-preset", "slow", "-crf", "16",
+        "-x264-params", "keyint=1:min-keyint=1:scenecut=0",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        mp4_path,
+    ]
+    result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                            text=True, check=False)
+    if result.returncode:
+        sys.stderr.write("[PRECICE ERR] ffmpeg 合成失败 (exit %d): %s\n"
+                         % (result.returncode, result.stderr.strip()))
+        if os.path.isfile(mp4_path):
+            os.remove(mp4_path)
+        return 3
+    print("[PRECICE 06] MP4 输出: %s (%d fps)" % (mp4_path, framerate))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="preCICE fluid-openfoam 结果 -> 逐帧 PNG (alpha.water 云图)"
@@ -63,9 +91,7 @@ def main():
                     help="preCICE case 根目录 (03 输出, 读取其下 fluid-openfoam/case.foam)")
     ap.add_argument("--out", default="/root/Workspace/precice_frames",
                     help="输出 PNG 目录 (默认 /root/Workspace/precice_frames)")
-    ap.add_argument("--out-dir", dest="out_alias", default=None,
-                    help="--out 的别名 (兼容统一 CLI 命名)")
-    ap.add_argument("--res", default="1280x720", help="分辨率 WxH (默认 1280x720)")
+    ap.add_argument("--res", default="1920x1080", help="分辨率 WxH (默认 1920x1080)")
     ap.add_argument("--field", default="alpha.water", help="着色场 (默认 alpha.water)")
     ap.add_argument("--wireframe", dest="wireframe", action="store_true", default=True,
                     help="叠加网格线框 (默认开启)")
@@ -79,10 +105,14 @@ def main():
                     help="先渲染 t=0 初始帧 (默认开启)")
     ap.add_argument("--no-t0", dest="include_t0", action="store_false",
                     help="跳过 t=0 初始帧")
-    ap.add_argument("--mp4", action="store_true",
-                    help="渲染完成后用 ffmpeg 合成 MP4 (输出到 <out>/../precice_result.mp4)")
-    ap.add_argument("--framerate", type=int, default=10,
-                    help="ffmpeg 帧率 (默认 10)")
+    ap.add_argument("--mp4", dest="mp4", action="store_true", default=True,
+                    help="合成 MP4 (默认开启)")
+    ap.add_argument("--no-mp4", dest="mp4", action="store_false",
+                    help="只输出 PNG 帧, 不合成 MP4")
+    ap.add_argument("--framerate", "--fps", type=int, default=30,
+                    help="MP4 帧率 (默认 30)")
+    ap.add_argument("--mp4-path", default=None,
+                    help="MP4 输出路径 (默认 <out 的父目录>/precice_result.mp4)")
     args = ap.parse_args()
 
     # pvpython 会用 vtkPythonStdStreamCaptureHelper 替换 sys.stdout, 非 TTY 下其
@@ -91,22 +121,24 @@ def main():
     sys.stdout = sys.__stdout__
     sys.stdout.reconfigure(line_buffering=True)
 
-    print("[PRECICE-PIPE] ===== preCICE 视频导出 =====")
+    print("[PRECICE-PIPE] ===== 步骤 6: 视频导出 =====")
 
-    out_dir = args.out_alias if args.out_alias else args.out
     W, H = parse_res(args.res)
+    if args.framerate <= 0:
+        sys.stderr.write("[PRECICE ERR] --framerate 必须为正整数\n")
+        return 2
     wire_color = parse_color(args.wire_color)
-    os.makedirs(out_dir, exist_ok=True)
 
     case_foam = os.path.join(args.case, "fluid-openfoam", "case.foam")
     if not os.path.exists(case_foam):
         sys.stderr.write("[PRECICE ERR] 找不到 %s\n" % case_foam)
         return 2
+    os.makedirs(args.out, exist_ok=True)
+    for stale_frame in glob.glob(os.path.join(args.out, "frame_*.png")):
+        os.remove(stale_frame)
 
     # ---- 1. 加载 OpenFOAM case ----
     reader = OpenFOAMReader(FileName=case_foam)
-    # 保留 AMR 粗细过渡处的多面体，避免 Surface With Edges 显示
-    # Decomposepolyhedra 生成的 pyramid/tetra 三角面内部边。
     reader.Decomposepolyhedra = 0
     reader.UpdatePipeline()
 
@@ -198,9 +230,7 @@ def main():
     view.Background = [1.0, 1.0, 1.0]
     view.OrientationAxesVisibility = 0
 
-    # ---- 4. 显示设置: ExtractSurface(外表面) + Surface With Edges ----
-    # 关键: ExtractSurface 只提取外表面边界 patch 的面, 这些面在 x-y/x-z 平面,
-    # 边规则正交, 无 AMR 内部 hex 的体对角线斜边 -> 消除视频斜三角线.
+    # ---- 4. 显示设置: ExtractSurface + Surface With Edges ----
     es = ExtractSurface(Input=reader)
     es.UpdatePipeline()
     disp = GetDisplayProperties(es, view)
@@ -219,10 +249,6 @@ def main():
     disp.RescaleTransferFunctionToDataRange(False)
     lut.RescaleTransferFunction(0.0, 1.0)
 
-    # 注: 不再叠加独立 Wireframe representation (旧 4b 段已删除)。独立 Wireframe 会画
-    # 所有 z 层 hex 的三角剖分/体斜边, 在准 2D 多 z 层投影下重叠成密集"斜三角线"。
-    # "Surface With Edges" 只画 ExtractSurface 外表面边；若软件渲染仍暴露 AMR
-    # 表面三角化/悬挂节点边, --no-wireframe 切到纯 Surface 作为严格无斜线路径。
 
     # ---- 5. 相机: 正对 z 平面 ----
     cx, cy, cz = 0.292, 0.1825, 0.006
@@ -239,36 +265,22 @@ def main():
         reader.UpdatePipeline()
         es.UpdatePipeline()
         view.Update()
-        fname = os.path.join(out_dir, "frame_%04d.png" % i)
+        fname = os.path.join(args.out, "frame_%04d.png" % i)
         SaveScreenshot(fname, view, ImageResolution=[W, H])
         print("[PRECICE 05] --- saved %s (t=%.6g)" % (fname, t))
 
-    print("[PRECICE 05] 帧数: %d  输出: %s" % (n_steps, out_dir))
+    print("[PRECICE 06] 帧数: %d  输出: %s" % (n_steps, args.out))
 
-    # ---- 7. ffmpeg 合成 MP4 (可选) ----
+    mp4_status = 0
     if args.mp4:
-        if not shutil.which("ffmpeg"):
-            sys.stderr.write("[PRECICE ERR] 找不到 ffmpeg; 跳过 MP4 合成 (帧已生成)\n")
-            return 0
-        mp4_path = os.path.join(os.path.dirname(os.path.normpath(out_dir)),
-                                "precice_result.mp4")
-        cmd = ["ffmpeg", "-y", "-framerate", str(args.framerate),
-               "-i", os.path.join(out_dir, "frame_%04d.png"),
-               "-c:v", "libx264", "-pix_fmt", "yuv420p", mp4_path]
-        print("[PRECICE 05] ffmpeg: %s" % " ".join(cmd))
-        try:
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL)
-        except subprocess.CalledProcessError as exc:
-            sys.stderr.write("[PRECICE ERR] ffmpeg 合成失败 (%s); 帧仍保留在 %s\n"
-                             % (exc, out_dir))
-            return 0
-        print("[PRECICE 05] MP4 输出: %s" % mp4_path)
+        mp4_status = encode_mp4(args.out, args.framerate,
+                                args.mp4_path or default_mp4_path(args.out))
     # pvpython 在 xvfb 下渲染完成后, Python 正常退出时 ParaView/X teardown 会抛
     # 无害 GLXBadContext 导致退出码非 0 (帧已全部生成)。用 os._exit(0) 绕过该
     # X 清理阶段, 干净退出。
     sys.stdout.flush()
-    os._exit(0)
+    sys.stderr.flush()
+    os._exit(mp4_status)
 
 
 if __name__ == "__main__":
