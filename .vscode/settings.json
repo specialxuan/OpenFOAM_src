@@ -21,4 +21,11 @@
         "Turb",
         "wmake"
     ],
+    "acp.agents": {
+        "OpenCode": {
+            "command": "/root/.npm-global/bin/opencode",
+            "args": ["acp"],
+            "env": {}
+        }
+    }
 }
