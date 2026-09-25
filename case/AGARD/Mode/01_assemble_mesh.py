@@ -3,8 +3,9 @@
 
 Merges the trimmed far-field Abaqus deck (hexahedral C3D8 ``FAR_PART_ELSET``
 plus its eight retained NSETs) with the second-order C3D10 wing deck
-(``WingMode2/mesh.inp`` layout).  Output is a mesh-only deck (nodes, element
-blocks, NSETs) that stage 02 turns into a complete CalculiX modal deck.
+(``case/AGARD/Mode/mesh/wing_c3d10.zip`` member ``wing_c3d10.inp``).  Output is
+a mesh-only deck (nodes, element blocks, NSETs) that stage 02 turns into a
+complete CalculiX modal deck.
 
 The two input meshes ship next to this script as ``mesh/farfield_c3d8.zip``
 and ``mesh/wing_c3d10.zip`` (single-member archives; see

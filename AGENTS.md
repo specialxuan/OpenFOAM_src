@@ -64,6 +64,7 @@ LSP is not configured for OpenFOAM `.C/.H` in this harness. Codegraph/text searc
 - Build nested variants from their own directories with `wmake`; each owns separate `Make/files` and `Make/options`.
 - OpenFOAM environment must already be loaded. Outputs go to `$FOAM_USER_LIBBIN`, `$FOAM_USER_APPBIN`, or variant `FOAM_APPBIN` targets.
 - Run `ccx` and OpenFOAM tools (`blockMesh`, `checkMesh`, solvers, etc.) only inside a case directory under `/root/Workspace/...` — never in the `src/` repository root. Running them in `src/` drops `.sta/.dat/.cvg` and other artifacts into the repo and pollutes it.
+- Scratch files, temporary extraction, tool output, and intermediate files must go under `/root/Workspace/tmp/` — never in the system `/tmp` (a system directory where everything written is treated as disposable).
 - New dictionary keys need safe defaults preserving current behavior. Removing/renaming keys requires a deprecation warning path.
 - FSI convergence is force-residual based: `fsiResidual < fsiTolerance`. Displacement change is diagnostic-only.
 - Changes under `fastDynamicFvMesh/fastDynamicFvMesh/` must update both English and Chinese docs, build the library, and run a smoke path.
