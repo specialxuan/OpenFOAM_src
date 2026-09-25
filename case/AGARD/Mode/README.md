@@ -13,17 +13,17 @@ never in this directory.
 02_generate_modal_case.py  element-aware tie surfaces, boundaries, calibrated materials
 03_export_modes.py         verification gate FIRST, then FDM CSV export
 run_pipeline.sh            sorted/validated 3-stage driver with dry-run
-tests/test_workflow.py     synthetic fast suite + env-gated Mode3 equivalence
+tests/test_workflow.py     synthetic fast suite + env-gated reference-archive equivalence
 mesh/*.zip                 committed input meshes (Git LFS)
-mesh/PROVENANCE.md         sources, hashes, trimming rule, rebuild recipe
+mesh/PROVENANCE.md         sources, hashes, trimming rule, verify recipe
 ```
 
 ## Inputs
 
 | Archive | Member | Source (read-only) | Content |
 | --- | --- | --- | --- |
-| `mesh/farfield_c3d8.zip` | `farfield_c3d8.inp` | `/root/Workspace/AGARD/AGARD4456/Mesh/Assembly/Assembly3.inp` | trimmed far-field: 388,465 nodes / 372,760 C3D8 |
-| `mesh/wing_c3d10.zip` | `wing_c3d10.inp` | `/root/Workspace/AGARD/WingMode2/mesh.inp` | 977,086 nodes / 532,373 C3D10, byte-exact raw copy |
+| `mesh/farfield_c3d8.zip` | `farfield_c3d8.inp` | former AGARD 445.6 assembly export (source revision sha256 `b85e44089d65d3d458b248dac3760ec9e7f824c462be90dabe8279101b059792`); this archive member is the canonical copy | trimmed far-field: 388,465 nodes / 372,760 C3D8 |
+| `mesh/wing_c3d10.zip` | `wing_c3d10.inp` | former `/root/Workspace/AGARD/WingMode2/mesh.inp`, tree retired 2026-09-24 — this archive member is now the only copy | 977,086 nodes / 532,373 C3D10, byte-exact raw copy |
 
 The meshes descend from an ICEM/ACIS CAD workflow that no longer exists on
 this machine, so they cannot be produced by a simple command; they are
@@ -31,7 +31,7 @@ versioned next to the scripts and stored in Git LFS (`.gitattributes`:
 `case/AGARD/Mode/mesh/*.zip filter=lfs diff=lfs merge=lfs -text`).
 `mesh/PROVENANCE.md` records each source sha256 and size, the exact far-field
 trimming rule, the resulting counts, the archive sha256/size, and a
-copy-pasteable Python snippet that rebuilds both archives.
+copy-pasteable Python snippet that verifies both archives.
 
 Stages 1-2 accept plain, `.gz` and single-member `.zip` decks transparently;
 the pipeline defaults (`run_pipeline.sh`) and the stage-1/stage-2 defaults
@@ -75,7 +75,7 @@ S3=(2,4,3) S4=(3,4,1)`; mid-edge nodes belong implicitly).  It writes
 ./run_pipeline.sh --steps 1,2,3 --run-ccx --pure-wing
 ./run_pipeline.sh --wing-type hard
 ./run_pipeline.sh --far-field-mode uniform --far-field-modulus 28
-./run_pipeline.sh --steps 3 --results-dir /root/Workspace/AGARD/Mode3/soft \
+./run_pipeline.sh --steps 3 --results-dir /root/Workspace/AGARD/Mode-run/modal \
   --results-stem combined_soft_layered      # export an already-solved deck
 ```
 
@@ -144,14 +144,17 @@ commas, plus the legacy `FluidPara.csv`).
 
 ## Verified reference and equivalence
 
-`/root/Workspace/AGARD/Mode3` (read-only) is the signed-off ground truth:
+`/root/Workspace/AGARD/Mode/reference/AGARD4456_reference_decks.zip`
+(read-only, deterministic; documented in `reference/README.md`) is the
+signed-off ground truth:
 `soft/combined_soft_layered.inp` (sha256 `a4626645…a42a6d`),
 `soft/combined_soft_fix.inp` (uniform 28 Pa) and `soft/pure_soft.inp`.
 Regenerating stages 1-2 for the soft wing from the committed `mesh/` archives
 reproduces the structural content of all three decks **byte-for-byte on the
 `*NODE`..EOF data-line projection**
 (comment lines, i.e. those starting with `**`, are excluded; the stage-1
-projection is a strict byte prefix of `Mode3/mesh/merged_base.inp`).  Comment
+projection is a strict byte prefix of `mesh/merged_base.inp` inside that
+archive).  Comment
 lines are excluded because they carry no solver data and their provenance text
 legitimately changes when a producer script is corrected (the material-slot
 marker now names `case/AGARD/Mode/02_generate_modal_case.py`); every structural

@@ -12,7 +12,8 @@
 - `run_pipeline.sh`: sorted/validated 3-stage driver, `--pure-wing` reference,
   `--dry-run`.
 - `tests/test_workflow.py`: synthetic CLI/format coverage plus an env-gated
-  byte-level comparison with the signed-off Mode3 decks.
+  byte-level comparison with the signed-off reference deck archive
+  (`/root/Workspace/AGARD/Mode/reference/AGARD4456_reference_decks.zip`).
 - `mesh/PROVENANCE.md`: committed input archives, source hashes, far-field
   trimming rule and the rebuild snippet.
 - `README.md`: the far-field design rule, gate criteria and measured targets.
@@ -55,8 +56,10 @@
 - Never commit derived artifacts: `merged_base.inp`, `combined_*.inp`,
   `pure_*.inp`, or any `*.frd`/`*.dat`/`*.sta`/`*.csv`.  Stages 1-2 rebuild
   them in ~20 s from the zips and they are huge.
-- `/root/Workspace/AGARD/Mode3` remains the read-only signed-off equivalence
-  reference for the env-gated suite; never modify it.
+- `/root/Workspace/AGARD/Mode/reference/AGARD4456_reference_decks.zip` is the
+  read-only signed-off equivalence reference for the env-gated suite; never
+  modify it and never re-derive it in place (the suite extracts it under
+  `/root/Workspace/tmp/agard-mode-tests/reference`).
 - Generated CalculiX/FRD/DAT/CSV/logs and bytecode live under
   `/root/Workspace`, never in this directory.
 
@@ -82,5 +85,6 @@ bash -n run_pipeline.sh
 - Do not treat stale `.dat`/`.frd`/mode files as production inputs, and do not
   run `ccx` as routine validation (each combined run is ~6650-6770 s /
   37.30 GiB).
-- Do not modify the read-only `/root/Workspace/AGARD/Mode3` reference or write
-  generated artifacts into the repository.
+- Do not modify the read-only reference archive
+  (`/root/Workspace/AGARD/Mode/reference/AGARD4456_reference_decks.zip`) or
+  write generated artifacts into the repository.

@@ -22,7 +22,7 @@ no directory entries; the member bytes are canonical (LF) ASCII.
 
 | | |
 | --- | --- |
-| Source (read-only) | `/root/Workspace/AGARD/WingMode2/mesh.inp` |
+| Source (read-only) | retired 2026-09-24 together with `/root/Workspace/AGARD/WingMode2/`; the committed `wing_c3d10.zip` member below is now the only copy |
 | Source bytes / sha256 | 113,871,338 / `071d8d0e0f4e93d8015214349e56755868e9d32fbe61168be41dd6e3b7fce5b0` |
 | Member | `wing_c3d10.inp` |
 | Member bytes / sha256 | 113,871,338 / `071d8d0e0f4e93d8015214349e56755868e9d32fbe61168be41dd6e3b7fce5b0` |
@@ -30,13 +30,17 @@ no directory entries; the member bytes are canonical (LF) ASCII.
 
 The wing member is the **raw source file, byte for byte**.  It is not
 reserialized, renumbered, reordered or reformatted in any way; only the zip
-container is new.  The member sha256 equals the source sha256.
+container is new.  The member sha256 equals the source sha256.  The source
+tree was retired on 2026-09-24, so this committed member is the only copy; the
+tree's six-set material calibration record is retained in
+`../pure_wing/AGARD4456_wing_mesh_and_calibration_provenance.zip` under
+`wing_mode_sets/`.
 
 ## Far field: `farfield_c3d8.zip` (trimmed from the assembly)
 
 | | |
 | --- | --- |
-| Source (read-only) | `/root/Workspace/AGARD/AGARD4456/Mesh/Assembly/Assembly3.inp` |
+| Source (read-only) | former AGARD 445.6 assembly export; tree retired, this archive member is now the only copy |
 | Source bytes / sha256 | 107,117,815 / `b85e44089d65d3d458b248dac3760ec9e7f824c462be90dabe8279101b059792` |
 | Member | `farfield_c3d8.inp` |
 | Member bytes / sha256 | 63,974,012 / `bbdc3a1f4a22a56d114819eec4a9e9ce60653051597f2e6e36af4d6aa7fd87d7` |
@@ -63,96 +67,64 @@ trimmed inventory as its runtime contract: `Assembly3.inp` is only the
 trimming source, so a foreign element type, an unexpected element set or NSET
 name, or a node id beyond 388,465 is rejected rather than tolerated.
 
-## Reproduce the archives
+## Verify the archives
 
-Run this from `case/AGARD/Mode/`; it rewrites the two archives from the
-read-only sources and prints their sha256.  Python 3.12 / zlib 1.3 was used
-here; the member bytes are zlib-independent, while the container sha256 could
-in principle change with a different deflate implementation.
+Run this from `case/AGARD/Mode/`.  It verifies both committed members against
+their pinned sha256 values and prints both container sha256 values.  Both
+source trees (the first-order C3D4 wing export and the AGARD 445.6 assembly
+export) were retired 2026-09-24, so `mesh/wing_c3d10.zip` and
+`mesh/farfield_c3d8.zip` are the canonical copies of their members and cannot
+be rebuilt from source.  Python 3.12 / zlib 1.3 was used here; the member
+bytes are zlib-independent, while the container sha256 could in principle
+change with a different deflate implementation.
 
 ```python
 import hashlib
-import io
 import zipfile
 from pathlib import Path
 
-ASSEMBLY = Path("/root/Workspace/AGARD/AGARD4456/Mesh/Assembly/Assembly3.inp")
-WING = Path("/root/Workspace/AGARD/WingMode2/mesh.inp")
+# Both input archives are now canonical: their source trees were retired on
+# 2026-09-24, so this recipe verifies the committed members instead of
+# rebuilding them.  The far-field member is the trimmed AGARD 445.6 assembly
+# export described by the extraction rule above; the wing member is the
+# byte-exact raw source copy.
 DEST = Path("mesh")
-NODE_MAX = 388465
-KEEP_SETS = ("FAR_PART_NSET", "FSI_NSET", "FRONT_NSET", "BACK_NSET",
-             "IN_NSET", "OUT_NSET", "TOP_NSET", "BOTTOM_NSET")
-
-
-def build_farfield() -> bytes:
-    out = io.BytesIO()
-    section = None
-    written = set()
-    with ASSEMBLY.open("r", encoding="ascii", newline="") as src:
-        for line in src:
-            line = line.rstrip("\r\n")
-            if line.startswith("*"):
-                head = line.replace(" ", "").upper()
-                if head == "*NODE" or head.startswith("*NODE,"):
-                    section = "node"
-                    if section not in written:
-                        written.add(section)
-                        out.write(b"*NODE\n")
-                elif (head.startswith("*ELEMENT") and "TYPE=C3D8" in head
-                        and "ELSET=FAR_PART_ELSET" in head):
-                    section = "elem"
-                    if section not in written:
-                        written.add(section)
-                        out.write(b"*ELEMENT, TYPE=C3D8, ELSET=FAR_PART_ELSET\n")
-                elif head.startswith("*NSET"):
-                    name = head.split("NSET=")[1].split(",")[0]
-                    section = f"nset:{name}" if name in KEEP_SETS else None
-                    if section is not None and section not in written:
-                        written.add(section)
-                        out.write(f"*NSET, NSET={name}\n".encode("ascii"))
-                else:
-                    section = None
-                continue
-            if section == "node":
-                if 1 <= int(line.split(",", 1)[0]) <= NODE_MAX:
-                    out.write((line + "\n").encode("ascii"))
-            elif section is not None:
-                out.write((line + "\n").encode("ascii"))
-    return out.getvalue()
-
-
-def write_zip(dest: Path, member: str, data: bytes) -> None:
-    info = zipfile.ZipInfo(filename=member, date_time=(1980, 1, 1, 0, 0, 0))
-    info.compress_type = zipfile.ZIP_DEFLATED
-    info.external_attr = 0o100644 << 16
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED,
-                         compresslevel=9) as archive:
-        archive.writestr(info, data, compresslevel=9)
-
-
-write_zip(DEST / "farfield_c3d8.zip", "farfield_c3d8.inp", build_farfield())
-write_zip(DEST / "wing_c3d10.zip", "wing_c3d10.inp", WING.read_bytes())
-for name in ("farfield_c3d8.zip", "wing_c3d10.zip"):
+EXPECTED = {
+    "farfield_c3d8.zip": (
+        "farfield_c3d8.inp",
+        "bbdc3a1f4a22a56d114819eec4a9e9ce60653051597f2e6e36af4d6aa7fd87d7",
+    ),
+    "wing_c3d10.zip": (
+        "wing_c3d10.inp",
+        "071d8d0e0f4e93d8015214349e56755868e9d32fbe61168be41dd6e3b7fce5b0",
+    ),
+}
+for name, (member, member_sha) in EXPECTED.items():
+    with zipfile.ZipFile(DEST / name) as archive:
+        assert archive.namelist() == [member]
+        assert hashlib.sha256(archive.read(member)).hexdigest() == member_sha
     print(name, hashlib.sha256((DEST / name).read_bytes()).hexdigest())
 ```
 
 ## Equivalence evidence (measured 2026-09-24)
 
 A fresh `./run_pipeline.sh --steps 1,2` with only these archives as inputs
-reproduces the signed-off `/root/Workspace/AGARD/Mode3` build:
+reproduces the signed-off reference deck archive
+(`../reference/AGARD4456_reference_decks.zip`):
 
 * stage 1 wrote `merged_base.inp` (153,920,913 B); its `*NODE`..EOF data-line
   projection (153,920,293 B, sha256
   `acdbe222f6a2ba8f1fcf48fd13f34efe41f27a1d3dce1bf09aa6d3e52901aa1b`) is a
-  strict byte prefix of the `Mode3/mesh/merged_base.inp` projection
-  (161,790,564 B, sha256
+  strict byte prefix of the `mesh/merged_base.inp` projection inside the
+  reference archive (161,790,564 B, sha256
   `fe61a08b8234566f683fe2886ecc90ce778e5e225ababc8e00d0f0977691a71f`);
 * stage 2 wrote `combined_soft_layered.inp` (164,294,649 B) whose projection
   sha256 `74beda49b5671731fa9d7369b2e4aac1d238cccdcbc2d7478b6c846ac365ff76`
-  equals the `Mode3/soft/combined_soft_layered.inp` projection sha256; only
-  comment lines (producer attribution) differ;
-* the stage-1 metadata matches `Mode3/mesh/build_report.json` on every
+  equals the `soft/combined_soft_layered.inp` projection inside the reference
+  archive; only comment lines (producer attribution) differ;
+* the stage-1 metadata matches the signed-off build report on every
   retained count, set size, volume and FSI-distance value (1,365,551 nodes;
   372,760 C3D8 + 532,373 C3D10; wing volume `4.454283695340668e-3 m^3`;
-  max FSI-to-`SIDE` distance `0.018314251661946102 m`).
+  max FSI-to-`SIDE` distance `0.018314251661946102 m`).  The raw build report
+  was retired with the `Mode3/` tree; the env-gated slow suite pins these same
+  values.

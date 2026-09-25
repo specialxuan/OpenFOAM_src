@@ -3,8 +3,11 @@
 The default suite is fast and writes only under ``/root/Workspace/tmp``; no
 CalculiX job is ever launched.  The optional reference-equivalence class is
 enabled with ``AGARD_RUN_SLOW_TESTS=1`` and compares the regenerated decks
-against the signed-off Mode3 artifacts under ``/root/Workspace/AGARD/Mode3``
-(read-only), which is the strongest available regression guard.
+against the signed-off reference archive at
+``/root/Workspace/AGARD/Mode/reference/AGARD4456_reference_decks.zip``
+(read-only), which is the strongest available regression guard.  The archive is
+extracted lazily into ``/root/Workspace/tmp/agard-mode-tests/reference``; set
+``AGARD_REFERENCE_DIR`` to an already-extracted tree to reuse it instead.
 """
 from __future__ import annotations
 
@@ -26,7 +29,8 @@ import numpy as np
 MODE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODE_DIR))
 AGARD_ROOT = Path("/root/Workspace/AGARD")
-REFERENCE_DIR = AGARD_ROOT / "Mode3"
+REFERENCE_ARCHIVE = AGARD_ROOT / "Mode" / "reference" / "AGARD4456_reference_decks.zip"
+REFERENCE_DIR: Path | None = None  # resolved lazily by the slow suite
 SCRATCH = Path("/root/Workspace/tmp/agard-mode-tests")
 
 
@@ -722,11 +726,12 @@ class PipelineTests(ScratchCase):
 
     def test_stage3_results_dir_route_is_documented_and_forwarded(self) -> None:
         result = self._pipeline("--steps", "3",
-                                "--results-dir", "/root/Workspace/AGARD/Mode3/soft",
+                                "--results-dir",
+                                "/root/Workspace/AGARD/Mode-run/modal",
                                 "--results-stem", "combined_soft_layered",
                                 "--modes", "7", "--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--input '/root/Workspace/AGARD/Mode3/soft/"
+        self.assertIn("--input '/root/Workspace/AGARD/Mode-run/modal/"
                       "combined_soft_layered.inp'", result.stdout)
         self.assertIn("--modes 7", result.stdout)
 
@@ -771,13 +776,37 @@ class RemovedModuleTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get("AGARD_RUN_SLOW_TESTS") == "1",
-                     "set AGARD_RUN_SLOW_TESTS=1 to check against Mode3")
+                     "set AGARD_RUN_SLOW_TESTS=1 to check against the "
+                     "reference archive")
 class ReferenceEquivalenceTests(unittest.TestCase):
-    """Byte-level comparison with the signed-off Mode3 artifacts (read-only)."""
+    """Byte-level comparison with the signed-off reference decks (read-only)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Resolve the reference lazily so the fast suite extracts nothing."""
+        global REFERENCE_DIR
+        override = os.environ.get("AGARD_REFERENCE_DIR")
+        if override:
+            REFERENCE_DIR = Path(override)
+            return
+        if not REFERENCE_ARCHIVE.is_file():
+            return  # setUp() reports the missing reference archive as a skip
+        cache = SCRATCH / "reference"
+        marker = cache / ".archive.sha256"
+        digest = sha256(REFERENCE_ARCHIVE)
+        if not (marker.is_file()
+                and marker.read_text(encoding="ascii").strip() == digest):
+            cache.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(REFERENCE_ARCHIVE) as archive:
+                archive.extractall(cache)
+            marker.write_text(digest + "\n", encoding="ascii")
+        REFERENCE_DIR = cache
 
     def setUp(self) -> None:
-        if not (REFERENCE_DIR / "soft" / "combined_soft_layered.inp").is_file():
-            self.skipTest("Mode3 reference decks are not available")
+        if REFERENCE_DIR is None or not (
+                REFERENCE_DIR / "soft" / "combined_soft_layered.inp").is_file():
+            self.skipTest(
+                f"reference archive is not available: {REFERENCE_ARCHIVE}")
         SCRATCH.mkdir(parents=True, exist_ok=True)
         self._temp = tempfile.TemporaryDirectory(dir=SCRATCH)
         self.root = Path(self._temp.name)
