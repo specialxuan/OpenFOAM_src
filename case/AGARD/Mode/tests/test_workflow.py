@@ -14,6 +14,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -90,6 +91,55 @@ def write_farfield(path: Path, scale: float = 0.01) -> None:
     lines.append("1," + ",".join(str(value) for value in range(1, 9)) + "\n")
     lines.append("2," + ",".join(str(value) for value in range(9, 17)) + "\n")
     for name, ids in FAR_SET_IDS.items():
+        lines.append(f"*NSET, NSET={name}\n")
+        lines.append(",".join(str(value) for value in ids) + "\n")
+    path.write_text("".join(lines), encoding="ascii")
+
+
+def mixed_contract() -> assemble.MergeContract:
+    """The synthetic gapped C3D8+C3D6 far-field contract (fluid shape)."""
+    return assemble.MergeContract(
+        far_nodes=0, far_elems=0, wing_nodes=10, wing_elems=1,
+        node_offset=0, elem_offset=0, wing_volume=1.0 / 6.0,
+        wing_node_gaps=0, fsi_nodes=0, profile="fluid",
+        far_elem_types=("C3D8", "C3D6"), derive_far=True)
+
+
+# Source ids 3, 9, 11 are absent: min 1, max 17, count 14, so 3 gaps.
+MIXED_FAR_POINTS = {
+    1: (0.0, 0.0, 0.0), 2: (0.01, 0.0, 0.0), 4: (0.01, 0.01, 0.0),
+    5: (0.0, 0.01, 0.0), 6: (0.0, 0.0, 0.01), 7: (0.01, 0.0, 0.01),
+    8: (0.01, 0.01, 0.01), 10: (0.0, 0.01, 0.01),
+    12: (3.0, 0.0, 0.0), 13: (3.01, 0.0, 0.0), 14: (3.0, 0.01, 0.0),
+    15: (3.0, 0.0, 0.01), 16: (3.01, 0.0, 0.01), 17: (3.0, 0.01, 0.01),
+}
+MIXED_FAR_SETS = {
+    "FAR_PART_NSET": [1, 2, 4, 5, 6, 7, 8, 10, 12, 13, 14, 15, 16, 17],
+    "FSI_NSET": [1, 2, 4, 5],
+    "FRONT_NSET": [6, 7],
+    "BACK_NSET": [8, 10],
+    "IN_NSET": [1, 6],
+    "OUT_NSET": [2, 7],
+    "TOP_NSET": [6, 7, 8, 10],
+    "BOTTOM_NSET": [1, 2, 4, 5, 12],
+}
+
+
+def write_mixed_farfield(path: Path,
+                         ignored_ids: tuple[int, ...] = (900, 901, 902)) -> None:
+    """Gapped C3D8+C3D6 far field plus an ignored NSET alias."""
+    lines = ["*HEADING\nsynthetic mixed far-field\n*NODE, NSET=All\n"]
+    lines.extend(f"{node},{x:.6f},{y:.6f},{z:.6f}\n"
+                 for node, (x, y, z) in MIXED_FAR_POINTS.items())
+    lines.append("*ELEMENT, TYPE=C3D8, ELSET=FAR_PART_ELSET\n")
+    lines.append("1," + ",".join(str(node) for node in
+                                 (1, 2, 4, 5, 6, 7, 8, 10)) + "\n")
+    lines.append("*ELEMENT, TYPE=C3D6, ELSET=FAR_PART_ELSET\n")
+    lines.append("1," + ",".join(str(node) for node in
+                                 (12, 13, 14, 15, 16, 17)) + "\n")
+    lines.append("*NSET, NSET=IGNORED_SET\n")
+    lines.append(",".join(str(value) for value in ignored_ids) + "\n")
+    for name, ids in MIXED_FAR_SETS.items():
         lines.append(f"*NSET, NSET={name}\n")
         lines.append(",".join(str(value) for value in ids) + "\n")
     path.write_text("".join(lines), encoding="ascii")
@@ -368,6 +418,191 @@ class CompressedInputTests(ScratchCase):
         self.assertNotIn("Traceback", result.stderr)
 
 
+class FarfieldProfileTests(ScratchCase):
+    """Named-profile far-field parsing: gapped ids, C3D6 block, ignored NSETs."""
+
+    def _mixed(self) -> Path:
+        path = self.root / "mixed.inp"
+        write_mixed_farfield(path)
+        return path
+
+    def _assemble_mixed(self, far: Path) -> tuple[Path, dict]:
+        output = self.root / "merged.inp"
+        meta = self.root / "merged_meta.json"
+        report = assemble.assemble(far, self.wing(), output, meta,
+                                   mixed_contract())
+        return output, report
+
+    def test_gapped_farfield_rank_renumbers_and_emits_the_c3d6_block(self) -> None:
+        output, report = self._assemble_mixed(self._mixed())
+        self.assertEqual(report["farfield_profile"], "fluid")
+        self.assertEqual(report["counts"], {"nodes": 24, "c3d8": 1, "c3d6": 1,
+                                            "c3d10": 1, "elements": 3})
+        self.assertEqual(report["far"]["node_id_gaps"], 3)
+        self.assertEqual(report["far"]["element_type_counts"],
+                         {"C3D8": 1, "C3D6": 1})
+        self.assertEqual(report["far"]["element_id_min"], 1)
+        self.assertEqual(report["far"]["element_id_max"], 1)
+        text = output.read_text(encoding="ascii")
+        self.assertIn("*ELEMENT, TYPE=C3D8, ELSET=FAR_PART_ELSET\n"
+                      "1,1,2,3,4,5,6,7,8\n", text)
+        self.assertIn("*ELEMENT, TYPE=C3D6, ELSET=FAR_PART_ELSET\n"
+                      "2,9,10,11,12,13,14\n", text)
+        self.assertIn("*ELEMENT, TYPE=C3D10, ELSET=WING\n", text)
+        self.assertIn("*NSET, NSET=FAR_PART_NSET\n"
+                      "1,2,3,4,5,6,7,8,9,10,11,12,13,14\n", text)
+        self.assertIn("*NSET, NSET=FIXED_IN\n5\n", text)
+        self.assertIn("*NSET, NSET=BOTTOM_NSET\n1,2,3,4,9\n", text)
+        self.assertIn("\n15,0.000000,0.000000,0.000000\n", text)
+        self.assertNotIn("IGNORED_SET", text)
+        self.assertIn("** far-field profile: fluid\n", text)
+
+    def test_element_blocks_are_accepted_in_any_source_order(self) -> None:
+        source = self._mixed().read_text(encoding="ascii")
+        c3d8 = ("*ELEMENT, TYPE=C3D8, ELSET=FAR_PART_ELSET\n1,"
+                + ",".join(str(node) for node in (1, 2, 4, 5, 6, 7, 8, 10)) + "\n")
+        c3d6 = ("*ELEMENT, TYPE=C3D6, ELSET=FAR_PART_ELSET\n1,"
+                + ",".join(str(node) for node in (12, 13, 14, 15, 16, 17)) + "\n")
+        reordered = self.root / "reordered.inp"
+        reordered.write_text(source.replace(c3d8 + c3d6, c3d6 + c3d8),
+                             encoding="ascii")
+        output, report = self._assemble_mixed(reordered)
+        text = output.read_text(encoding="ascii")
+        self.assertLess(text.index("*ELEMENT, TYPE=C3D8"),
+                        text.index("*ELEMENT, TYPE=C3D6"))
+        self.assertEqual(report["far"]["element_type_counts"],
+                         {"C3D8": 1, "C3D6": 1})
+
+    def test_derived_profile_records_its_measured_counts_and_ignored_nsets(self) -> None:
+        _, report = self._assemble_mixed(self._mixed())
+        self.assertEqual(report["far"]["nodes"], 14)
+        self.assertEqual(report["far"]["node_id_max"], 17)
+        self.assertEqual(report["far"]["elements"], 2)
+        self.assertEqual(report["far"]["fsi_nodes"], 4)
+        self.assertEqual(report["far"]["ignored_sets"], ["All", "IGNORED_SET"])
+        self.assertEqual(report["far"]["node_id_gaps"], 3)
+
+    def test_a_new_nset_alias_needs_no_code_change(self) -> None:
+        path = self.root / "new_alias.inp"
+        path.write_text(self._mixed().read_text(encoding="ascii")
+                        + "*NSET, NSET=BRAND_NEW_ALIAS\n1,2,\n", encoding="ascii")
+        output, report = self._assemble_mixed(path)
+        self.assertIn("BRAND_NEW_ALIAS", report["far"]["ignored_sets"])
+        self.assertNotIn("BRAND_NEW_ALIAS", output.read_text(encoding="ascii"))
+
+    def test_derived_profile_rejects_a_missing_contract_nset(self) -> None:
+        path = self.root / "missing_fsi.inp"
+        path.write_text(self._mixed().read_text(encoding="ascii").replace(
+            "*NSET, NSET=FSI_NSET\n1,2,4,5\n", "*NSET, NSET=FSI_NSET\n"),
+            encoding="ascii")
+        with self.assertRaises(assemble.MergeError) as caught:
+            self._assemble_mixed(path)
+        message = str(caught.exception)
+        self.assertIn("FSI_NSET", message)
+        self.assertIn("empty", message)
+
+    def test_ignored_nset_ids_are_never_validated(self) -> None:
+        path = self.root / "mixed_ignored.inp"
+        write_mixed_farfield(path, ignored_ids=(900, 901, 902, 903))
+        output, report = self._assemble_mixed(path)
+        self.assertNotIn("IGNORED_SET", output.read_text(encoding="ascii"))
+        self.assertEqual(report["counts"]["nodes"], 24)
+
+    def test_gapped_reference_inside_a_kept_nset_is_rejected(self) -> None:
+        source = self._mixed().read_text(encoding="ascii")
+        self.assertIn("*NSET, NSET=FSI_NSET\n1,2,4,5\n", source)
+        path = self.root / "gapped_nset.inp"
+        path.write_text(
+            source.replace("*NSET, NSET=FSI_NSET\n1,2,4,5\n",
+                           "*NSET, NSET=FSI_NSET\n1,3,4,5\n"),
+            encoding="ascii")
+        with self.assertRaises(assemble.MergeError) as caught:
+            self._assemble_mixed(path)
+        message = str(caught.exception)
+        self.assertIn("gapped/absent", message)
+        self.assertIn("3", message)
+
+    def test_gapped_reference_inside_connectivity_is_rejected(self) -> None:
+        source = self._mixed().read_text(encoding="ascii")
+        self.assertIn("1,1,2,4,5,6,7,8,10\n", source)
+        path = self.root / "gapped_conn.inp"
+        path.write_text(
+            source.replace("1,1,2,4,5,6,7,8,10\n",
+                           "1,1,2,4,5,6,7,3,10\n", 1),
+            encoding="ascii")
+        with self.assertRaises(assemble.MergeError) as caught:
+            self._assemble_mixed(path)
+        self.assertIn("gapped/absent", str(caught.exception))
+
+    def test_unsorted_node_ids_are_rejected(self) -> None:
+        lines = self._mixed().read_text(encoding="ascii").splitlines(keepends=True)
+        start = next(index for index, line in enumerate(lines)
+                     if line.startswith("*NODE"))
+        lines[start + 1], lines[start + 2] = lines[start + 2], lines[start + 1]
+        path = self.root / "unsorted.inp"
+        path.write_text("".join(lines), encoding="ascii")
+        with self.assertRaises(assemble.MergeError) as caught:
+            self._assemble_mixed(path)
+        self.assertIn("strictly ascending", str(caught.exception))
+
+    def test_wrong_type_and_wrong_elset_are_rejected(self) -> None:
+        source = self._mixed().read_text(encoding="ascii")
+        for old, new in (("TYPE=C3D6", "TYPE=C3D4"),
+                         ("ELSET=FAR_PART_ELSET", "ELSET=OTHER_ELSET")):
+            path = self.root / "broken.inp"
+            path.write_text(source.replace(old, new, 1), encoding="ascii")
+            with self.assertRaises(assemble.MergeError) as caught:
+                self._assemble_mixed(path)
+            self.assertIn("element card", str(caught.exception))
+
+
+class FluidContractTests(unittest.TestCase):
+    """The fluid profile derives the far side; legacy stays fully pinned."""
+
+    def test_fluid_contract_derives_the_far_side_and_pins_the_wing(self) -> None:
+        contract = assemble.FLUID_CONTRACT
+        self.assertEqual(contract.profile, "fluid")
+        self.assertTrue(contract.derive_far)
+        self.assertIsNone(contract.far_node_id_max)
+        self.assertEqual(contract.far_elem_types, ("C3D8", "C3D6"))
+        self.assertEqual(contract.wing_nodes, 977086)
+        self.assertEqual(contract.wing_elems, 532373)
+        self.assertEqual(contract.wing_node_gaps, 12964)
+        self.assertEqual(contract.wing_volume, 4.4542836953e-3)
+
+    def test_legacy_contract_keeps_every_pinned_number(self) -> None:
+        contract = assemble.LEGACY_CONTRACT
+        self.assertFalse(contract.derive_far)
+        self.assertEqual(contract.far_nodes, 388465)
+        self.assertEqual(contract.far_elems, 372760)
+        self.assertEqual(contract.far_node_id_gaps, 0)
+        self.assertEqual(contract.far_node_id_max, 388465)
+        self.assertEqual(contract.fsi_nodes, 4045)
+        self.assertEqual(contract.node_offset, 388465)
+        self.assertEqual(contract.elem_offset, 372760)
+        self.assertEqual(contract.total_nodes, 1365551)
+        self.assertEqual(contract.total_elems, 905133)
+
+    def test_profiles_expose_only_legacy_and_fluid(self) -> None:
+        self.assertEqual(sorted(assemble.PROFILES), ["fluid", "legacy"])
+        self.assertEqual(assemble.PROFILES["legacy"], assemble.LEGACY_CONTRACT)
+        self.assertEqual(assemble.PROFILES["fluid"], assemble.FLUID_CONTRACT)
+        self.assertEqual(assemble.AGARD_CONTRACT, assemble.LEGACY_CONTRACT)
+
+    def test_cli_documents_the_profile_choices_and_requires_a_fluid_deck(self) -> None:
+        result = run_script("01_assemble_mesh.py", "--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("--farfield-profile", result.stdout)
+        self.assertIn("{fluid,legacy}", result.stdout)
+        self.assertNotIn("fluid7", result.stdout)
+        missing = run_script("01_assemble_mesh.py", "--farfield-profile", "fluid",
+                             "--wing-deck", str(MODE_DIR / "mesh" / "wing_c3d10.zip"),
+                             "--output", str(SCRATCH / "unused.inp"))
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("--farfield-deck", missing.stderr)
+        self.assertNotIn("Traceback", missing.stderr)
+
+
 class SurfaceTests(ScratchCase):
     def test_c3d10_faces_use_corner_table_when_corners_are_in_side(self) -> None:
         mesh = modal.parse_merged(self.merged())
@@ -391,6 +626,125 @@ class SurfaceTests(ScratchCase):
             far_elems=mesh.far_elems)
         with self.assertRaises(modal.DeckError):
             modal.extract_surfaces(reduced)
+
+
+def wedge_mesh(fsi_ids: list[int], *, brick_fsi: bool = False) -> modal.MergedMesh:
+    """Minimal one-brick + one-wedge + one-tet mesh for wedge tie tests.
+
+    Brick deck row 0, wedge deck row 1; the wing tet corners are nodes
+    15..18 (all in ``SIDE``) and its mid nodes are 19..24.
+    """
+    fsi = list(fsi_ids) + ([1, 2, 3, 4] if brick_fsi else [])
+    return modal.MergedMesh(
+        coords=np.zeros((25, 3)),
+        far_conn=np.array([[1, 2, 3, 4, 5, 6, 7, 8]], dtype=np.int64),
+        wedge_conn=np.array([[9, 10, 11, 12, 13, 14]], dtype=np.int64),
+        wing_conn=np.array([[15, 16, 17, 18, 19, 20, 21, 22, 23, 24]],
+                           dtype=np.int64),
+        sets={"FSI_NSET": np.array(fsi, dtype=np.int64),
+              "SIDE": np.array([15, 16, 17, 18], dtype=np.int64)},
+        total_nodes=24, far_nodes=14, far_elems=2)
+
+
+class WedgeSurfaceTests(unittest.TestCase):
+    """C3D6 tie faces: documented CalculiX table and deck-row flags."""
+
+    def test_c3d6_face_table_matches_the_documented_calculix_source(self) -> None:
+        self.assertEqual(modal.WEDGE_FACES, (
+            ("S1", (0, 1, 2)), ("S2", (3, 4, 5)), ("S3", (0, 1, 4, 3)),
+            ("S4", (1, 2, 5, 4)), ("S5", (2, 0, 3, 5))))
+
+    def test_each_wedge_face_flag_is_extracted_on_its_own_nodes(self) -> None:
+        for flag, (name, indices) in enumerate(modal.WEDGE_FACES, start=1):
+            mesh = wedge_mesh([9 + index for index in indices])
+            surfaces = modal.extract_surfaces(mesh)
+            # The brick has no FSI face; the wedge is deck row 1 (element id 2).
+            self.assertEqual(surfaces.fluid_rows.tolist(), [1], name)
+            self.assertEqual(surfaces.fluid_flags.tolist(), [flag], name)
+
+    def test_wedge_face_in_fsi_emits_exactly_one_tie_row_with_its_flag(self) -> None:
+        mesh = wedge_mesh([9, 10, 11], brick_fsi=True)
+        surfaces = modal.extract_surfaces(mesh)
+        self.assertEqual(surfaces.fluid_rows.tolist(), [0, 1])
+        self.assertEqual(surfaces.fluid_flags.tolist(), [1, 1])
+        wedge_faces = surfaces.fluid_rows >= mesh.brick_elems
+        self.assertEqual(surfaces.fluid_rows[wedge_faces].tolist(), [1])
+        self.assertEqual(surfaces.fluid_flags[wedge_faces].tolist(), [1])
+        buffer = io.StringIO()
+        surfaces.write(buffer, 0.05, mesh.far_elems)
+        self.assertIn("1,S1\n", buffer.getvalue())
+        self.assertIn("2,S1\n", buffer.getvalue())
+
+
+class WedgeGeometryTests(unittest.TestCase):
+    """Exact wedge volumes from the three-tetrahedron decomposition."""
+
+    def test_wedge_volumes_match_an_analytic_prism(self) -> None:
+        # Bottom triangle (0,0,0),(1,0,0),(0,1,0) (area 0.5) translated by
+        # (0.3,0.2,1.0): an oblique prism of perpendicular height 1 -> V=0.5.
+        coords = np.array([
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+            [0.3, 0.2, 1.0], [1.3, 0.2, 1.0], [0.3, 1.2, 1.0],
+        ])
+        conn = np.array([[1, 2, 3, 4, 5, 6]], dtype=np.int64)
+        volume = modal.wedge_volumes(coords, conn)
+        self.assertEqual(volume.shape[0], 1)
+        self.assertAlmostEqual(float(volume[0]), 0.5, places=12)
+
+    def test_far_volumes_are_bricks_then_wedges_in_deck_row_order(self) -> None:
+        coords = np.array([
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+            [0.3, 0.2, 1.0], [1.3, 0.2, 1.0], [0.3, 1.2, 1.0],
+        ])
+        brick = np.array([[1, 2, 3, 4, 5, 6, 7, 8]], dtype=np.int64)
+        wedge = np.array([[9, 10, 11, 12, 13, 14]], dtype=np.int64)
+        far = modal.far_volumes(coords, brick, wedge)
+        self.assertEqual(far.shape[0], 2)
+        self.assertAlmostEqual(float(far[0]), 1.0, places=12)
+        self.assertAlmostEqual(float(far[1]), 0.5, places=12)
+
+
+class MixedFarfieldStage2Tests(ScratchCase):
+    """Stage-2 parse and tie rows for the derived C3D8+C3D6 fluid shape."""
+
+    def _mixed_merged(self) -> Path:
+        far = self.root / "mixed.inp"
+        write_mixed_farfield(far)
+        output = self.root / "merged.inp"
+        assemble.assemble(far, self.wing(), output, self.root / "meta.json",
+                          mixed_contract())
+        return output
+
+    def test_parse_reads_the_c3d6_block_and_keeps_deck_id_contiguity(self) -> None:
+        mesh = modal.parse_merged(self._mixed_merged())
+        self.assertEqual(mesh.far_conn.shape, (1, 8))
+        self.assertEqual(mesh.wedge_conn.tolist(), [[9, 10, 11, 12, 13, 14]])
+        self.assertEqual((mesh.brick_elems, mesh.wedge_elems), (1, 1))
+        self.assertEqual((mesh.far_elems, mesh.far_nodes), (2, 14))
+        self.assertEqual(mesh.wing_conn.shape, (1, 10))
+        surfaces = modal.extract_surfaces(mesh)
+        self.assertEqual(surfaces.fluid_rows.tolist(), [0])
+        self.assertEqual(surfaces.fluid_flags.tolist(), [1])
+        buffer = io.StringIO()
+        surfaces.write(buffer, 0.05, mesh.far_elems)
+        # Wing C3D10 ids start at the TOTAL far count + 1 (3), not bricks + 1.
+        self.assertIn("*SURFACE, NAME=SURF_FSI_WING, TYPE=ELEMENT\n3,S1\n",
+                      buffer.getvalue())
+
+    def test_parse_rejects_a_non_contiguous_wedge_element_id(self) -> None:
+        merged = self._mixed_merged()
+        text = merged.read_text(encoding="ascii")
+        self.assertIn("\n2,9,10,11,12,13,14\n", text)
+        broken = self.root / "broken.inp"
+        broken.write_text(text.replace("\n2,9,10,11,12,13,14\n",
+                                       "\n7,9,10,11,12,13,14\n"),
+                          encoding="ascii")
+        with self.assertRaises(modal.DeckError):
+            modal.parse_merged(broken)
 
 
 class LayerTests(unittest.TestCase):
@@ -735,10 +1089,75 @@ class PipelineTests(ScratchCase):
                       "combined_soft_layered.inp'", result.stdout)
         self.assertIn("--modes 7", result.stdout)
 
+    def test_dry_run_fluid_profile_needs_the_explicit_deck_and_gains_a_stem(self) -> None:
+        work_root = self.root / "work"
+        deck = self.root / "fluid8.inp"
+        result = self._pipeline("--work-root", str(work_root),
+                                "--farfield-profile", "fluid",
+                                "--farfield-deck", str(deck), "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--farfield-profile fluid", result.stdout)
+        self.assertIn(f"--farfield-deck '{deck}'", result.stdout)
+        self.assertIn("combined_soft_layered_fluid.inp", result.stdout)
+        self.assertIn("combined_soft_layered_fluid_meta.json", result.stdout)
+        self.assertIn("farfield-profile=fluid", result.stdout)
+        self.assertNotIn("mesh/farfield_c3d8.zip", result.stdout)
+        self.assertFalse(work_root.exists())
+
+    def test_fluid_profile_without_a_deck_fails_before_running(self) -> None:
+        result = self._pipeline("--farfield-profile", "fluid", "--dry-run")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("[AGARD ERR]", result.stderr)
+        self.assertIn("--farfield-deck", result.stderr)
+
+    def test_dry_run_explicit_deck_wins_over_the_legacy_default(self) -> None:
+        work_root = self.root / "work"
+        deck = self.root / "custom_far.zip"
+        result = self._pipeline("--work-root", str(work_root),
+                                "--farfield-profile", "legacy",
+                                "--farfield-deck", str(deck), "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"--farfield-deck '{deck}'", result.stdout)
+        self.assertNotIn("mesh/farfield_c3d8.zip", result.stdout)
+        self.assertIn("combined_soft_layered.inp", result.stdout)
+
+    def test_legacy_dry_run_keeps_the_signed_off_command_text(self) -> None:
+        work_root = self.root / "work"
+        default = self._pipeline("--work-root", str(work_root), "--dry-run")
+        explicit = self._pipeline("--work-root", str(work_root),
+                                  "--farfield-profile", "legacy", "--dry-run")
+        self.assertEqual(default.returncode, 0, default.stderr)
+        self.assertEqual(explicit.returncode, 0, explicit.stderr)
+        self.assertEqual(default.stdout, explicit.stdout)
+        # The legacy stage-1 line is pinned byte-for-byte: the profile flag is
+        # only added for a non-legacy profile, and the deck default is the
+        # signed-off farfield_c3d8.zip.
+        self.assertIn(
+            f"[AGARD-PIPE] stage 1: python3 '{MODE_DIR}/01_assemble_mesh.py'"
+            f" --farfield-deck '{MODE_DIR}/mesh/farfield_c3d8.zip'"
+            f" --wing-deck '{MODE_DIR}/mesh/wing_c3d10.zip'"
+            f" --output '{work_root}/mesh/merged_base.inp'"
+            f" --meta '{work_root}/mesh/merged_meta.json'"
+            f" --tie-tolerance 0.05\n", default.stdout)
+        self.assertNotIn("--farfield-profile", default.stdout)
+        self.assertIn("combined_soft_layered.inp", default.stdout)
+        self.assertNotIn("combined_soft_layered_fluid7", default.stdout)
+
+    def test_help_documents_the_farfield_profiles_and_deck_defaults(self) -> None:
+        result = self._pipeline("--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("--farfield-profile", result.stdout)
+        self.assertIn("fluid", result.stdout)
+        self.assertIn("--farfield-deck", result.stdout)
+        self.assertIn("mesh/farfield_c3d8.zip", result.stdout)
+        self.assertIn("_fluid", result.stdout)
+        self.assertNotIn("fluid7", result.stdout)
+
     def test_pipeline_rejects_invalid_controls_with_exit_code_two(self) -> None:
         for arguments in (("--steps", "4"), ("--modes", "0"), ("--layers", "0"),
                           ("--tie-tolerance", "0"), ("--wing-type", "medium"),
                           ("--far-field-mode", "shell"),
+                          ("--farfield-profile", "mystery"),
                           ("--layer-ref-modulus", "E9"),
                           ("--layer-emax-factor", "0"),
                           ("--layer-floor", "1"),

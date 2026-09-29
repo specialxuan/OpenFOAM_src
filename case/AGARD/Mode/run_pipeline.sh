@@ -4,7 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGARD_ROOT="/root/Workspace/AGARD"
 WORK_ROOT="$AGARD_ROOT/Mode-run"
-FARFIELD_DECK="$SCRIPT_DIR/mesh/farfield_c3d8.zip"
+FARFIELD_PROFILE="legacy"
+FARFIELD_DECK=""
 WING_DECK="$SCRIPT_DIR/mesh/wing_c3d10.zip"
 STEPS="1,2"
 RESULTS_DIR=""
@@ -52,14 +53,18 @@ Pure-wing reference (needed by the stage-3 frequency/identity gates):
 Inputs (defaults are the committed meshes next to this script, so no
 /root/Workspace checkout is needed; plain, .gz and single-member .zip decks
 are all accepted):
-  --farfield-deck FILE     far-field C3D8 deck
-                           (default <script dir>/mesh/farfield_c3d8.zip)
+  --farfield-profile NAME  far-field profile: legacy (default, pinned) or
+                           fluid (derived from --farfield-deck)
+  --farfield-deck FILE     far-field deck; required for --farfield-profile
+                           fluid, defaults to <script dir>/mesh/farfield_c3d8.zip
+                           for legacy
   --wing-deck FILE         second-order C3D10 wing deck
                            (default <script dir>/mesh/wing_c3d10.zip)
   --work-root DIR          generated-artifact root (default /root/Workspace/AGARD/Mode-run)
   --results-dir DIR        pre-solved deck directory for stage 3
   --results-stem STEM      deck stem inside --results-dir
-                           (default combined_<wing-type>_<far-field-mode>)
+                           (default combined_<wing-type>_<far-field-mode>,
+                           plus _fluid for a non-legacy profile)
 
 Controls:
   --steps LIST             comma-separated stages from 1,2,3 (default 1,2)
@@ -94,6 +99,7 @@ is_positive() { awk -v value="$1" 'BEGIN { exit !(value + 0 > 0) }'; }
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --work-root) WORK_ROOT="${2:?--work-root requires a directory}"; shift 2 ;;
+        --farfield-profile) FARFIELD_PROFILE="${2:?--farfield-profile requires legacy or fluid}"; shift 2 ;;
         --farfield-deck) FARFIELD_DECK="${2:?--farfield-deck requires a file}"; shift 2 ;;
         --wing-deck) WING_DECK="${2:?--wing-deck requires a file}"; shift 2 ;;
         --steps) STEPS="${2:?--steps requires a list}"; shift 2 ;;
@@ -136,6 +142,7 @@ is_positive "$LAYER_FLOOR" && awk -v value="$LAYER_FLOOR" 'BEGIN { exit !(value 
 is_positive "$FAR_FIELD_MODULUS" || { error "--far-field-modulus must be positive"; exit 2; }
 case "$WING_TYPE" in hard|soft) ;; *) error "--wing-type must be 'hard' or 'soft'"; exit 2 ;; esac
 case "$FAR_FIELD_MODE" in layered|uniform) ;; *) error "--far-field-mode must be 'layered' or 'uniform'"; exit 2 ;; esac
+case "$FARFIELD_PROFILE" in legacy|fluid) ;; *) error "--farfield-profile must be 'legacy' or 'fluid'"; exit 2 ;; esac
 case "$LAYER_REF_MODULUS" in E1|E2|E3) ;; *) error "--layer-ref-modulus must be E1, E2 or E3"; exit 2 ;; esac
 if [ -n "$MAX_REL" ]; then is_positive "$MAX_REL" || { error "--max-rel must be positive"; exit 2; }; fi
 if [ -n "$MIN_COSINE" ]; then
@@ -150,7 +157,20 @@ if has_step 3 && [ -z "$RESULTS_DIR" ] && { ! has_step 2 || [ "$RUN_CCX" -eq 0 ]
     exit 2
 fi
 
+if [ -z "$FARFIELD_DECK" ]; then
+    case "$FARFIELD_PROFILE" in
+        legacy) FARFIELD_DECK="$SCRIPT_DIR/mesh/farfield_c3d8.zip" ;;
+        fluid)
+            error "--farfield-profile fluid requires --farfield-deck (the fluid family has no committed deck default)"
+            exit 2
+            ;;
+    esac
+fi
+
 STEM="combined_${WING_TYPE}_${FAR_FIELD_MODE}"
+if [ "$FARFIELD_PROFILE" != "legacy" ]; then
+    STEM="${STEM}_${FARFIELD_PROFILE}"
+fi
 [ -n "$RESULTS_STEM" ] || RESULTS_STEM="$STEM"
 MESH_DECK="$WORK_ROOT/mesh/merged_base.inp"
 MESH_META="$WORK_ROOT/mesh/merged_meta.json"
@@ -177,6 +197,9 @@ run_step() {
     case "$step" in
         1)
             command="python3 '$SCRIPT_DIR/01_assemble_mesh.py' --farfield-deck '$FARFIELD_DECK' --wing-deck '$WING_DECK' --output '$MESH_DECK' --meta '$MESH_META' --tie-tolerance $TIE_TOLERANCE"
+            if [ "$FARFIELD_PROFILE" != "legacy" ]; then
+                command="$command --farfield-profile $FARFIELD_PROFILE"
+            fi
             ;;
         2)
             command="python3 '$SCRIPT_DIR/02_generate_modal_case.py' --input '$MESH_DECK' --output '$MODAL_DECK' --meta '$MODAL_META' --modes $MODES --tie-tolerance $TIE_TOLERANCE --wing-type $WING_TYPE --far-field-mode $FAR_FIELD_MODE"
@@ -205,6 +228,6 @@ run_step() {
     eval "$command" 2>&1 | tee "$WORK_ROOT/logs/stage_${step}.log"
 }
 
-echo "[AGARD-PIPE] work-root=$WORK_ROOT steps=$STEPS modes=$MODES tie-tolerance=$TIE_TOLERANCE wing-type=$WING_TYPE far-field=$FAR_FIELD_MODE layers=$LAYERS layer-emax-factor=$LAYER_EMAX_FACTOR layer-ref=$LAYER_REF_MODULUS layer-p=$LAYER_P layer-floor=$LAYER_FLOOR pure-wing=$PURE_WING run-ccx=$RUN_CCX dry-run=$DRY_RUN"
+echo "[AGARD-PIPE] work-root=$WORK_ROOT steps=$STEPS modes=$MODES tie-tolerance=$TIE_TOLERANCE wing-type=$WING_TYPE far-field=$FAR_FIELD_MODE layers=$LAYERS layer-emax-factor=$LAYER_EMAX_FACTOR layer-ref=$LAYER_REF_MODULUS layer-p=$LAYER_P layer-floor=$LAYER_FLOOR farfield-profile=$FARFIELD_PROFILE pure-wing=$PURE_WING run-ccx=$RUN_CCX dry-run=$DRY_RUN"
 for step in $NORMALIZED_STEPS; do run_step "$step"; done
 echo "[AGARD-PIPE] complete"

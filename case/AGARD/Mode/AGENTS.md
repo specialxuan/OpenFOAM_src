@@ -9,8 +9,8 @@
   verification.
 - `03_export_modes.py`: verification gate first (frequency window, pure-wing
   frequency delta, mode identity), then the legacy FDM CSV contract.
-- `run_pipeline.sh`: sorted/validated 3-stage driver, `--pure-wing` reference,
-  `--dry-run`.
+- `run_pipeline.sh`: sorted/validated 3-stage driver, `--farfield-profile`
+  (legacy/fluid), `--pure-wing` reference, `--dry-run`.
 - `tests/test_workflow.py`: synthetic CLI/format coverage plus an env-gated
   byte-level comparison with the signed-off reference deck archive
   (`/root/Workspace/AGARD/Mode/reference/AGARD4456_reference_decks.zip`).
@@ -20,9 +20,38 @@
 
 ## Invariants
 
-- Merge counts: 1,365,551 nodes = 388,465 far-field + 977,086 wing; elements
-  C3D8 `1..372760`, C3D10 `372761..905133`; wing volume `4.4542836953e-3 m^3`
-  (rel `1e-6`); wing NSETs `ROOT(193)/TIP(212)/SIDE(510058)/WING(977086)`.
+- Legacy-profile merge counts: 1,365,551 nodes = 388,465 far-field + 977,086
+  wing; elements C3D8 `1..372760`, C3D10 `372761..905133`; wing volume
+  `4.4542836953e-3 m^3` (rel `1e-6`); wing NSETs
+  `ROOT(193)/TIP(212)/SIDE(510058)/WING(977086)`.  `legacy` is the default
+  profile and the signed-off reference archive pins only it; its stage-1
+  default is `mesh/farfield_c3d8.zip` and a default run is byte-stable.
+- fluid profile (`--farfield-profile fluid`): **no default deck** and no
+  pinned far-field counts -- `--farfield-deck` is required and the far-field
+  node count, id gaps, per-type element split and `FSI_NSET` size are derived
+  from that deck and recorded in `mesh/merged_meta.json` (`far.nodes`,
+  `far.node_id_gaps`, `far.node_id_max`, `far.element_type_counts`,
+  `far.fsi_nodes`, `far.ignored_sets`).  Structural gates stay: positive
+  strictly-ascending node ids rank-renumbered to `1..far_nodes`; all eight
+  contract NSETs present and non-empty; `FAR_PART_NSET` exactly the full node
+  id set; element connectivity inside and exactly covering that set; only
+  `C3D8`/`C3D6` blocks on `FAR_PART_ELSET`, ascending ids per block, any
+  source order (the writer groups by type).  Unknown NSET names are ignored
+  and recorded, so a new ICEM alias needs no code change; the wing side stays
+  pinned exactly as for `legacy`.  Measured members: Fluid7-shaped
+  (`mesh/fluid7_c3d8_c3d6.zip`) 280,770 far nodes (4,690 id gaps over
+  `1..285460`), 268,384 C3D8 + 748 C3D6, 1,816 `FSI_NSET`, ignored
+  `All`/`WING_FAR_HALF_1/WING_FAR_HALF_FARD_1_NSET`, merged 1,257,856 nodes /
+  801,505 elements, max FSI-to-`SIDE` 0.017917 m; Fluid8 (522,300 far nodes,
+  7,229 id gaps over `1..529529`), 503,504 C3D8 + 1,496 C3D6, 1,817
+  `FSI_NSET`, extra ignored `POINTS_NSET`, merged 1,499,386 nodes /
+  1,037,373 elements, max FSI-to-`SIDE` 0.016217 m.  The wedges are a thin
+  tip/wake sheet inside `FAR_PART_ELSET` taking the bricks' layer modulus (no
+  separate material); Fluid8 wedge faces include `S3`/`S4`/`S5` as well as
+  `S1`, so no stage assumes `S1`-only.  The combined stem gains an `_fluid`
+  suffix.  Measured on the Fluid7-shaped deck, stage 2 yields 1,774 tie faces
+  (1,752 + 22, all `S1`), 20 layers of 13,457/13,456 covering all 269,132 far
+  elements and 783,086 wing faces, with `E_max = 3518.452897 Pa`.
 - Set names crossing stages: far-field `FAR_PART_ELSET`/`FAR_PART_NSET`,
   inner `FSI_NSET`, outer `FRONT/BACK/IN/OUT/TOP/BOTTOM` (`FIXED_*` = outer
   minus FSI), wing `WING` blocks and `ROOT/TIP/SIDE/WING` nodes.  Stage 3
@@ -46,10 +75,13 @@
 - CSV contract: ascending global node id order, three-field header
   `frequency,count,modes,` with trailing commas, legacy `FluidPara.csv`.
 - Inputs: stage 1 (and the stage-2 `--wing-source` reader) opens plain, `.gz`
-  or `.zip` decks; a zip must hold exactly one member.  Defaults are the
-  script-relative `mesh/farfield_c3d8.zip` and `mesh/wing_c3d10.zip`; the
-  wing zip is the byte-exact raw source and the far-field zip is the trimmed
-  node/C3D8/NSET subset documented in `mesh/PROVENANCE.md`.
+  or `.zip` decks; a zip must hold exactly one member.  The far-field default
+  exists only for `legacy` (`mesh/farfield_c3d8.zip`, the default profile);
+  `fluid` requires an explicit `--farfield-deck` (a fluid-family export, e.g.
+  the committed `mesh/fluid7_c3d8_c3d6.zip` fixture); the wing default is
+  `mesh/wing_c3d10.zip`.  The wing zip is the byte-exact raw source and the
+  legacy far-field zip is the trimmed node/C3D8/NSET subset documented in
+  `mesh/PROVENANCE.md`.
 - Git LFS owns `case/AGARD/Mode/mesh/*.zip`
   (`filter=lfs diff=lfs merge=lfs -text`); never bypass it or re-add the
   archives as plain blobs.
@@ -67,6 +99,7 @@
 
 ```bash
 ./run_pipeline.sh --dry-run
+./run_pipeline.sh --farfield-profile fluid --farfield-deck /path/to/fluid_icem.inp --dry-run
 ./run_pipeline.sh --steps 1,2,3 --run-ccx --pure-wing
 AGARD_RUN_SLOW_TESTS=1 python3 -m unittest tests/test_workflow.py
 PYTHONPYCACHEPREFIX=/root/Workspace/tmp/pycache python3 -m unittest tests/test_workflow.py
