@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """Stage 02: generate the combined AGARD modal CalculiX deck.
 
-Consumes the stage-01 merged mesh deck (far-field C3D8 + wing C3D10) and emits
-the complete modal deck: element-type-aware FSI tie surfaces, the fixed
-boundaries, the calibrated orthotropic wing material and the pseudo-elastic
-far-field materials.
+Consumes the stage-01 merged mesh deck (far-field C3D8 bricks plus an optional
+C3D6 wedge sheet, and the C3D10 wing) and emits the complete modal deck:
+element-type-aware FSI tie surfaces, the fixed boundaries, the calibrated
+orthotropic wing material and the pseudo-elastic far-field materials.
+
+The far field is one deck-row order: the C3D8 brick block first, then the
+C3D6 wedge block, so ``element id == far row + 1`` for both types and the wing
+C3D10 ids follow at ``far_elems + 1`` where ``far_elems`` counts bricks AND
+wedges.
 
 Element types
 -------------
-* far-field : C3D8 faces are emitted when all four face nodes lie in the
-  far-field inner set (``FSI_NSET``); the six quad faces are CalculiX S1..S6.
+* far-field : a C3D8 brick emits a quad face when all four face nodes lie in
+  the far-field inner set (``FSI_NSET``); the six quad faces are CalculiX
+  S1..S6.  A C3D6 wedge emits a face when all its face nodes lie in
+  ``FSI_NSET``, using the CalculiX C3D6 face table below (the 748-wedge
+  ``fluid7`` sheet contributes exactly 22 extra S1 faces).
 * wing      : C3D10 faces are emitted when all three CORNER nodes lie in the
   wing ``SIDE`` set, using the CalculiX tet face table
   ``S1=(1,2,3) S2=(1,4,2) S3=(2,4,3) S4=(3,4,1)``; the mid-edge nodes belong
@@ -50,7 +58,7 @@ import time
 import zipfile
 from array import array
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Iterator, TextIO
 
@@ -88,6 +96,21 @@ HEX_FACES: Final = (("S1", (0, 1, 2, 3)), ("S2", (4, 5, 6, 7)),
 # S3=(2,4,3) S4=(3,4,1); mid-edge nodes belong to the face implicitly.
 TET_FACES: Final = (("S1", (0, 1, 2)), ("S2", (0, 3, 1)),
                     ("S3", (1, 3, 2)), ("S4", (2, 3, 0)))
+# CalculiX C3D6 (six-node wedge) face table (0-based indices).  A wedge is a
+# bottom triangle 1-2-3 and a top triangle 4-5-6 (vertical edges 1-4, 2-5,
+# 3-6).  Source: CalculiX ccx manual, ``*SURFACE`` card:
+#   Face 1: 1-2-3   Face 2: 4-5-6   Face 3: 1-2-5-4
+#   Face 4: 2-3-6-5 Face 5: 3-1-4-6
+# (dhondt.de ccx manual; mirrored at
+# https://feacluster.com/CalculiX/ccx_2.18/doc/ccx/node336.html).  Cross-checked
+# against the ccx source table ``src/tiefaccont.f``:
+#   data ifacew1 /1,3,2,0, 4,5,6,0, 1,2,5,4, 2,3,6,5, 3,1,4,6/
+# which lists the same node set per face; its face-1 winding (1,3,2) is the
+# outward-normal ordering, not a different face.  The set is what a ``*TIE``
+# matches, so S1=(1,2,3) is the interface triangle used by the fluid7 deck.
+WEDGE_FACES: Final = (("S1", (0, 1, 2)), ("S2", (3, 4, 5)),
+                      ("S3", (0, 1, 4, 3)), ("S4", (1, 2, 5, 4)),
+                      ("S5", (2, 0, 3, 5)))
 
 FORBIDDEN_CARD_TOKENS: Final = ("TYPE=ORTHO", "STORAGE=", "SOLVER=", "*MPC")
 ALLOWED_CARD_FAMILIES: Final = frozenset({
@@ -213,6 +236,19 @@ class MergedMesh:
     total_nodes: int
     far_nodes: int
     far_elems: int
+    # C3D6 wedge rows in deck order (after the C3D8 bricks); empty for legacy.
+    wedge_conn: IntArray = field(
+        default_factory=lambda: np.empty((0, 6), dtype=np.int64))
+
+    @property
+    def brick_elems(self) -> int:
+        """Number of C3D8 brick rows; deck rows ``0..brick_elems-1``."""
+        return int(self.far_conn.shape[0])
+
+    @property
+    def wedge_elems(self) -> int:
+        """Number of C3D6 wedge rows; deck rows ``brick_elems..far_elems-1``."""
+        return int(self.wedge_conn.shape[0])
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,14 +345,22 @@ def validate_spec(spec: CaseSpec) -> None:
 
 
 def parse_merged(deck: Path) -> MergedMesh:
-    """Stream the merged mesh deck into arrays, asserting its contiguity contract."""
+    """Stream the merged mesh deck into arrays, asserting its contiguity contract.
+
+    The far field is a single deck-row order: C3D8 brick ids first, then the
+    C3D6 wedge ids, so ``element id == far row + 1`` holds across both.  The
+    wing C3D10 ids start at ``far_elems + 1`` where ``far_elems`` counts bricks
+    and wedges.
+    """
     coords = array("d")
     far_conn = array("q")
+    wedge_conn = array("q")
     wing_conn = array("q")
     sets: dict[str, array] = {}
     current_set: str | None = None
     section: str | None = None
     node_count = 0
+    brick_rows = 0
     far_rows = 0
     wing_rows = 0
     with deck.open("r", encoding="ascii") as source:
@@ -328,7 +372,9 @@ def parse_merged(deck: Path) -> MergedMesh:
                     section = "node"
                 elif head.startswith("*ELEMENT"):
                     if "TYPE=C3D8" in head:
-                        section = "far"
+                        section = "brick"
+                    elif "TYPE=C3D6" in head:
+                        section = "wedge"
                     elif "TYPE=C3D10" in head:
                         section = "wing"
                     else:
@@ -349,16 +395,25 @@ def parse_merged(deck: Path) -> MergedMesh:
                 coords.append(float(fields[1]))
                 coords.append(float(fields[2]))
                 coords.append(float(fields[3]))
-            elif section == "far":
+            elif section == "brick":
                 fields = line.split(",")
                 far_rows += 1
                 if int(fields[0]) != far_rows:
                     raise DeckError(f"far element ids are not contiguous at {far_rows}")
+                brick_rows += 1
                 far_conn.extend(int(value) for value in fields[1:9])
+            elif section == "wedge":
+                if brick_rows == 0:
+                    raise DeckError("C3D6 block precedes the C3D8 far-field block")
+                fields = line.split(",")
+                far_rows += 1
+                if int(fields[0]) != far_rows:
+                    raise DeckError(f"far element ids are not contiguous at {far_rows}")
+                wedge_conn.extend(int(value) for value in fields[1:7])
             elif section == "wing":
                 fields = line.split(",")
                 wing_rows += 1
-                expected = len(far_conn) // 8 + wing_rows
+                expected = far_rows + wing_rows
                 if int(fields[0]) != expected:
                     raise DeckError(f"wing element ids are not contiguous at {expected}")
                 wing_conn.extend(int(value) for value in fields[1:11])
@@ -366,6 +421,7 @@ def parse_merged(deck: Path) -> MergedMesh:
                 sets[current_set].extend(
                     int(value) for value in line.strip().split(",") if value.strip())
     far_conn_np = np.asarray(far_conn, dtype=np.int64).reshape(-1, 8)
+    wedge_conn_np = np.asarray(wedge_conn, dtype=np.int64).reshape(-1, 6)
     wing_conn_np = np.asarray(wing_conn, dtype=np.int64).reshape(-1, 10)
     raw_coords = np.asarray(coords, dtype=np.float64).reshape(-1, 3)
     total_nodes = int(raw_coords.shape[0])
@@ -385,18 +441,24 @@ def parse_merged(deck: Path) -> MergedMesh:
     if not np.array_equal(np.sort(wing_set),
                           np.arange(far_nodes + 1, total_nodes + 1)):
         raise DeckError("WING NSET is not the contiguous wing node range")
-    if far_conn_np.min() < 1 or far_conn_np.max() > far_nodes:
-        raise DeckError("far connectivity escapes the far-field node range")
+    for far_block in (far_conn_np, wedge_conn_np):
+        if far_block.size and (far_block.min() < 1 or far_block.max() > far_nodes):
+            raise DeckError("far connectivity escapes the far-field node range")
     if wing_conn_np.min() <= far_nodes or wing_conn_np.max() > total_nodes:
         raise DeckError("wing connectivity escapes the wing node range")
     return MergedMesh(coords=coords_np, far_conn=far_conn_np,
-                      wing_conn=wing_conn_np, sets=sets_np,
-                      total_nodes=total_nodes, far_nodes=far_nodes,
-                      far_elems=int(far_conn_np.shape[0]))
+                      wedge_conn=wedge_conn_np, wing_conn=wing_conn_np,
+                      sets=sets_np, total_nodes=total_nodes,
+                      far_nodes=far_nodes, far_elems=far_rows)
 
 
 def extract_surfaces(mesh: MergedMesh) -> TieSurfaces:
-    """Element-type-aware FSI tie faces on both sides of the interface."""
+    """Element-type-aware FSI tie faces on both sides of the interface.
+
+    The fluid side carries C3D8 brick faces and C3D6 wedge faces; the wedge
+    flag is the C3D6 face number from ``WEDGE_FACES``, never the C3D10 table's.
+    Wedge rows are offset by ``brick_elems`` into the single far deck-row order.
+    """
     in_fsi = np.zeros(mesh.total_nodes + 1, dtype=bool)
     in_fsi[mesh.sets["FSI_NSET"]] = True
     fluid_rows: list[IntArray] = []
@@ -404,6 +466,11 @@ def extract_surfaces(mesh: MergedMesh) -> TieSurfaces:
     for flag, (_name, indices) in enumerate(HEX_FACES, start=1):
         nodes = mesh.far_conn[:, list(indices)]
         rows = np.nonzero(in_fsi[nodes].all(axis=1))[0]
+        fluid_rows.append(rows)
+        fluid_flags.append(np.full(rows.shape[0], flag, dtype=np.int64))
+    for flag, (_name, indices) in enumerate(WEDGE_FACES, start=1):
+        nodes = mesh.wedge_conn[:, list(indices)]
+        rows = np.nonzero(in_fsi[nodes].all(axis=1))[0] + mesh.brick_elems
         fluid_rows.append(rows)
         fluid_flags.append(np.full(rows.shape[0], flag, dtype=np.int64))
     fluid_row = np.concatenate(fluid_rows)
@@ -438,6 +505,37 @@ def hexa_volumes(coords: FloatArray, conn: IntArray) -> FloatArray:
         volumes += np.abs(np.linalg.det(
             np.einsum("ia,mij->maj", derivatives, points)))
     return volumes
+
+
+def tet_volume(a: FloatArray, b: FloatArray, c: FloatArray,
+               d: FloatArray) -> FloatArray:
+    """Signed volume of the tetrahedron ``(a,b,c,d)``."""
+    return np.einsum("ij,ij->i", np.cross(b - a, c - a), d - a) / 6.0
+
+
+def wedge_volumes(coords: FloatArray, conn: IntArray) -> FloatArray:
+    """Exact C3D6 wedge volumes via the three-tetrahedron decomposition.
+
+    A wedge is a bottom triangle ``1-2-3``, a top triangle ``4-5-6`` and
+    vertical edges ``1-4, 2-5, 3-6``.  It tiles exactly into the three tets
+    ``(1,2,3,4)``, ``(2,3,4,5)``, ``(3,4,5,6)`` for any non-degenerate prism;
+    the signed tet volumes share one sign, so the absolute sum is exact (proved
+    by the analytic-prism test, not a fitted formula).
+    """
+    points = coords[conn]
+    a, b, c, d, e, f = (points[:, index] for index in range(6))
+    return np.abs(tet_volume(a, b, c, d) + tet_volume(b, c, d, e)
+                  + tet_volume(c, d, e, f))
+
+
+def far_volumes(coords: FloatArray, far_conn: IntArray,
+                wedge_conn: IntArray) -> FloatArray:
+    """Far-field volumes in deck row order: C3D8 bricks first, then C3D6 wedges."""
+    bricks = hexa_volumes(coords, far_conn)
+    wedges = wedge_volumes(coords, wedge_conn)
+    if wedges.shape[0] == 0:
+        return bricks
+    return np.concatenate([bricks, wedges])
 
 
 def rank_layers(volumes: FloatArray, layers: int) -> IntArray:
@@ -896,7 +994,11 @@ def generate(request: BuildRequest) -> Report:
         raise DeckError("--run-pure-ccx requires --pure-wing")
     mesh = parse_merged(request.merged_deck)
     surfaces = extract_surfaces(mesh)
-    volumes = hexa_volumes(mesh.coords[:mesh.far_nodes + 1], mesh.far_conn)
+    volumes = far_volumes(mesh.coords[:mesh.far_nodes + 1], mesh.far_conn,
+                          mesh.wedge_conn)
+    if volumes.shape[0] != mesh.far_elems:
+        raise DeckError(f"far volume rows {volumes.shape[0]} != far_elems "
+                        f"{mesh.far_elems}")
     config = (layered_config(request.spec, volumes)
               if request.spec.far_field_mode == "layered" else None)
     write_combined(request.merged_deck, request, mesh, surfaces, config)
@@ -919,6 +1021,15 @@ def generate(request: BuildRequest) -> Report:
         "verified": verified,
         "step_card": step_card(request.spec).splitlines(),
     }
+    if mesh.wedge_elems:
+        if mesh.brick_elems + mesh.wedge_elems != mesh.far_elems:
+            raise DeckError("far-field brick/wedge counts do not sum to far_elems")
+        report["far_field"] = {
+            "bricks": mesh.brick_elems, "wedges": mesh.wedge_elems,
+            "elements": mesh.far_elems, "volume_m3": float(volumes.sum()),
+            "brick_volume_m3": float(volumes[:mesh.brick_elems].sum()),
+            "wedge_volume_m3": float(volumes[mesh.brick_elems:].sum()),
+        }
     if config is not None:
         report["layered"] = {
             "factor": config.factor, "ref": config.ref,

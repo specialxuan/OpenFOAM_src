@@ -34,15 +34,71 @@ trimming rule, the resulting counts, the archive sha256/size, and a
 copy-pasteable Python snippet that verifies both archives.
 
 Stages 1-2 accept plain, `.gz` and single-member `.zip` decks transparently;
-the pipeline defaults (`run_pipeline.sh`) and the stage-1/stage-2 defaults
-point at the two archives above, so `./run_pipeline.sh --steps 1,2` needs no
-`/root/Workspace` inputs.
+the legacy pipeline defaults (`run_pipeline.sh`) and the stage-1/stage-2
+defaults point at the two archives above, so `./run_pipeline.sh --steps 1,2`
+needs no `/root/Workspace` inputs.  The `fluid` profile has no default deck
+and always takes an explicit `--farfield-deck`.
 
 Derived artifacts are regenerable in ~20 s by stages 1-2 and are huge, so
 they must NOT be committed: `mesh/merged_base.inp`, `modal/combined_*.inp`,
 `modal/pure_*.inp`, and every `*.dat`, `*.frd`, `*.sta` or `*.csv` (solved
 results, FDM exports).  They belong under `--work-root` (default
 `/root/Workspace/AGARD/Mode-run`).
+
+## Far-field profiles
+
+`run_pipeline.sh --farfield-profile {legacy,fluid}` selects the far-field
+profile; `legacy` is the default, and the signed-off reference archive
+corresponds to it only.  `legacy` keeps its committed deck default, while
+`fluid` has **no default deck**: an explicit `--farfield-deck` is required and
+its far-field counts are derived from that deck.
+
+| Profile | Default deck | Far field |
+| --- | --- | --- |
+| `legacy` | `mesh/farfield_c3d8.zip` | pinned: 388,465 nodes / 372,760 C3D8, 4,045 `FSI_NSET` |
+| `fluid` | none (`--farfield-deck` required) | derived per deck: gapped node ids, C3D8 (+ optional C3D6) in `FAR_PART_ELSET`, ignored NSET aliases |
+
+`legacy` is the signed-off baseline: every count and id is pinned and its
+stage-1 output stays byte-stable against the reference archive.  `fluid` is
+the actively iterated ICEM family, so it is identified by structure, not by
+one export's counts.  It derives the far-field node count, id gaps, per-type
+element split and `FSI_NSET` size from the deck, records them (and every
+ignored NSET name) in `mesh/merged_meta.json`, and enforces only what must
+hold for any family member:
+
+* node lines positive and strictly ascending, rank-renumbered to `1..far_nodes`;
+* the eight contract NSETs present and non-empty, `FAR_PART_NSET` exactly the
+  full node id set;
+* element connectivity inside the node set and its union exactly the full node
+  id set; element types limited to `C3D8`/`C3D6` with `ELSET=FAR_PART_ELSET`;
+  element ids ascending per block; blocks accepted in any source order (the
+  writer groups by type);
+* unknown NSET names ignored and recorded, so a new ICEM alias never needs a
+  code change;
+* the wing side pinned exactly as for `legacy` (977,086 nodes / 532,373 C3D10,
+  volume `4.4542836953e-3 m^3` rel `1e-6`, sets `ROOT/TIP/SIDE/WING`).
+
+Measured family members:
+
+| Deck | Far-field nodes (id gaps) | Elements | `FSI_NSET` | Ignored NSET aliases |
+| --- | --- | --- | --- | --- |
+| Fluid7-shaped (`mesh/fluid7_c3d8_c3d6.zip`) | 280,770 (4,690 over `1..285460`) | 268,384 C3D8 + 748 C3D6 | 1,816 | `All`, `WING_FAR_HALF_1/WING_FAR_HALF_FARD_1_NSET` |
+| Fluid8 (newer ICEM export) | 522,300 (7,229 over `1..529529`) | 503,504 C3D8 + 1,496 C3D6 | 1,817 | `All`, `POINTS_NSET`, `WING_FAR_HALF_1/WING_FAR_HALF_FARD_1_NSET` |
+
+The generated combined stem stays `combined_<wing>_<far-field-mode>` for
+`legacy`, and becomes `combined_<wing>_<far-field-mode>_fluid` for `fluid`
+(`--results-stem` still overrides).  Stage 2 needs no profile flag: it reads
+the merged deck stage 1 writes.
+
+The fluid wedges form a thin tip/wake sheet inside `FAR_PART_ELSET` and take
+their layer modulus from the same volume law as the bricks (no separate
+material).  Measured on the Fluid7-shaped deck: 1,816 `FSI_NSET` nodes tie
+through **1,774** faces (1,752 + 22, all `S1`), 20 layers of 13,457/13,456
+elements cover all 269,132 far elements, there are 783,086 wing faces,
+`E_max = 3518.452897 Pa`, the merged deck holds 1,257,856 nodes / 801,505
+elements, and the maximum FSI-to-`SIDE` distance is 0.017917 m.  The Fluid8
+wedges include `S3`/`S4`/`S5` faces as well as `S1`, so no stage assumes
+`S1`-only (stage 2 already extracts all five wedge faces).
 
 ## Pipeline
 
@@ -75,6 +131,8 @@ S3=(2,4,3) S4=(3,4,1)`; mid-edge nodes belong implicitly).  It writes
 ./run_pipeline.sh --steps 1,2,3 --run-ccx --pure-wing
 ./run_pipeline.sh --wing-type hard
 ./run_pipeline.sh --far-field-mode uniform --far-field-modulus 28
+./run_pipeline.sh --farfield-profile fluid \
+  --farfield-deck /path/to/fluid_icem.inp      # derived far field (stem gains _fluid)
 ./run_pipeline.sh --steps 3 --results-dir /root/Workspace/AGARD/Mode-run/modal \
   --results-stem combined_soft_layered      # export an already-solved deck
 ```
