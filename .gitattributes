@@ -1,1 +1,8 @@
-case/AGARD/Mode/mesh/*.zip filter=lfs diff=lfs merge=lfs -text
+# Binary archives under case/AGARD/ are routed through Git LFS so the large mesh
+# decks do not bloat the Git object store. This repository already requires
+# git-lfs, so the pattern below adds no new dependency. `**` matches zero or more
+# directories; it covers the four live mesh decks under case/AGARD/Mode/mesh/
+# (farfield_c3d8.zip, fluid7_c3d8_c3d6.zip, fluid8_c3d8_c3d6.zip, wing_c3d10.zip).
+# The old records packs moved to /root/Workspace/AGARD/Log/, outside Git and LFS.
+case/AGARD/**/*.zip filter=lfs diff=lfs merge=lfs -text
+

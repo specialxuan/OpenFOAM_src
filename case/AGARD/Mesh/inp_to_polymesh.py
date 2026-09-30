@@ -34,7 +34,7 @@ Usage
 -----
 
     python3 inp_to_polymesh.py --input Fluid7.inp \
-        --out-dir /root/Workspace/AGARD/FDM/mesh_fluid7
+        --out-dir /path/to/case
 
 Add ``--self-check`` to re-read the files just written and compare counts
 against the parsed input.  ``--help`` documents every option.
@@ -102,7 +102,7 @@ _PATCH_TYPE: dict[str, str] = {
 _FULL_SET = "FAR_PART_NSET"
 
 _CHUNK = 20000
-_COORD_CSV_DEFAULT = "/root/Workspace/AGARD/FDM/mode_soft/FluidNodeCoor.csv"
+_COORD_CSV_DEFAULT = "/root/Workspace/AGARD/Mode/Fluid8/mode_soft/FluidNodeCoor.csv"
 
 
 # ---------------------------------------------------------------------------
