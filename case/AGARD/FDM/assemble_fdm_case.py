@@ -15,9 +15,9 @@ moved, merged or removed.
 Usage
 -----
     python3 assemble_fdm_case.py \\
-        --mesh-dir /root/Workspace/AGARD/FDM/mesh_fluid7 \\
-        --mode-dir /root/Workspace/AGARD/FDM/mode_soft \\
-        --out-dir  /root/Workspace/AGARD/FDM/soft \\
+        --mesh-dir /path/to/mesh \\
+        --mode-dir /root/Workspace/AGARD/Mode/Fluid8/mode_soft \\
+        --out-dir  /path/to/case \\
         --wing-type soft
 
 Every solver parameter is a documented placeholder (see ``--help`` and the
