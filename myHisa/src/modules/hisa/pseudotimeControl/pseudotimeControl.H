@@ -88,6 +88,13 @@ protected:
             //- Flag to indicate whether to only solve turbulence on final iter
             bool turbOnFinalIterOnly_;
 
+            //- FSI coupling mode (explicit/partitioned/integrated/implicit),
+            //  read from constant/dynamicMeshDict
+            word fsiCoupling_;
+
+            //- FSI force-residual tolerance for integrated/implicit coupling
+            scalar fsiTolerance_;
+
             //- Converged flag
             bool converged_;
 
@@ -159,6 +166,12 @@ public:
 
             //- Maximum number of pseudotime correctors
             inline label nCorrOuter() const;
+
+            //- FSI coupling mode (explicit/partitioned/integrated/implicit)
+            inline const word& fsiCoupling() const;
+
+            //- FSI force-residual tolerance
+            inline scalar fsiTolerance() const;
 
 
         // Solution control

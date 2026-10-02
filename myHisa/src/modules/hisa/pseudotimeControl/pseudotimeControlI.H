@@ -33,6 +33,18 @@ inline Foam::label Foam::pseudotimeControl::nCorrOuter() const
 }
 
 
+inline const Foam::word& Foam::pseudotimeControl::fsiCoupling() const
+{
+    return fsiCoupling_;
+}
+
+
+inline Foam::scalar Foam::pseudotimeControl::fsiTolerance() const
+{
+    return fsiTolerance_;
+}
+
+
 inline bool Foam::pseudotimeControl::storeInitialResiduals() const
 {
     // Start from second outer iteration

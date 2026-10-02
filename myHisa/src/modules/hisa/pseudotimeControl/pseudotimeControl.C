@@ -28,6 +28,7 @@ License
 
 #include "pseudotimeControl.H"
 #include "Switch.H"
+#include "fsiCoupling.H"
 
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
@@ -65,6 +66,13 @@ void Foam::pseudotimeControl::read()
     }
     turbOnFinalIterOnly_ =
         pseudoDict.lookupOrDefault<Switch>("turbOnFinalIterOnly", false);
+
+    // FSI coupling controls live in constant/dynamicMeshDict, the shared
+    // contract with the fastDynamicFvMesh modal dynamic-mesh library
+    const fsiCouplingControls fsiControls =
+        readFsiCouplingControls(mesh_.time(), mesh_);
+    fsiCoupling_ = fsiControls.coupling;
+    fsiTolerance_ = fsiControls.tolerance;
 
     if (state_.found("initResiduals"))
     {
@@ -118,7 +126,18 @@ bool Foam::pseudotimeControl::criteriaSatisfied()
         relCheck = (max(residuals_/(initResiduals_+ROOTVSMALL) - residualTolsRel_) < 0.0);
     }
 
-    return (corr_ >= nCorrOuterMin_) && (absCheck || relCheck);
+    const bool baseConverged =
+        (corr_ >= nCorrOuterMin_) && (absCheck || relCheck);
+
+    // Integrated/implicit FSI coupling additionally requires the modal force
+    // residual published by the dynamicFvMesh (one-iteration lag, same as the
+    // myPimpleFoam integrated branch)
+    if (!steadyState_ && isIntegratedFsiCoupling(fsiCoupling_))
+    {
+        return baseConverged && (readFsiResidual(mesh_) < fsiTolerance_);
+    }
+
+    return baseConverged;
 }
 
 
@@ -135,6 +154,8 @@ Foam::pseudotimeControl::pseudotimeControl(fvMesh& mesh, const bool steadyState,
     steadyState_(steadyState),
     nCorrOuter_(0),
     turbOnFinalIterOnly_(false),
+    fsiCoupling_("explicit"),
+    fsiTolerance_(1e-4),
     converged_(false),
     firstIteration_(true),
     residualTols_(defaultTol),

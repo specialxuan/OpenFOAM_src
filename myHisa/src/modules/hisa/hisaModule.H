@@ -158,6 +158,9 @@ protected:
         //  Only applies to transient analysis.
         label moveMeshOuterCorrectors_;
 
+        //- Emit FSI coupling configuration warnings only once per run
+        bool fsiConfigWarned_ = false;
+
         bool steadyState_;
         bool localTimestepping_;
         bool localTimesteppingBounding_;
