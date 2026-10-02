@@ -36,6 +36,7 @@ License
 #if !(FOUNDATION >= 10)
 #include "dynamicFvMesh.H"
 #endif
+#include "fsiCoupling.H"
 #include "fvcLaplacian.H"
 #include "fvcMeshPhi.H"
 
@@ -382,6 +383,48 @@ void hisaModule::beginTimeStep()
             "moveMeshOuterCorrectors",
             0
         );
+
+    if (!fsiConfigWarned_)
+    {
+        fsiConfigWarned_ = true;
+
+        #if FOUNDATION >= 10
+        const bool fsiMesh = mesh_().dynamic();
+        #else
+        const bool fsiMesh = isA<dynamicFvMesh>(mesh_());
+        #endif
+
+        if (!steadyState_ && fsiMesh)
+        {
+            const word& fsiCouplingMode = solnControl.fsiCoupling();
+
+            if
+            (
+                isIntegratedFsiCoupling(fsiCouplingMode)
+             && moveMeshOuterCorrectors_ != 1
+            )
+            {
+                WarningInFunction
+                    << "fsiCoupling '" << fsiCouplingMode
+                    << "' expects moveMeshOuterCorrectors 1 so the mesh "
+                    << "moves every pseudotime iteration; current value is "
+                    << moveMeshOuterCorrectors_ << "." << endl;
+            }
+
+            if
+            (
+                isPartitionedFsiCoupling(fsiCouplingMode)
+             && moveMeshOuterCorrectors_ != 0
+            )
+            {
+                WarningInFunction
+                    << "fsiCoupling 'partitioned' expects "
+                    << "moveMeshOuterCorrectors 0 so the mesh moves once per "
+                    << "FSI iteration; current value is "
+                    << moveMeshOuterCorrectors_ << "." << endl;
+            }
+        }
+    }
 
     // Reset pseudo Co number before every time step
     pseudoCoNumInit_ =

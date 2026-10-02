@@ -47,6 +47,7 @@ Authors
 #include "solverModule.H"
 #include "argList.H"
 #include "timeSelector.H"
+#include "fsiCoupling.H"
 
 using namespace Foam; 
 
@@ -192,6 +193,8 @@ int main(int argc, char *argv[])
 
     solver.initialise();
 
+    fvMesh& mesh = solver.mesh();
+
     bool steadyState = solver.steadyState();
 
     if (!steadyState)
@@ -251,7 +254,87 @@ int main(int argc, char *argv[])
         solver.beginTimeStep();
 
         // --- Outer corrector loop
-        bool notFinished;
+        bool notFinished = false;
+
+        // FSI coupling controls from constant/dynamicMeshDict; shared
+        // contract with the fastDynamicFvMesh modal dynamic-mesh library
+        const fsiCouplingControls fsiControls =
+            readFsiCouplingControls(runTime, mesh);
+
+        if (isPartitionedFsiCoupling(fsiControls.coupling) && !steadyState)
+        {
+            // Partitioned FSI: the mesh stays fixed inside each pseudotime
+            // sub-loop and moves once per FSI iteration (on the first
+            // pseudotime iteration, requiring moveMeshOuterCorrectors 0)
+            label fsiIter = 0;
+            bool fsiConverged = false;
+            pointField points0 = mesh.points();
+
+            while (fsiIter < fsiControls.maxIter && !fsiConverged)
+            {
+                fsiIter++;
+
+#if FOUNDATION >= 6
+                while (true)
+                {
+                    if (isA<pimpleControl>(solver.solnControl()))
+                    {
+                        notFinished =
+                            refCast<pimpleControl>
+                                (solver.solnControl()).loop();
+                    }
+                    else
+                    {
+                        notFinished =
+                            refCast<pseudotimeControl>
+                                (solver.solnControl()).loop();
+                    }
+                    if (!notFinished)
+                    {
+                        break;
+                    }
+#else
+                while ( (notFinished = solver.solnControl().loop()) )
+                {
+#endif
+                    solver.outerIteration();
+                }
+
+                const scalar maxDiff = fsiMaxDisplacementChange
+                (
+                    mesh,
+                    points0,
+                    fsiIter,
+                    "FSI Iteration"
+                );
+                const scalar fsiRes = readFsiResidual(mesh);
+                fsiConverged = (fsiRes < fsiControls.tolerance);
+                points0 = mesh.points();
+
+                logFsiIteration("FSI Iteration", fsiIter, fsiRes, maxDiff);
+            }
+
+            if (!fsiConverged)
+            {
+                Info<< "Warning: FSI force residual did not converge within "
+                    << fsiControls.maxIter << " FSI iterations." << endl;
+            }
+        }
+        else
+        {
+            // Integrated/implicit FSI: the pseudotime control itself gates
+            // convergence on the modal force residual; log it each iteration
+            const bool integratedFsi =
+                !steadyState
+             && isIntegratedFsiCoupling(fsiControls.coupling);
+
+            label fsiIter = 0;
+            pointField points0;
+            if (integratedFsi)
+            {
+                points0 = mesh.points();
+            }
+
 #if FOUNDATION >= 6
         while (true)
         {
@@ -273,9 +356,43 @@ int main(int argc, char *argv[])
         {
 #endif
             solver.outerIteration();
+
+            if (integratedFsi)
+            {
+                fsiIter++;
+                const scalar maxDiff = fsiMaxDisplacementChange
+                (
+                    mesh,
+                    points0,
+                    fsiIter,
+                    "FSI/Pseudo Iteration"
+                );
+                const scalar fsiRes = readFsiResidual(mesh);
+                points0 = mesh.points();
+
+                logFsiIteration
+                (
+                    "FSI/Pseudo Iteration",
+                    fsiIter,
+                    fsiRes,
+                    maxDiff
+                );
+            }
+
             if (steadyState)
             {
                 break;
+            }
+        }
+
+            if
+            (
+                integratedFsi
+             && readFsiResidual(mesh) >= fsiControls.tolerance
+            )
+            {
+                Info<< "Warning: FSI force residual did not converge within "
+                    << "pseudotime iterations." << endl;
             }
         }
         if (steadyState && !notFinished)
