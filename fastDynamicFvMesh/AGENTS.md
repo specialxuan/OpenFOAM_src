@@ -45,7 +45,7 @@ Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radiu
 - Update `README.md` and `Doc/快速动网格程序手册.md` for any `fastDynamicFvMesh/fastDynamicFvMesh/` code change.
 - If controls/file formats/workflow changed, update example `dynamicMeshDict` guidance too.
 - Run `wmake libso fastDynamicFvMesh`.
-- Run `scripts/smoke_fastDynamicFvMesh.sh` or document the exact blocker.
+- Run `/root/Workspace/Oldversion/scripts/smoke_fastDynamicFvMesh.sh` (external, untracked) or document the exact blocker.
 - For AMR/restart changes, run at least the pipeline `--stage check` and a short FSI path when feasible.
 
 ## ANTI-PATTERNS
