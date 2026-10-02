@@ -1,0 +1,16 @@
+include ../../buildDefs.include
+
+EXE_INC = -g \
+    $(FOAM_VERSION) \
+    $(BLUECFD) \
+    -I./lnInclude \
+    -I$(LIB_SRC)/finiteVolume/lnInclude \
+    $(DYN_MESH_INCLUDE) \
+    -I$(LIB_SRC)/parallel/decompose/decompositionMethods/lnInclude \
+    -I$(LIB_SRC)/meshTools/lnInclude
+
+LIB_LIBS = \
+    -lOpenFOAM \
+    -lfiniteVolume \
+    $(DYN_MESH_LIB) \
+    -lmeshTools

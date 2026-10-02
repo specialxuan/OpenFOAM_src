@@ -1,0 +1,73 @@
+# Define a substitute wmake which filters wmake's output and tries to convert
+# paths to absolute. This is intended for IDE integration.
+#
+# Copyright (C) 2021 Oliver Oxtoby <oliveroxtoby@gmail.com>
+
+wmake()
+{
+    make()
+    {
+        # Substitute make which strips out the --no-print-directory argument
+        # passed to make by wmake, so that we can tell which directory it is
+        # in
+        args=""
+        for arg in "$@"
+        do
+            if ! [ "$arg" = "--no-print-directory" ]
+            then
+                args="$args $arg"
+            fi
+        done
+        $(which make) $args
+    }
+    export -f make
+
+    echo "wmake invoked as: wmake $@ in $PWD"
+
+    if ! [ -n "$1" ]
+    then
+        # Pre-do any searching up the tree to start in the
+        # right directory
+        . $WM_DIR/scripts/wmakeFunctions
+        cdSource
+    fi
+
+    # Run actual wmake and filter its output
+    stdbuf -oL "$WM_DIR/wmake" "$@" 2>&1 |
+    while read LINE
+    do
+        FILE=$(echo "$LINE" | sed "s#^\([^: ]*\):[0-9]\+:[0-9]\+.*#\1#; t; d")
+        if [ -n "$FILE" ] && [ "${FILE:0:1}" != "/" ]
+        then
+            # Found path and it isn't absolute already
+            if [ -n "$1" ]
+            then
+                if [ "$1" == "all" ] || [ "$1" == "-all" ]
+                then
+                    # wmake invoked as 'wmake all':
+                    # Path is last directory wmake reported switching into
+                    echo -n "$MAKEDIR/"
+                else
+                    # Assume wmake invoked as 'wmake ... dirname':
+                    # Append dirname to path
+                    echo -n "$PWD/${@: -1}/"
+                fi
+            else
+                # wmake invoked on its own:
+                # Just output current dir
+                echo -n "$PWD/"
+            fi
+        else
+            MD=$(echo "$LINE" | sed "s#^make\[[0-9]\+\]: Entering directory ""\(.*\)""\$#\1#; t; d")
+            if [ -n "$MD" ]
+            then
+                echo "Detected directory change to: $MD"
+                MAKEDIR="$MD"
+            fi
+        fi
+        echo "$LINE"
+    done
+}
+
+export -f wmake
+export WM_NCOMPPROCS=`nproc`

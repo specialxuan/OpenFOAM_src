@@ -1,0 +1,23 @@
+include ../../buildDefs.include
+
+ifdef BLUECFDPATH
+    BLUECFD = -DBLUECFD
+endif
+
+EXE_INC = \
+    $(FOAM_VERSION) \
+    $(BLUECFD) \
+    -I./residualIO \
+    -I../finiteVolume/lnInclude \
+    -I../preconditioners/lnInclude \
+    -I$(LIB_SRC)/finiteVolume/lnInclude \
+    -I$(LIB_SRC)/meshTools/lnInclude
+
+LIB_LIBS = \
+    -lOpenFOAM \
+    -lfiniteVolume \
+    -lmeshTools \
+    -L$(FOAM_USER_LIBBIN) \
+    -lmyHisaFiniteVolume \
+    -lmyHisaPreconditioners
+
