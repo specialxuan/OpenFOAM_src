@@ -29,7 +29,7 @@ Two-phase VOF FSI solver family with topology-changing mesh support, overset var
 ## CONVENTIONS
 
 - Use `wmake myInterFoam` from repo root for the top-level two-phase executable.
-- Keep FSI convergence force-residual based and displacement change diagnostic-only.
+- Keep FSI convergence force-based (`fsiResidual < fsiTolerance`); the opt-in OR absolute-displacement gate (`fsiDispTolerance > 0`, default off) may also terminate the outer loop.
 - Preserve topology-change safeguards before subtracting point fields or reusing fluxes.
 - Keep `interMixingFoam` self-contained; do not move three-phase-only models into the two-phase parent unless all variants need them.
 - Update overset and three-phase `Make/` files separately from the parent solver.

@@ -114,6 +114,13 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       fsiResidual_(1.0), theta_(1.4), // Default Wilson-Theta
       mappingTolerance_(4e-6), couplingRelaxation_(1.0),
       pressureFieldName_("p"), rhoRef_(-1.0), pRef_(0.0), maxDispChange_(1.0),
+      couplingAcceleration_("constant"), iqnMaxHistory_(10),
+      iqnFilter_("QR2"), iqnFilterLimit_(1e-2), imvjReuse_(5),
+      iqnDiagnostics_(false), aitkenPrevResidual_(0), aitkenAlpha_(1.0),
+      aitkenHasPrev_(false), iqnV_(0), iqnW_(0), iqnPrevResidual_(0),
+      iqnPrevRaw_(0), iqnHasPrev_(false), accelIterationStarted_(false),
+      accelHistoryLive_(false), imvjChunkWtilde_(0), imvjChunkZ_(0),
+      imvjChunkCols_(0),
       startupStepCount_(0), lastUpdateTimeIndex_(-1), updateCount_(0),
       writeDiagnosticsEnabled_(false), trackTimingEnabled_(false),
       trackAmrTimingEnabled_(false), timingLastUpdateCpuTime_(0.0),

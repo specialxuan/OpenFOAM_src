@@ -29,8 +29,8 @@ Compressible PIMPLE solver family with FSI convergence wiring and dynamic-mesh v
 ## CONVENTIONS
 
 - Use `wmake myRhoPimpleFoam` from repo root for the main executable.
-- Keep FSI convergence force-residual based: `fsiResidual < fsiTolerance`.
-- Keep displacement-change logging diagnostic-only unless changing the shared `fsiCoupling` contract.
+- Keep FSI convergence force-based (`fsiResidual < fsiTolerance`); the opt-in OR absolute-displacement gate (`fsiDispTolerance > 0`, default off, shared `fsiCoupling` contract) may also terminate the outer loop.
+- Keep displacement-change logging diagnostic-only unless wiring the shared OR gate.
 - Preserve `rhoPimpleFoam.C` as a reference unless intentionally updating baseline comparison behavior.
 - Update variant `Make/files` separately when touching `overRhoPimpleDyMFoam`.
 

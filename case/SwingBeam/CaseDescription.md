@@ -51,7 +51,7 @@
 ## FSI 耦合与稳定性调参
 
 - 结构文件：`mode/StructNodeCoor.csv`、`mode/StructNodeDisp1..N.csv`（梁节点，升序节点号）；流体文件：`mode/FluidNodeCoor.csv`、`mode/FluidNodeDisp1..N.csv`。
-- 耦合方式：`fsiCoupling integrated`，模态叠加动网格（`fastDynamicFvMesh`），力残差判据 `fsiResidual < fsiTolerance`。
+- 耦合方式：`fsiCoupling integrated`，模态叠加动网格（`fastDynamicFvMesh`）。收敛判据：力残差 `fsiResidual < fsiTolerance`，**或**（可选）绝对位移判据 `maxDispChange < fsiDispTolerance`；两者为 **OR** 关系（任一满足即收敛），`fsiDispTolerance` 默认 `0` 关闭，本算例生产取 `1e-6 m`。
 - **组装默认值**（`03_assemble_fdm_case.py` 生成，`run_pipeline.sh` 同步）：`couplingRelaxation 0.7`、顶层 `fsiTolerance 1e-3`、`modalMass (1..1)` 与 `modalDamp (2*zeta*omega_m)`（`zeta=0.03`）、`nOuterCorrectors 100`；梁材料（`E=1e6, nu=0, rho=2500`）与周期端部激励保持不变。
 - **稳定性实测**（`res=30`、`z-layers=4`、`A=0.1 N`、`dt=1e-3`、8 ranks）：
   - 请求值 `couplingRelaxation=0.7`：在第一个时间步内发散——位移增量逐迭代放大（`2.1e-5 → 1.4e-4 → 3.1e-3 m`，×7/×22），随后压力求解 GAMG SIGFPE（`t=0.001`，退出码 136）。
@@ -59,16 +59,32 @@
   - **最佳诊断值 `α=0.004`（2.0 s 全程）**：2000/2000 步完成，`ExecutionTime 1782 s` / `ClockTime 1893 s`（8 ranks）。**每一步末端的最大网格位移增量都 < 1e-6 m**（中位 `1.1e-9 m`，最大 `4.2e-8 m`），即物理层面的位移耦合每步都已收敛。
   - 力残差：末端残差中位 `6.7e-4`，`1204/2000` 步（60.2%）`fsiResidual < 1e-3`；796 步打印 “FSI force residual did not converge”。告警集中在启动段（`t≤0.011`）与模态力过零窗口。`writeDiagnostics true` 的诊断运行（`t=0.411`）显示最大相对残差由 mode 4 主导：其力在 `±3e-4` 附近过零（其余模态 `|F|=0.1–2.4`），单迭代绝对变化仅约 `5e-5`，而位移增量已收敛到 `1.2e-9 m`。也就是说，库内 `res = |ΔF|/|F|` 的逐模态相对力残差在近零力模态上病态，该告警并不表示物理未收敛。
   - 结论：在现有常数松弛库下，`fsiTolerance=1e-3` 无法在启动段与过零窗口逐步满足；`α=0.004` 是当前可稳定实现的最佳耦合设置，其物理响应与旧 `α=0.01` 基线一致（梁端 `dx` p2p `24.8 mm` vs `25.4 mm`）。
+- **界面耦合加速器（Task 1–4 新增）**：库现支持 `couplingAcceleration ∈ {constant, aitken, IQN-ILS, IQN-IMVJ}`（FDM 生成器/`run_pipeline.sh` 的 `--coupling-acceleration`），以及 `iqnMaxHistory`/`iqnFilter`/`iqnFilterLimit`/`imvjReuse`/`iqnDiagnostics`。四种实现完整且公式经逐位复算验证，但**在本附加质量主导算例上全部发散**：严格短程探针（`endTime 0.05 s`、`res=30/z=4`、`A=0.1 N`）中 IQN-ILS/IQN-IMVJ 全部 13 个配置（`α0 ∈ {1e-4,5e-4,1e-3}`、`iqnMaxHistory ∈ {5,10}`、`iqnFilter ∈ {QR2,none}`、`imvjReuse ∈ {0,5}`）均在 `t=0.001–0.017 s` 触发 GAMG SIGFPE；Aitken 在 `t=0.001–0.023 s` 发散；`iqnMaxHistory=5` 甚至首步即溢出，`iqnFilter=none` 比 QR2 更早崩溃。表现为发布 `fsiResidual` 窗内常 `<1e-3`、而内部定点缺陷 `||r||` 每步增长约 1.3–2 倍直至崩溃；preCICE 成熟 Aitken/IQN-ILS 亦在该算例失败。**因此生产使用 `constant` + `α=0.004` 回退，不使用任何加速器。**
+- **OR 位移判据的作用**：`fsiTolerance=1e-3` 受近零模态力过零虚高影响而逐步告警；`fsiDispTolerance 1e-6` 使位移冻结即判收敛，抑制这些假告警（短程实测：50/50 步、告警 11→0）。它本身不改变物理结果，也不挽救加速器发散。
 - `A=0.1 N`、2.0 s 梁端位移（`postprocess/fdm_gate_topright_disp.csv`）：`dx` p2p **24.80 mm**（min `-12.99 mm @ t=0.44 s`，max `+11.81 mm @ t=0.66 s`），每 0.4 s 周期 p2p `20.6/24.8/17.0/16.6/17.9 mm`，持续振荡无衰减；`dy` p2p `1.10 mm`。
-- 复现（组装默认 + 诊断松弛值）：
+- 复现（生产：constant 回退 + OR 位移判据；**不传** `--coupling-acceleration`）：
 
 ```bash
 cd case/SwingBeam/FDM
-bash run_pipeline.sh --steps 3,4 --res 30 --z-layers 4 --end-time 2.0 --write-interval 5 \
-    --case-root /root/Workspace/StructTest/fdm --force-amp 0.1 --coupling-relax 0.004
-# 400 个时间目录的 8 路并行重建（本机 DrvFs 串行重建约 90 min）：
-bash /root/Workspace/StructTest/probes/reconstruct_fdm_full.sh
-bash run_pipeline.sh --steps 5,6 --res 30 --z-layers 4 --end-time 2.0 \
+bash run_pipeline.sh --steps 1,2,3,4 --res 30 --z-layers 4 --end-time 2.0 --write-interval 5 \
+    --case-root /root/Workspace/StructTest/fdm --force-amp 0.1 --coupling-relax 0.004 \
+    --fsi-disp-tolerance 1e-6
+```
+
+- 400 个时间目录的重建在本机 DrvFs 上串行约 90 min：用 8 个不重叠时间区间的
+  `reconstructPar -newTimes -fields '(U pointDisplacement)' -time '<a>:<b>'` 并发 worker 加速，
+  再用 `05_postprocess.py --no-reconstruct` 提取梁端位移（避免第 5 步再次串行重建），最后
+  单独跑步骤 6 出速度云图视频：
+
+```bash
+CD=/root/Workspace/StructTest/fdm/fdm_case
+for r in 0.005:0.25 0.255:0.50 0.505:0.75 0.755:1.00 \
+         1.005:1.25 1.255:1.50 1.505:1.75 1.755:2.00; do
+  ( cd "$CD" && reconstructPar -newTimes -fields '(U pointDisplacement)' -time "$r" ) &
+done; wait
+python3 05_postprocess.py --case "$CD" \
+    --out-dir /root/Workspace/StructTest/fdm/postprocess --no-reconstruct
+bash run_pipeline.sh --steps 6 --res 30 --z-layers 4 --end-time 2.0 \
     --case-root /root/Workspace/StructTest/fdm
 ```
 
@@ -118,3 +134,5 @@ bash run_pipeline.sh --steps 5,6 --res 30 --z-layers 4 --end-time 0.05 --case-ro
 ```
 
 - `--no-excite` 关闭周期激励；`--force-end-time` 指定激励序列时长；`--coupling-relax` 覆盖耦合松弛（默认 `0.7`；本算例实测稳定诊断值 `0.004`）；`--modal-zeta` 生成 `modalMass`/`modalDamp`（默认 `0.03`）。
+- `--coupling-acceleration <constant|aitken|IQN-ILS|IQN-IMVJ>`：界面耦合加速器（默认不写 = 库内 `constant`）；本算例加速器发散，生产不使用。
+- `--fsi-disp-tolerance <d>`：顶层 `fsiDispTolerance`（OR 绝对位移判据，单位 m；默认不写 = 求解器默认 `0` 关闭）；本算例生产取 `1e-6`。
