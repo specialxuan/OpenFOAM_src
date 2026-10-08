@@ -183,7 +183,7 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     const fluidThermo* fluidThermoPtr_;
     const transportModel* laminarTransportPtr_;
 
-    //- ===== Optional structural-force loading data =====
+    //- ===== Modal extension (structural) =====
 
     //- Enable/disable prescribed structural nodal loading
     bool structuralForceEnabled_;

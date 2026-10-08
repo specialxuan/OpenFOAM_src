@@ -72,45 +72,6 @@ void fastDynamicFvMesh::cacheModelPointers()
     modelPointersCached_ = true;
 }
 
-vector fastDynamicFvMesh::interpolateStructuralForce(
-    const scalarField& times, const vectorField& values, const scalar t) const
-{
-    if (times.size() == 1)
-    {
-        return values[0];
-    }
-
-    if (t <= times.first())
-    {
-        return values.first();
-    }
-
-    if (t >= times.last())
-    {
-        return values.last();
-    }
-
-    for (label i = 0; i < times.size() - 1; ++i)
-    {
-        const scalar t0 = times[i];
-        const scalar t1 = times[i + 1];
-
-        if (t >= t0 && t <= t1)
-        {
-            const scalar dt = t1 - t0;
-            if (dt <= VSMALL)
-            {
-                return values[i + 1];
-            }
-
-            const scalar w = (t - t0) / dt;
-            return (1.0 - w) * values[i] + w * values[i + 1];
-        }
-    }
-
-    return values.last();
-}
-
 // patchDensity(patchi, defaultRho)
 // Purpose: return a scalarField of density values corresponding to the
 // requested patch. Behavior:
@@ -462,51 +423,6 @@ void fastDynamicFvMesh::calcModalForces()
         reduce(modePressureForce_[i], sumOp<scalar>());
         reduce(modeShearForce_[i], sumOp<scalar>());
     }
-}
-
-void fastDynamicFvMesh::calcStructuralModalForces()
-{
-    structuralModeForce_ = 0.0;
-    structuralForceSignal_ = 0.0;
-
-    if (!structuralForceEnabled_ || structuralForceNodeIDs_.size() == 0)
-    {
-        return;
-    }
-
-    if (Pstream::master())
-    {
-        const scalar t = this->time().value();
-
-        forAll(structuralForceNodeIDs_, forceI)
-        {
-            const vector nodalForce =
-                interpolateStructuralForce(structuralForceTimes_[forceI],
-                    structuralForceValues_[forceI], t);
-
-            structuralForceSignal_ += mag(nodalForce);
-
-            const label nTarget = structuralForceNodeIDs_[forceI].size();
-            if (nTarget == 0)
-            {
-                continue;
-            }
-
-            forAll(structuralForceNodeIDs_[forceI], localI)
-            {
-                const label nodeI = structuralForceNodeIDs_[forceI][localI];
-
-                for (label modeI = 0; modeI < nMode_; ++modeI)
-                {
-                    structuralModeForce_[modeI] +=
-                        nodalForce & structModeShapes_[modeI][nodeI];
-                }
-            }
-        }
-    }
-
-    Pstream::broadcast(structuralModeForce_);
-    Pstream::broadcast(structuralForceSignal_);
 }
 
 } // End namespace Foam

@@ -296,17 +296,6 @@ void fastDynamicFvMesh::solveAndMoveMesh(const scalar dt)
     writeDiagnostics();
 }
 
-void fastDynamicFvMesh::logStructuralLoadSummary()
-{
-    if (Pstream::master() && structuralForceEnabled_ && updateCount_ == 1 &&
-        nMode_ > 0)
-    {
-        Info << "Structural modal load summary at t=" << this->time().timeName()
-             << ": mode0=" << structuralModeForce_[0]
-             << ", signal=" << structuralForceSignal_ << endl;
-    }
-}
-
 void fastDynamicFvMesh::accountMeshCpuAtUpdateEnd(
     const scalar updateStartCpuTime)
 {
