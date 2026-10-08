@@ -185,6 +185,97 @@ def write_frd(path: Path, mode_vectors: list[dict[int, tuple[float, float, float
     path.write_text("".join(rows), encoding="ascii")
 
 
+# Verbatim ` -1` records of the T0-captured nodal blocks in
+# /root/Workspace/tmp/modal-ext-t0/modal_t0.frd: mode 1 STRESS lines
+# 712-717 / TOSTRAIN 961-966, mode 2 STRESS 1701-1706 / TOSTRAIN 1950-1955.
+# Copied byte-for-byte because the six `%12.5E` fields pack without
+# separators: any column drift must fail the stress tests below.
+T0_STRESS_MODE1 = (
+    " -1         1-1.20132E+10-5.14855E+09-5.14856E+09-1.41294E+09 6.43629E+02-1.64024E+09\n",
+    " -1         2-2.09977E+09-8.99909E+08-8.99908E+08-4.21468E+08 5.10309E+02-7.25513E+08\n",
+    " -1         3 7.57655E+09 3.24711E+09 3.24712E+09 7.82593E+08 4.05926E+02-1.14300E+09\n",
+    " -1         4-9.27137E+09-3.97347E+09-3.97348E+09-1.64314E+08 1.15574E+02-1.86096E+09\n",
+    " -1         5-1.07429E-04-4.61414E-05-4.62234E-05-2.71763E+08-4.37722E-08-1.19995E+09\n",
+    " -1         6 9.27137E+09 3.97347E+09 3.97348E+09-1.64314E+08-1.15574E+02-1.86096E+09\n",
+)
+T0_STRESS_MODE2 = (
+    " -1         1 7.57655E+09 3.24712E+09 3.24711E+09 1.14300E+09-4.05926E+02 7.82593E+08\n",
+    " -1         2 9.27137E+09 3.97348E+09 3.97347E+09 1.86096E+09 1.15574E+02-1.64314E+08\n",
+    " -1         3 1.20132E+10 5.14856E+09 5.14855E+09 1.64024E+09 6.43629E+02-1.41294E+09\n",
+    " -1         4-2.09977E+09-8.99908E+08-8.99909E+08 7.25513E+08-5.10309E+02-4.21468E+08\n",
+    " -1         5 1.97716E-04 8.47038E-05 8.46451E-05 1.19995E+09 1.76951E-08-2.71763E+08\n",
+    " -1         6 2.09977E+09 8.99908E+08 8.99909E+08 7.25513E+08 5.10309E+02-4.21468E+08\n",
+)
+T0_STRAIN_MODE1 = (
+    " -1         1-4.24956E-02-9.75948E-08-1.27271E-07-8.74678E-03 3.98437E-09-1.01539E-02\n",
+    " -1         2-7.42775E-03-2.51467E-08-1.64172E-08-2.60909E-03 3.15906E-09-4.49127E-03\n",
+    " -1         3 2.68013E-02 4.73824E-08 9.44371E-08 4.84463E-03 2.51288E-09-7.07573E-03\n",
+    " -1         4-3.27966E-02-7.24886E-08-1.11033E-07-1.01718E-03 7.15461E-10-1.15202E-02\n",
+    " -1         5-3.82053E-16-5.42101E-20-5.01444E-19-1.68234E-03-2.23617E-19-7.42824E-03\n",
+    " -1         6 3.27966E-02 7.24886E-08 1.11033E-07-1.01718E-03-7.15461E-10-1.15202E-02\n",
+)
+T0_STRAIN_MODE2 = (
+    " -1         1 2.68013E-02 9.44371E-08 4.73824E-08 7.07573E-03-2.51288E-09 4.84463E-03\n",
+    " -1         2 3.27966E-02 1.11033E-07 7.24886E-08 1.15202E-02 7.15461E-10-1.01718E-03\n",
+    " -1         3 4.24956E-02 1.27271E-07 9.75948E-08 1.01539E-02 3.98437E-09-8.74678E-03\n",
+    " -1         4-7.42775E-03-1.64172E-08-2.51467E-08 4.49127E-03-3.15906E-09-2.60909E-03\n",
+    " -1         5 6.99744E-16 3.11708E-19-5.42101E-20 7.42824E-03 1.72795E-19-1.68234E-03\n",
+    " -1         6 7.42775E-03 1.64172E-08 2.51467E-08 4.49127E-03 3.15906E-09-2.60909E-03\n",
+)
+STRESS_DECLARATIONS = (
+    " -5  SXX         1    4    1    1\n",
+    " -5  SYY         1    4    2    2\n",
+    " -5  SZZ         1    4    3    3\n",
+    " -5  SXY         1    4    1    2\n",
+    " -5  SYZ         1    4    2    3\n",
+    " -5  SZX         1    4    3    1\n",
+)
+STRAIN_DECLARATIONS = (
+    " -5  EXX         1    4    1    1\n",
+    " -5  EYY         1    4    2    2\n",
+    " -5  EZZ         1    4    3    3\n",
+    " -5  EXY         1    4    1    2\n",
+    " -5  EYZ         1    4    2    3\n",
+    " -5  EZX         1    4    3    1\n",
+)
+
+
+def write_frd_with_stress(
+        path: Path,
+        mode_vectors: list[dict[int, tuple[float, float, float]]],
+        stress_rows: tuple[tuple[str, ...], ...],
+        strain_rows: tuple[tuple[str, ...], ...],
+        frequencies: list[float]) -> None:
+    """FRD with the T0 block group per mode: DISP, STRESS, TOSTRAIN, ERROR.
+
+    Every dataset owns a ``100CL`` record and the six-component blocks carry
+    the ``-5`` declarations, exactly like the captured ccx output; ERROR holds
+    one 25-char component per node and must be skipped by every parser.
+    """
+    nodes = sorted(mode_vectors[0])
+    rows = ["    2C\n"]
+    for node in nodes:
+        rows.append(frd_row(node, mode_vectors[0][node]))
+    for index, frequency in enumerate(frequencies):
+        error_rows = tuple(f" -1{node:10d}{999.0:12.5E}\n" for node in nodes)
+        blocks = (
+            ("DISP", 4, (), tuple(frd_row(node, mode_vectors[index][node])
+                                  for node in nodes)),
+            ("STRESS", 6, STRESS_DECLARATIONS, stress_rows[index]),
+            ("TOSTRAIN", 6, STRAIN_DECLARATIONS, strain_rows[index]),
+            ("ERROR", 1, (), error_rows),
+        )
+        for name, width, declarations, block_rows in blocks:
+            header = (f"  100CL  10{index + 1} {frequency} {len(nodes)}"
+                      "                     2    1MODAL      1\n")
+            rows.append(header)
+            rows.append(f" -4  {name:<8} {width}    1\n")
+            rows.extend(declarations)
+            rows.extend(block_rows)
+            rows.append(" -3\n")
+    path.write_text("".join(rows), encoding="ascii")
+
+
 def write_dat(path: Path, frequencies: list[float]) -> None:
     lines = [" MODE NO EIGENVALUE FREQUENCY"]
     lines.extend(f" {index} 1 1 {value}" for index, value in
@@ -1030,6 +1121,139 @@ class ExportGateTests(ScratchCase):
         path = self.root / f"single_{frequencies[0]}.dat"
         write_dat(path, frequencies)
         return path
+
+
+class StressExportTests(ScratchCase):
+    """T0-pinned STRESS/TOSTRAIN blocks: parsing, export and flag-off no-op."""
+
+    STRESS_NODE4_MODE1 = (-9.27137e9, -3.97347e9, -3.97348e9, -1.64314e8,
+                          115.574, -1.86096e9)
+    STRESS_NODE4_MODE2 = (-2.09977e9, -8.99908e8, -8.99909e8,
+                          7.25513e8, -510.309, -4.21468e8)
+    STRAIN_NODE4_MODE1 = (-3.27966e-2, -7.24886e-8, -1.11033e-7,
+                          -1.01718e-3, 7.15461e-10, -1.15202e-2)
+    LEGACY_FILES = sorted(["FluidNodeCoor.csv", "FluidNodeDisp1.csv",
+                           "FluidNodeDisp2.csv", "FluidPara.csv",
+                           "StructNodeCoor.csv", "StructNodeDisp1.csv",
+                           "StructNodeDisp2.csv"])
+    STRESS_FILES = sorted(LEGACY_FILES + ["StructNodeStrain1.csv",
+                                          "StructNodeStrain2.csv",
+                                          "StructNodeStress1.csv",
+                                          "StructNodeStress2.csv"])
+
+    def _deck(self) -> Path:
+        deck = self.root / "stress_case.inp"
+        deck.write_text(
+            "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n5,1,1,0\n6,1,0,1\n"
+            "*NSET, NSET=FAR_PART_NSET\n1,2,3\n*NSET, NSET=WING\n4,5,6\n",
+            encoding="ascii")
+        return deck
+
+    def _displacements(self) -> list[dict[int, tuple[float, float, float]]]:
+        return [{node: (float(node), float(mode), 0.0) for node in range(1, 7)}
+                for mode in (1, 2)]
+
+    def _run(self, frd: Path, output: Path,
+             *extra: str) -> subprocess.CompletedProcess[str]:
+        dat = self.root / "stress.dat"
+        write_dat(dat, [10.0, 20.0])
+        return run_script("03_export_modes.py", "--input", str(self._deck()),
+                          "--dat", str(dat), "--frd", str(frd),
+                          "--output-dir", str(output), "--modes", "2", *extra)
+
+    def _frd_with_stress(self) -> Path:
+        frd = self.root / "stress.frd"
+        write_frd_with_stress(frd, self._displacements(),
+                              (T0_STRESS_MODE1, T0_STRESS_MODE2),
+                              (T0_STRAIN_MODE1, T0_STRAIN_MODE2),
+                              [10.0, 20.0])
+        return frd
+
+    @staticmethod
+    def _row_values(line: str) -> list[float]:
+        return [float(value) for value in line.rstrip(",").split(",")]
+
+    def test_export_writes_structural_rows_in_captured_component_order(self) -> None:
+        output = self.root / "mode"
+        result = self._run(self._frd_with_stress(), output, "--export-stress")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(path.name for path in output.iterdir()),
+                         self.STRESS_FILES)
+        self.assertFalse((output / "FluidNodeStress1.csv").exists())
+        stress = (output / "StructNodeStress1.csv").read_text(
+            encoding="ascii").splitlines()
+        self.assertEqual(stress[0], f"{10.0:20.10E},{3:20.10E},{2:20.10E},")
+        self.assertEqual(len(stress), 1 + 3)
+        self.assertEqual(self._row_values(stress[1]),
+                         list(self.STRESS_NODE4_MODE1))
+        strain = (output / "StructNodeStrain1.csv").read_text(
+            encoding="ascii").splitlines()
+        self.assertEqual(self._row_values(strain[1]),
+                         list(self.STRAIN_NODE4_MODE1))
+        second = (output / "StructNodeStress2.csv").read_text(
+            encoding="ascii").splitlines()
+        self.assertEqual(second[0], f"{20.0:20.10E},{3:20.10E},{2:20.10E},")
+        self.assertEqual(self._row_values(second[1]),
+                         list(self.STRESS_NODE4_MODE2))
+
+    def test_gate_parser_reads_six_components_and_skips_error_blocks(self) -> None:
+        frd = self._frd_with_stress()
+        stress = exporter.parse_frd_modes(frd, "STRESS")
+        strain = exporter.parse_frd_modes(frd, "TOSTRAIN")
+        disp = exporter.parse_frd_modes(frd)
+        self.assertEqual([len(stress), len(strain), len(disp)], [2, 2, 2])
+        self.assertEqual(stress[0].vectors.shape, (6, 6))
+        self.assertEqual(strain[1].vectors.shape, (6, 6))
+        self.assertEqual(disp[0].vectors.shape, (6, 3))
+        np.testing.assert_array_equal(stress[0].nodes, np.arange(1, 7))
+        np.testing.assert_allclose(stress[0].vectors[3],
+                                   self.STRESS_NODE4_MODE1, rtol=1e-12)
+        np.testing.assert_allclose(strain[0].vectors[3],
+                                   self.STRAIN_NODE4_MODE1, rtol=1e-12)
+        self.assertFalse(np.any(stress[0].vectors == 999.0))
+        self.assertFalse(np.any(strain[1].vectors == 999.0))
+
+    def test_flag_off_is_a_no_op_for_the_legacy_disp_contract(self) -> None:
+        frd = self.root / "legacy.frd"
+        write_frd(frd, self._displacements(), [10.0, 20.0])
+        output = self.root / "mode"
+        result = self._run(frd, output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(path.name for path in output.iterdir()),
+                         self.LEGACY_FILES)
+        rows = "".join(f"{node:20.10E},{1:20.10E},{0:20.10E},\n"
+                       for node in (4, 5, 6))
+        self.assertEqual((output / "StructNodeDisp1.csv").read_text(
+            encoding="ascii"), f"{10.0:20.10E},{3:20.10E},{2:20.10E},\n" + rows)
+
+    def test_a_minus_two_continuation_is_rejected_with_its_line(self) -> None:
+        frd = self._frd_with_stress()
+        source = frd.read_text(encoding="ascii")
+        self.assertEqual(source.count(T0_STRESS_MODE2[0]), 1)
+        broken = self.root / "continuation.frd"
+        broken.write_text(source.replace(T0_STRESS_MODE2[0],
+                                         T0_STRESS_MODE2[0] + " -2extra\n", 1),
+                          encoding="ascii")
+        with self.assertRaises(exporter.GateError) as caught:
+            exporter.parse_frd_modes(broken, "STRESS")
+        self.assertRegex(str(caught.exception), r":\d+: STRESS record")
+        self.assertIn("-2 continuation", str(caught.exception))
+        result = self._run(broken, self.root / "mode", "--export-stress")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[AGARD ERR]", result.stderr)
+        self.assertRegex(result.stderr, r"line \d+")
+
+    def test_an_unterminated_block_is_rejected_with_its_line(self) -> None:
+        frd = self._frd_with_stress()
+        source = frd.read_text(encoding="ascii")
+        marker = T0_STRESS_MODE1[-1] + " -3\n"
+        self.assertEqual(source.count(marker), 1)
+        broken = self.root / "unterminated.frd"
+        broken.write_text(source.replace(marker, T0_STRESS_MODE1[-1], 1),
+                          encoding="ascii")
+        with self.assertRaises(exporter.GateError) as caught:
+            exporter.parse_frd_modes(broken, "STRESS")
+        self.assertRegex(str(caught.exception), r":\d+: unterminated -4 STRESS")
 
 
 class PipelineTests(ScratchCase):

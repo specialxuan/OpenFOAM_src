@@ -19,6 +19,16 @@ Gate order (NO CSV is written unless every gate passes)
    ``FluidNodeDisp{n}.csv``/``StructNodeDisp{n}.csv`` and the legacy
    ``FluidPara.csv``.
 
+With ``--export-stress`` (default off) the exporter additionally writes the
+six-component structural blocks pinned by T0 (see
+``.omo/evidence/task-2-fdm-modal-extension.md``): ``-4  STRESS`` /
+``-4  TOSTRAIN`` hold node-keyed ``-1`` records with six packed 12-wide
+fields in the ``-5`` declaration order (SXX,SYY,SZZ,SXY,SYZ,SZX / EXX,...),
+so ``StructNodeStress{m}.csv``/``StructNodeStrain{m}.csv`` are emitted for
+the structural (WING/WING_PART) node set only.  ccx emits one ``100CL`` per
+dataset and appends a ``-4  ERROR`` block after each mode; the flag-off path
+keeps the original single-``100CL``-per-mode behaviour byte-for-byte.
+
 Node set names follow the merged deck: the fluid side is ``FAR_PART_NSET``
 (alias ``FAR_PART``) and the structural side is ``WING`` (alias
 ``WING_PART``); ``FSI_NSET``/``ROOT``/``TIP``/``SIDE`` belong to the solver
@@ -49,6 +59,9 @@ DEFAULT_MAX_FREQUENCY: Final = 1.0e4
 DEFAULT_MAX_REL: Final = 0.01
 DEFAULT_MIN_COSINE: Final = 0.9
 FREQUENCY = re.compile(r"100CL\s+\d+\s+([-+0-9.Ee]+)")
+#: FRD nodal result datasets and their component counts (T0-pinned layout:
+#: DISP carries 3 values, STRESS/TOSTRAIN six packed 12-wide fields each).
+FRD_DATASETS: Final = {"DISP": 3, "STRESS": 6, "TOSTRAIN": 6}
 
 
 class ExportError(RuntimeError):
@@ -61,7 +74,7 @@ class GateError(ExportError):
 
 @dataclass(frozen=True, slots=True)
 class ModalBlock:
-    """One FRD displacement block: node ids and their vectors."""
+    """One FRD result block: node ids and their 3- or 6-component vectors."""
 
     nodes: IntArray
     vectors: FloatArray
@@ -169,6 +182,17 @@ def _fields(line: str) -> tuple[int, tuple[float, float, float]]:
                              float(line[37:49]))
 
 
+def _six_fields(line: str) -> tuple[int, tuple[float, ...]]:
+    """FRD nodal stress/strain record: id at 3:13, six 12-wide fields from 13.
+
+    T0-pinned layout: one ``-1`` line per node, no ``-2`` continuation, no
+    separators between the packed ``%12.5E`` fields, so the fixed columns are
+    mandatory (consecutive negatives concatenate).
+    """
+    return int(line[3:13]), tuple(float(line[13 + 12 * k:25 + 12 * k])
+                                  for k in range(6))
+
+
 def _write_group(output: Path, name: str, ids: list[int],
                  data: dict[int, tuple[float, float, float]],
                  frequency: float | None, modes: int) -> None:
@@ -181,9 +205,31 @@ def _write_group(output: Path, name: str, ids: list[int],
             stream.write(f"{vector[0]:20.10E},{vector[1]:20.10E},{vector[2]:20.10E},\n")
 
 
+def _write_stress_group(output: Path, name: str, ids: list[int],
+                        data: dict[int, tuple[float, ...]],
+                        frequency: float | None, modes: int) -> None:
+    """Six-component FDM CSV mirroring ``_write_group`` (same header contract)."""
+    with (output / name).open("w", encoding="ascii") as stream:
+        header_frequency = 0.0 if frequency is None else frequency
+        stream.write(f"{header_frequency:20.10E},{len(ids):20.10E},{modes:20.10E},\n")
+        for node_id in ids:
+            components = data[node_id]
+            stream.write(",".join(f"{value:20.10E}" for value in components)
+                         + ",\n")
+
+
 def export_modes(deck: Path, dat: Path, frd: Path, output: Path,
-                 modes: int = 10) -> list[float]:
-    """Export fluid/struct coordinates and modal displacements (unchanged contract)."""
+                 modes: int = 10, export_stress: bool = False) -> list[float]:
+    """Export the legacy modal CSVs, optionally with structural stress/strain.
+
+    With ``export_stress`` the T0-pinned ``-4  STRESS``/``-4  TOSTRAIN`` nodal
+    blocks are additionally written as ``StructNodeStress{m}.csv`` /
+    ``StructNodeStrain{m}.csv`` (structural node set only, six components in
+    the ``-5`` declaration order).  ccx writes one ``100CL`` per dataset and a
+    trailing ``-4  ERROR`` block per mode, so modes are counted from completed
+    blocks; with the flag off the original single-``100CL``-per-mode behaviour
+    is preserved byte-for-byte.
+    """
     if modes < 1:
         raise ExportError("modes must be positive")
     if not dat.is_file():
@@ -197,85 +243,168 @@ def export_modes(deck: Path, dat: Path, frd: Path, output: Path,
     phase, active, current_frequency = "none", False, 0.0
     frequencies: list[float] = []
     displacements: dict[int, tuple[float, float, float]] = {}
+    stress: dict[int, tuple[float, ...]] = {}
+    strain: dict[int, tuple[float, ...]] = {}
+    kind: str | None = None
+    kind_line = 0
+    disp_modes = stress_modes = strain_modes = 0
     with frd.open(encoding="ascii") as source:
-        for line in source:
+        for line_number, line in enumerate(source, start=1):
             record = line.lstrip()
             if record.startswith("2C"):
-                phase, active = "coordinates", False
+                phase, active, kind = "coordinates", False, None
             elif record.startswith("100CL"):
                 if phase == "coordinates":
                     _write_group(output, "FluidNodeCoor.csv", fluid_ids,
                                  coordinates, None, modes)
                     _write_group(output, "StructNodeCoor.csv", struct_ids,
                                  coordinates, None, modes)
-                phase, active = "displacements", False
+                phase, active, kind = "displacements", False, None
                 match = FREQUENCY.search(record)
                 if match is None:
                     raise ExportError("FRD modal frequency header is malformed")
                 current_frequency = float(match.group(1))
                 frequencies.append(current_frequency)
             elif record.startswith("-4  DISP"):
-                active = True
+                active, kind, kind_line = True, "disp", line_number
+            elif export_stress and record.startswith("-4  STRESS"):
+                active, kind, kind_line = True, "stress", line_number
+            elif export_stress and record.startswith("-4  TOSTRAIN"):
+                active, kind, kind_line = True, "strain", line_number
             elif line.startswith(" -3"):
-                if phase == "displacements" and active:
+                if active and kind == "disp" and phase == "displacements":
                     if len(displacements) != len(wanted):
                         raise ExportError("FRD modal displacement data is incomplete")
-                    mode = len(frequencies)
+                    mode = disp_modes + 1 if export_stress else len(frequencies)
                     _write_group(output, f"FluidNodeDisp{mode}.csv", fluid_ids,
                                  displacements, dat_values[mode - 1], modes)
                     _write_group(output, f"StructNodeDisp{mode}.csv", struct_ids,
                                  displacements, dat_values[mode - 1], modes)
+                    disp_modes += 1
                     displacements = {}
-                active = False
+                elif (export_stress and active and phase == "displacements"
+                        and kind in ("stress", "strain")):
+                    values = stress if kind == "stress" else strain
+                    if len(values) != len(wanted):
+                        raise ExportError(f"FRD modal {kind} data is incomplete")
+                    mode = stress_modes + 1 if kind == "stress" else strain_modes + 1
+                    if mode > len(dat_values):
+                        raise ExportError(
+                            f"FRD {kind} block {mode} has no DAT frequency")
+                    name = (f"StructNodeStress{mode}.csv" if kind == "stress"
+                            else f"StructNodeStrain{mode}.csv")
+                    _write_stress_group(output, name, struct_ids, values,
+                                        dat_values[mode - 1], modes)
+                    if kind == "stress":
+                        stress_modes += 1
+                        stress = {}
+                    else:
+                        strain_modes += 1
+                        strain = {}
+                active, kind = False, None
+            elif (export_stress and active and kind in ("stress", "strain")
+                    and line.startswith(" -2")):
+                raise ExportError(f"FRD {kind} record on line {line_number} "
+                                  "uses an unsupported -2 continuation")
             elif active and line.startswith(" -1"):
-                node_id, vector = _fields(line)
-                if node_id in wanted and phase == "displacements":
-                    displacements[node_id] = vector
-    if phase != "displacements" or active or len(frequencies) != modes:
-        raise ExportError(f"expected {modes} FRD modes, found {len(frequencies)}")
+                if phase == "displacements" and kind == "disp":
+                    node_id, vector = _fields(line)
+                    if node_id in wanted:
+                        displacements[node_id] = vector
+                elif (export_stress and phase == "displacements"
+                        and kind in ("stress", "strain")):
+                    try:
+                        node_id, components = _six_fields(line)
+                    except ValueError as error:
+                        raise ExportError(f"malformed FRD {kind} record on line "
+                                          f"{line_number}: {error}") from error
+                    if node_id in wanted:
+                        if kind == "stress":
+                            stress[node_id] = components
+                        else:
+                            strain[node_id] = components
+    if export_stress and active:
+        raise ExportError(f"FRD {kind} block on line {kind_line} is unterminated")
+    if export_stress:
+        disp_found = disp_modes
+    else:
+        disp_found = len(frequencies)
+    if phase != "displacements" or active or disp_found != modes:
+        raise ExportError(f"expected {modes} FRD modes, found {disp_found}")
     (output / "FluidPara.csv").write_text(
         "19,\n11,\n0.0,\n0.0,\n0.0,\n0.0,\n0.0,\n", encoding="ascii")
     return dat_values
 
 
-def parse_frd_modes(path: Path) -> list[ModalBlock]:
-    """Parse every ``-4 DISP`` block of an FRD file into node ids + vectors."""
+def parse_frd_modes(path: Path, dataset: str = "DISP") -> list[ModalBlock]:
+    """Parse every ``-4 <dataset>`` block of an FRD file into node ids + vectors.
+
+    ``dataset`` defaults to ``DISP`` (3 components); ``STRESS``/``TOSTRAIN``
+    are the six-component nodal blocks pinned by T0.  Non-matching datasets,
+    including the auto-emitted ``ERROR`` block, are skipped; malformed records
+    raise ``GateError`` naming the offending line.
+    """
+    if dataset not in FRD_DATASETS:
+        raise GateError(f"unsupported FRD dataset: {dataset}")
+    component_count = FRD_DATASETS[dataset]
+    marker = b" -4  " + dataset.encode("ascii")
+    expected = 13 + 12 * component_count
     if not path.is_file():
         raise GateError(f"missing FRD result: {path}")
     modes: list[ModalBlock] = []
     with path.open("rb") as handle:
+        line_number = 0
         while True:
             line = handle.readline()
             if not line:
                 break
-            if not line.startswith(b" -4  DISP"):
+            line_number += 1
+            if not line.startswith(marker):
                 continue
+            header_line = line_number
             records: list[bytes] = []
+            first_record_line = 0
+            terminated = False
             while True:
                 position = handle.tell()
                 record = handle.readline()
                 if not record:
                     break
+                line_number += 1
                 if record.startswith(b" -1"):
+                    if not records:
+                        first_record_line = line_number
                     records.append(record)
                 elif record.startswith(b" -5"):
                     continue
+                elif record.startswith(b" -2"):
+                    raise GateError(f"{path}:{line_number}: {dataset} record "
+                                    "uses an unsupported -2 continuation")
                 elif record.startswith(b" -3"):
+                    terminated = True
                     break
                 else:
                     handle.seek(position)
+                    line_number -= 1
                     break
+            if not terminated:
+                raise GateError(f"{path}:{header_line}: unterminated "
+                                f"-4 {dataset} block")
             if not records:
                 continue
             width = len(records[0])
-            if width not in (49, 50) or any(len(item) != width for item in records):
-                raise GateError(f"non-uniform FRD record width in {path}")
-            if width == 49:
+            if width not in (expected, expected + 1) or any(
+                    len(item) != width for item in records):
+                raise GateError(f"{path}:{first_record_line}: non-uniform FRD "
+                                f"record width for -4 {dataset}")
+            if width == expected:
                 records = [item + b"\n" for item in records]
-            raw = np.frombuffer(b"".join(records), dtype=np.uint8).reshape(-1, 50)
+            raw = np.frombuffer(b"".join(records), dtype=np.uint8).reshape(
+                -1, expected + 1)
             nodes = raw[:, 3:13].view("S10").astype(np.int64).reshape(-1)
             components = [raw[:, 13 + 12 * k:25 + 12 * k].view("S12")
-                          .astype(np.float64).reshape(-1) for k in range(3)]
+                          .astype(np.float64).reshape(-1)
+                          for k in range(component_count)]
             modes.append(ModalBlock(nodes=nodes,
                                     vectors=np.stack(components, axis=1)))
     return modes
@@ -395,6 +524,10 @@ def _parser() -> argparse.ArgumentParser:
                         help="lower sanity-window bound in Hz (default 1)")
     parser.add_argument("--max-frequency", type=float, default=DEFAULT_MAX_FREQUENCY,
                         help="upper sanity-window bound in Hz (default 1e4)")
+    parser.add_argument("--export-stress", action="store_true",
+                        help="also export the six-component structural "
+                             "stress/strain CSVs from the T0-pinned "
+                             "-4 STRESS/-4 TOSTRAIN blocks (default off)")
     return parser
 
 
@@ -425,7 +558,8 @@ def main() -> int:
             identity_gate(struct_ids, args.frd, args.pure_frd, args.modes,
                           args.min_cosine)
         exported = export_modes(args.input, args.dat, args.frd,
-                                args.output_dir, args.modes)
+                                args.output_dir, args.modes,
+                                export_stress=args.export_stress)
     except ExportError as error:
         print(f"[AGARD ERR] {error}", file=sys.stderr)
         print("[AGARD ERR] verification failed; no CSV was written", file=sys.stderr)
