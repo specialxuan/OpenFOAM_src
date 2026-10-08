@@ -29,8 +29,8 @@ EXCITE="yes"      # "yes" / "no": 步骤 2 生成 StructForce1.csv (默认开启
 FORCE_AMP=0.02    # 周期激励幅值 N
 FORCE_FREQ=2.5    # 周期激励频率 Hz
 FORCE_END=""      # 空值: 用 --end-time (步骤 2 内部下限 0.5 s)
-MODAL_ZETA=""     # 空值: 不加 modalMass/modalDamp
-COUPLING_REL=0.01 # 封闭满水水箱 FSI 迭代欠松弛 (0.01 稳定, 见 CaseDescription)
+MODAL_ZETA=0.03   # 每阶模态阻尼比 (默认 0.03: modalMass/modalDamp = 2*zeta*omega)
+COUPLING_REL=0.7  # 隐式耦合力松弛 (默认 0.7; fsiTolerance=1e-3, nOuterCorrectors=100)
 VIDEO_FIELD="magU"       # 视频着色场: magU=速度幅值云图 (默认); alpha.water=旧白蓝水相
 VIDEO_VIEWS="full,beam"  # 视频视图: full(全流域) / beam(梁区放大) / both; 逗号组合
 VIDEO_SCALE=""           # beam 视图平行投影尺度 (空 = 06 默认 0.08)
@@ -67,8 +67,8 @@ usage() {
   --force-amp <A>        周期激励幅值 N (默认 $FORCE_AMP)
   --force-freq <f>       周期激励频率 Hz (默认 $FORCE_FREQ)
   --force-end-time <T>   激励时间序列结束时刻 s (默认 = --end-time)
-  --modal-zeta <z>       传给 03: 每阶阻尼比 zeta, 生成 modalMass/modalDamp
-  --coupling-relax <a>   传给 03: couplingRelaxation (默认 $COUPLING_REL; 满水封闭水箱需要)
+  --modal-zeta <z>       传给 03: 每阶阻尼比 zeta, 生成 modalMass/modalDamp (默认 $MODAL_ZETA)
+  --coupling-relax <a>   传给 03: couplingRelaxation (默认 $COUPLING_REL)
   --video-field <name>   步骤 6 着色场 (默认 $VIDEO_FIELD = 速度幅值云图 magU;
                          alpha.water 恢复旧白蓝水相视频)
   --video-views <list>   步骤 6 视图 (默认 $VIDEO_VIEWS): full=全流域, beam=梁区放大

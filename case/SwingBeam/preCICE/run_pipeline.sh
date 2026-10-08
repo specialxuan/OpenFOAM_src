@@ -31,6 +31,14 @@ FORCE_AMP=0.02        # 周期梁尖力幅值 A (N), F(t)=A*sin(2*pi*f*t)
 FORCE_FREQ=2.5        # 周期梁尖力频率 f (Hz)
 FORCE_END_TIME=0.5    # *AMPLITUDE 表跨度 (s), 默认 = 固体 deck *DYNAMIC 总时长
 VIDEO=""              # "" 未定(交互询问) / "yes" / "no"
+VIDEO_FIELD="magU"       # 视频着色场: magU=速度幅值云图 (默认); alpha.water=旧白蓝水相
+VIDEO_VIEWS="full,beam"  # 视频视图: full(全流域) / beam(梁区放大) / both; 逗号组合
+VIDEO_SCALE=""           # beam 视图平行投影尺度 (空 = 06 默认 0.08)
+VIDEO_FOCUS=""           # beam 视图焦点 X,Y,Z (空 = 06 默认 0.298,0.06,0.006)
+VIDEO_COLOR_RANGE=""     # 固定色标范围 min,max (空 = 06 全时段预扫描)
+VIDEO_LUT=""             # LUT 预设名 (空 = 06 默认: magU -> Rainbow Desaturated)
+VIDEO_FPS=30             # 视频帧率
+VIDEO_RES=""             # 视频分辨率 WxH (空 = 06 默认 1920x1080)
 DRY_RUN=0
 SETTINGS_DIR=""
 STEP_04_FAILED=0
@@ -60,6 +68,16 @@ usage() {
   --force-freq <f>       周期梁尖力频率 f (Hz) (传给 01, 默认 $FORCE_FREQ)
   --force-end-time <T>   *AMPLITUDE 表跨度 (s) (传给 01, 默认 $FORCE_END_TIME)
   --video / --no-video   步骤 6 MP4 行为 (--no-video 仍保留 PNG)
+  --video-field <name>   步骤 6 着色场 (默认 $VIDEO_FIELD = 速度幅值云图 magU;
+                         alpha.water 恢复旧白蓝水相视频)
+  --video-views <list>   步骤 6 视图 (默认 $VIDEO_VIEWS): full=全流域, beam=梁区放大
+                          两者都输出两个 MP4; 如 --video-views beam 只出梁区放大
+  --video-scale <s>      beam 视图平行投影尺度 (默认 06 内置 0.08, 视野高 0.16 m)
+  --video-focus <x,y,z>  beam 视图焦点 (默认 06 内置 0.298,0.06,0.006 = 梁中心)
+  --video-color-range <min,max>  固定色标范围 (默认 06 全时段预扫描自动)
+  --video-lut <preset>   ParaView LUT 预设 (默认 magU -> Rainbow Desaturated)
+  --video-fps <N>        视频帧率 (默认 $VIDEO_FPS)
+  --video-res <WxH>      视频分辨率 (默认 06 内置 1920x1080)
   --settings-dir <dir>   participant-aware settings overlay (传给 03)
   --dry-run              只打印将执行的命令, 不执行
   -h, --help             显示本帮助
@@ -101,6 +119,14 @@ while [ $# -gt 0 ]; do
         --force-end-time)  FORCE_END_TIME="${2:?--force-end-time 需要一个参数}"; shift 2 ;;
         --video)           VIDEO=yes; shift ;;
         --no-video)        VIDEO=no; shift ;;
+        --video-field)     VIDEO_FIELD="${2:?--video-field 需要一个参数}"; shift 2 ;;
+        --video-views)     VIDEO_VIEWS="${2:?--video-views 需要一个参数}"; shift 2 ;;
+        --video-scale)     VIDEO_SCALE="${2:?--video-scale 需要一个参数}"; shift 2 ;;
+        --video-focus)     VIDEO_FOCUS="${2:?--video-focus 需要一个参数}"; shift 2 ;;
+        --video-color-range) VIDEO_COLOR_RANGE="${2:?--video-color-range 需要一个参数}"; shift 2 ;;
+        --video-lut)       VIDEO_LUT="${2:?--video-lut 需要一个参数}"; shift 2 ;;
+        --video-fps)       VIDEO_FPS="${2:?--video-fps 需要一个参数}"; shift 2 ;;
+        --video-res)       VIDEO_RES="${2:?--video-res 需要一个参数}"; shift 2 ;;
         --settings-dir)    SETTINGS_DIR="${2:?--settings-dir 需要一个参数}"; shift 2 ;;
         --dry-run)         DRY_RUN=1; shift ;;
         -h|--help)         usage; exit 0 ;;
@@ -249,18 +275,49 @@ run_step() {
     local step="$1"
     local cmd=""
     case "$step" in
-        1) cmd="python3 '$SCRIPT_DIR/01_generate_mesh.py' --res $RES --z-layers $Z_LAYERS --out-dir '$CASE_ROOT/mesh' --view --render --force-amp $FORCE_AMP --force-freq $FORCE_FREQ --force-end-time $FORCE_END_TIME" ;;
+        1) cmd="python3 '$SCRIPT_DIR/01_generate_mesh.py' --res $RES --z-layers $Z_LAYERS --out-dir '$CASE_ROOT/mesh' --view --render --force-amp $FORCE_AMP --force-freq $FORCE_FREQ --force-end-time $FORCE_END_TIME --solid-delta-t $DELTA_T" ;;
         3) cmd="python3 '$SCRIPT_DIR/03_assemble_precice_case.py' --mesh-dir '$CASE_ROOT/mesh/fluid-openfoam' --solid-dir '$CASE_ROOT/mesh/solid-calculix' --out-dir '$CASE_ROOT/pc_case' --end-time $END_TIME --delta-t $DELTA_T --write-interval $WRITE_INTERVAL --nprocs $NPROCS"$GATE_ARGS ;;
         4) cmd="python3 '$SCRIPT_DIR/04_run_precice.py' -f --case '$CASE_ROOT/pc_case' --end-time $END_TIME --delta-t $DELTA_T --write-interval $WRITE_INTERVAL --nprocs $NPROCS --solid-threads $SOLID_THREADS" ;;
         5) cmd="python3 '$SCRIPT_DIR/05_postprocess.py' --case '$CASE_ROOT/pc_case' --out-dir '$CASE_ROOT/postprocess'" ;;
-        6) cmd="xvfb-run -a pvpython '$SCRIPT_DIR/06_export_precice_video.py' --case '$CASE_ROOT/pc_case' --out '$CASE_ROOT/frames' --mp4-path '$CASE_ROOT/precice_result.mp4'" ;;
+        6)
+            # 默认速度云图 (magU) + 双视图: full=全流域, beam=梁区放大。
+            # 每个视图一次 06 调用, 共享同一算例, 分别输出 PNG 目录与 MP4。
+            # 06 读取 <case-root>/fluid-openfoam/case.foam (preCICE 路径约定)。
+            local views view_arr v out_dir mp4 view_args part
+            views="$(echo "$VIDEO_VIEWS" | tr -d ' ' | tr 'A-Z' 'a-z')"
+            [ "$views" = "both" ] && views="full,beam"
+            IFS=',' read -ra view_arr <<< "$views"
+            for v in "${view_arr[@]}"; do
+                case "$v" in
+                    full|beam) ;;
+                    *) error "--video-views '$VIDEO_VIEWS' 非法 (只接受 full/beam/both 或用逗号组合)"; return 1 ;;
+                esac
+            done
+            cmd=""
+            for v in "${view_arr[@]}"; do
+                if [ "$v" = "full" ]; then
+                    out_dir="$CASE_ROOT/frames"
+                    mp4="$CASE_ROOT/precice_result.mp4"
+                    view_args="--camera-focus 0.292,0.18,0.006 --camera-scale 0.21"
+                else
+                    out_dir="$CASE_ROOT/frames_beam"
+                    mp4="$CASE_ROOT/precice_result_beam.mp4"
+                    view_args="--zoom-beam"
+                    [ -n "$VIDEO_FOCUS" ] && view_args="$view_args --camera-focus $VIDEO_FOCUS"
+                    [ -n "$VIDEO_SCALE" ] && view_args="$view_args --camera-scale $VIDEO_SCALE"
+                fi
+                part="xvfb-run -a pvpython '$SCRIPT_DIR/06_export_precice_video.py' --case '$CASE_ROOT/pc_case' --out '$out_dir' --mp4-path '$mp4' --field $VIDEO_FIELD $view_args --framerate $VIDEO_FPS"
+                [ -n "$VIDEO_COLOR_RANGE" ] && part="$part --color-range $VIDEO_COLOR_RANGE"
+                [ -n "$VIDEO_LUT" ] && part="$part --lut-preset $VIDEO_LUT"
+                [ -n "$VIDEO_RES" ] && part="$part --res $VIDEO_RES"
+                [ "$VIDEO" = "no" ] && part="$part --no-mp4"
+                if [ -z "$cmd" ]; then cmd="$part"; else cmd="$cmd && $part"; fi
+            done
+            ;;
     esac
 
     if [ "$step" -eq 3 ] && [ -n "$SETTINGS_DIR" ]; then
         cmd+=" --settings-dir '$SETTINGS_DIR'"
-    fi
-    if [ "$step" -eq 6 ] && [ "$VIDEO" = "no" ]; then
-        cmd+=" --no-mp4"
     fi
     echo "[PRECICE-PIPE] 步骤 $step: $cmd"
     [ "$DRY_RUN" -eq 1 ] && return 0
@@ -274,13 +331,33 @@ run_step() {
             return 1
         fi
     elif [ "$step" -eq 6 ]; then
+        # ParaView OpenFOAMReader 需要 case.foam 锚点文件; 03 会生成, 这里兜底
+        mkdir -p "$CASE_ROOT/pc_case/fluid-openfoam"
+        [ -f "$CASE_ROOT/pc_case/fluid-openfoam/case.foam" ] || touch "$CASE_ROOT/pc_case/fluid-openfoam/case.foam"
         # 步骤 6: pvpython 在 xvfb 下渲染完成后可能抛无害 GLXBadContext 导致非零退出码,
-        # 但只要帧文件已生成即视为成功。捕获过滤: 只透传 [PRECICE 前缀行, 完整输出落盘。
+        # 但只要所有请求视图的 PNG/MP4 产物完整即视为成功。
         if ! run_script "$CASE_ROOT/run_step_6.log" "$cmd"; then
-            if ls "$CASE_ROOT"/frames/frame_*.png >/dev/null 2>&1 && { [ "$VIDEO" = "no" ] || [ -s "$CASE_ROOT/precice_result.mp4" ]; }; then
-                warn "步骤 6: pvpython 非零但请求的产物完整, 视为 GLX 清理错误"
+            local views2 v2 d2 m2
+            views2="$(echo "$VIDEO_VIEWS" | tr -d ' ' | tr 'A-Z' 'a-z')"
+            [ "$views2" = "both" ] && views2="full,beam"
+            frames_ok=1
+            mp4_ok=1
+            for v2 in $(echo "$views2" | tr ',' ' '); do
+                d2="$CASE_ROOT/frames"
+                m2="$CASE_ROOT/precice_result.mp4"
+                if [ "$v2" = "beam" ]; then
+                    d2="$CASE_ROOT/frames_beam"
+                    m2="$CASE_ROOT/precice_result_beam.mp4"
+                fi
+                ls "$d2"/frame_*.png >/dev/null 2>&1 || frames_ok=0
+                if [ "$VIDEO" != "no" ] && [ ! -s "$m2" ]; then
+                    mp4_ok=0
+                fi
+            done
+            if [ "$frames_ok" -eq 1 ] && [ "$mp4_ok" -eq 1 ]; then
+                warn "步骤 6: pvpython 非零但 PNG/MP4 产物完整, 视为 GLX 清理错误"
             else
-                error "步骤 6 执行失败: PNG 或 MP4 产物不完整"
+                error "步骤 6 执行失败: PNG 或 MP4 产物不完整, 详见 run_step_6.log"
                 return 1
             fi
         fi
@@ -319,6 +396,8 @@ summary_line "仿真" "endTime=$END_TIME deltaT=$DELTA_T writeInterval=$WRITE_IN
 summary_line "并行" "$NPROCS 流体进程 / $SOLID_THREADS 固体线程"
 summary_line "门材料" "E=$GATE_E nu=$GATE_NU rho=$GATE_RHO${GATE_ARGS:+ (透传: ${GATE_ARGS# }) }"
 summary_line "周期力" "A=$FORCE_AMP N f=$FORCE_FREQ Hz (amplitude 0..$FORCE_END_TIME s)"
+summary_line "视频着色" "--video-field $VIDEO_FIELD"
+summary_line "视频视图" "--video-views $VIDEO_VIEWS (full -> frames/precice_result.mp4, beam -> frames_beam/precice_result_beam.mp4)"
 if [ "$VIDEO" = "yes" ]; then
     VIDEO_STATE="强制是 (--video)"
 elif [ "$VIDEO" = "no" ]; then

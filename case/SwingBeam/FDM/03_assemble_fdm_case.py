@@ -27,7 +27,8 @@ Usage:
         --mode-dir /path/to/mode \\
         --out-dir  /path/to/fdm_case \\
          [--end-time 0.5] [--write-interval 50] [--delta-t 0.001] [--nprocs 8] \\
-        [--amr] [--amr-interval N] [--amr-lower-refine N] [--amr-unrefine N] \\
+         [--modal-zeta 0.03] [--coupling-relaxation 0.7] [--fsi-tolerance 1e-3] \\
+         [--amr] [--amr-interval N] [--amr-lower-refine N] [--amr-unrefine N] \\
          [--amr-max-refinement N] [--amr-max-cells N] [--settings-dir DIR]
 """
 
@@ -188,6 +189,7 @@ def write_case_description(case_dir, args):
 | `fsiPatches` | `%s` |
 | `mappingTolerance` | `%s` |
 | `couplingRelaxation` | `%s` |
+| `fsiTolerance` (top-level) | `%s` |
 | `refineInterval` | `%s` |
 | `lowerRefineLevel` | `%s` |
 | `upperRefineLevel` | `%s` |
@@ -231,6 +233,7 @@ def write_case_description(case_dir, args):
          _dict_value(dynamic_mesh, "theta"), _dict_value(dynamic_mesh, "fsiPatches"),
          _dict_value(dynamic_mesh, "mappingTolerance"),
          _dict_value(dynamic_mesh, "couplingRelaxation"),
+         _dict_value(dynamic_mesh, "fsiTolerance"),
          _dict_value(dynamic_mesh, "refineInterval"),
          _dict_value(dynamic_mesh, "lowerRefineLevel"),
          _dict_value(dynamic_mesh, "upperRefineLevel"),
@@ -327,27 +330,36 @@ def build_dynamic_mesh_dict(amr=False, amr_interval=1, amr_lower_refine=12,
                             amr_max_cells=500000, amr_min_cell_vol=0,
                             amr_min_edge=0.0005, structural_force=False,
                             modal_mass=None, modal_damp=None,
-                            coupling_relaxation=None):
+                            coupling_relaxation=None, fsi_tolerance=None):
     """Render constant/dynamicMeshDict body.
 
     Without any optional feature the output is byte-identical to the pre-AMR
-    baseline.  coupling_relaxation overrides the embedded 1; structural_force
-    injects the structuralForceEnabled keys (plus modalMass/modalDamp when
-    given) before trackTiming; amr adds the refinement-support keys and
-    appends the dynamicRefineFvMeshCoeffs block.
+    baseline.  fsi_tolerance adds the top-level solver-side ``fsiTolerance``
+    key (sibling to ``fsiCoupling``, read by fsiCoupling.H); coupling_relaxation
+    overrides the embedded 1; structural_force injects the
+    structuralForceEnabled keys before trackTiming; modalMass/modalDamp are
+    injected whenever modal_damp is given (structural coupling not required);
+    amr adds the refinement-support keys and appends the
+    dynamicRefineFvMeshCoeffs block.
     """
     anchor = "    trackTiming        true;\n"
     body = DYNAMIC_MESH_DICT_BODY
+    if fsi_tolerance is not None:
+        body = body.replace(
+            "fsiCoupling integrated;",
+            "fsiCoupling integrated;\n\nfsiTolerance %s;"
+            % _fmt_num(fsi_tolerance))
     if coupling_relaxation is not None:
         body = body.replace("    couplingRelaxation 1;",
                             "    couplingRelaxation %s;"
                             % _fmt_num(coupling_relaxation))
     if structural_force:
         structural_keys = _STRUCTURAL_FORCE_BODY
-        if modal_damp is not None:
-            structural_keys += "    modalMass (%s);\n" % _fmt_vector(modal_mass)
-            structural_keys += "    modalDamp (%s);\n" % _fmt_vector(modal_damp)
         body = body.replace(anchor, structural_keys + anchor)
+    if modal_damp is not None:
+        modal_keys = ("    modalMass (%s);\n" % _fmt_vector(modal_mass)
+                      + "    modalDamp (%s);\n" % _fmt_vector(modal_damp))
+        body = body.replace(anchor, modal_keys + anchor)
     if not amr:
         return body
     amr_keys = _AMR_FAST_COEFFS_BODY % (_fmt_num(amr_min_cell_vol),
@@ -399,14 +411,15 @@ def write_constant(case_dir, amr=False, amr_interval=1, amr_lower_refine=12,
                    amr_max_cells=500000, amr_min_cell_vol=0,
                    amr_min_edge=0.0005, structural_force=False,
                    modal_mass=None, modal_damp=None,
-                   coupling_relaxation=None):
+                   coupling_relaxation=None, fsi_tolerance=None):
     body = build_dynamic_mesh_dict(
         amr=amr, amr_interval=amr_interval, amr_lower_refine=amr_lower_refine,
         amr_unrefine=amr_unrefine, amr_nbuffer=amr_nbuffer,
         amr_max_refine=amr_max_refine, amr_max_cells=amr_max_cells,
         amr_min_cell_vol=amr_min_cell_vol, amr_min_edge=amr_min_edge,
         structural_force=structural_force, modal_mass=modal_mass,
-        modal_damp=modal_damp, coupling_relaxation=coupling_relaxation)
+        modal_damp=modal_damp, coupling_relaxation=coupling_relaxation,
+        fsi_tolerance=fsi_tolerance)
     _write(os.path.join(case_dir, "constant", "dynamicMeshDict"),
            _dict_file("dynamicMeshDict", "constant", body))
     _write(os.path.join(case_dir, "constant", "transportProperties"),
@@ -706,7 +719,10 @@ FV_SOLUTION_BODY = """solvers
 PIMPLE
 {
     momentumPredictor   yes;
-    nOuterCorrectors    50;
+    // Integrated FSI loop runs one outer corrector per FSI iteration and exits
+    // early when fsiResidual < fsiTolerance (top-level dynamicMeshDict key).
+    // 100 gives headroom for the 1e-3 force-residual criterion.
+    nOuterCorrectors    100;
     nCorrectors         1;
     nNonOrthogonalCorrectors 0;
     pRefPoint       (0.392 0.36 0.006);
@@ -944,13 +960,16 @@ def parse_args(argv):
     p.add_argument("--no-structural-force", dest="structural_force",
                    action="store_false",
                    help="disable the structuralForceEnabled keys")
-    p.add_argument("--modal-zeta", type=float, default=None,
+    p.add_argument("--modal-zeta", type=float, default=0.03,
                    help="per-mode damping ratio; emits modalMass(1..) and "
                         "modalDamp(2*zeta*omega) sized to the mode count "
-                        "(default: no modalMass/modalDamp keys)")
-    p.add_argument("--coupling-relaxation", type=float, default=None,
+                        "(default 0.03)")
+    p.add_argument("--coupling-relaxation", type=float, default=0.7,
                    help="override fastDynamicFvMeshCoeffs couplingRelaxation "
-                        "(default: embedded 1)")
+                        "(default 0.7)")
+    p.add_argument("--fsi-tolerance", type=float, default=1e-3,
+                   help="top-level dynamicMeshDict fsiTolerance for the "
+                        "integrated FSI force-residual criterion (default 1e-3)")
     return p.parse_args(argv)
 
 
@@ -1030,6 +1049,10 @@ def main(argv):
         print("[FDM ERR] --coupling-relaxation must be in (0, 1] (got %s)"
               % _fmt_num(args.coupling_relaxation))
         return 1
+    if args.fsi_tolerance is None or args.fsi_tolerance <= 0.0:
+        print("[FDM ERR] --fsi-tolerance must be > 0 (got %s)"
+              % _fmt_num(args.fsi_tolerance))
+        return 1
     write_constant(out_dir, amr=args.amr, amr_interval=args.amr_interval,
                    amr_lower_refine=args.amr_lower_refine,
                    amr_unrefine=args.amr_unrefine,
@@ -1040,10 +1063,12 @@ def main(argv):
                    amr_min_edge=args.amr_min_edge_length,
                    structural_force=structural_force,
                    modal_mass=modal_mass, modal_damp=modal_damp,
-                   coupling_relaxation=args.coupling_relaxation)
+                   coupling_relaxation=args.coupling_relaxation,
+                   fsi_tolerance=args.fsi_tolerance)
     if args.coupling_relaxation is not None:
         print("[FDM 03] couplingRelaxation: %s"
               % _fmt_num(args.coupling_relaxation))
+    print("[FDM 03] fsiTolerance: %s" % _fmt_num(args.fsi_tolerance))
     print("[FDM 03] structuralForce: %s"
           % ("enabled (StructForce1.csv found)"
              if structural_force else "disabled (no mode/StructForce1.csv)"))

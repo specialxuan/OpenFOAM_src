@@ -52,9 +52,25 @@
 
 - 结构文件：`mode/StructNodeCoor.csv`、`mode/StructNodeDisp1..N.csv`（梁节点，升序节点号）；流体文件：`mode/FluidNodeCoor.csv`、`mode/FluidNodeDisp1..N.csv`。
 - 耦合方式：`fsiCoupling integrated`，模态叠加动网格（`fastDynamicFvMesh`），力残差判据 `fsiResidual < fsiTolerance`。
-- **关键调参 `couplingRelaxation = 0.01`**：封闭满水水箱没有自由液面泄压，梁体被水包围，流固迭代呈附加质量主导。实测 `res=30` 网格下 `couplingRelaxation=1/0.2/0.05` 均在第一个时间步内发散（位移每迭代放大数倍），`0.01` 稳定（`endTime=0.5 s` 长程验证，可用 `run_pipeline.sh --coupling-relax` 覆盖）。
-- 模态阻尼试验：`modalDamp=2e5`（约 `zeta=6000`）可稳定迭代，但梁响应被冻结（`t=0.05 s` 位移约 `1e-7 m`），因此默认不使用；如需可加 `--modal-zeta`。
-- 默认参数下 `t=0.05 s` 梁自由端位移约 `0.25 mm`（见 `postprocess/fdm_gate_topright_disp.csv`），随激励时间继续增长。
+- **组装默认值**（`03_assemble_fdm_case.py` 生成，`run_pipeline.sh` 同步）：`couplingRelaxation 0.7`、顶层 `fsiTolerance 1e-3`、`modalMass (1..1)` 与 `modalDamp (2*zeta*omega_m)`（`zeta=0.03`）、`nOuterCorrectors 100`；梁材料（`E=1e6, nu=0, rho=2500`）与周期端部激励保持不变。
+- **稳定性实测**（`res=30`、`z-layers=4`、`A=0.1 N`、`dt=1e-3`、8 ranks）：
+  - 请求值 `couplingRelaxation=0.7`：在第一个时间步内发散——位移增量逐迭代放大（`2.1e-5 → 1.4e-4 → 3.1e-3 m`，×7/×22），随后压力求解 GAMG SIGFPE（`t=0.001`，退出码 136）。
+  - 本库常数松弛的稳定窗口约为 `α ≤ 6e-3`：`α=0.01`（100 迭代）在 `t=0.029` 崩溃；`α=0.007/0.008` 残差不收敛；`α=0.003/0.004/0.005` 全程稳定。更小并非更好（`α=0.002` 启动段更差）；把 `nOuterCorrectors` 提到 300（`α=0.005`）反而在 `t=0.021` 崩溃；`dt` 减半只重新采样启动窗口、不能消除。库内没有 Aitken/自适应松弛实现（`couplingRelaxation` 为常数），因此上述常值扫描即为可用诊断手段。
+  - **最佳诊断值 `α=0.004`（2.0 s 全程）**：2000/2000 步完成，`ExecutionTime 1782 s` / `ClockTime 1893 s`（8 ranks）。**每一步末端的最大网格位移增量都 < 1e-6 m**（中位 `1.1e-9 m`，最大 `4.2e-8 m`），即物理层面的位移耦合每步都已收敛。
+  - 力残差：末端残差中位 `6.7e-4`，`1204/2000` 步（60.2%）`fsiResidual < 1e-3`；796 步打印 “FSI force residual did not converge”。告警集中在启动段（`t≤0.011`）与模态力过零窗口。`writeDiagnostics true` 的诊断运行（`t=0.411`）显示最大相对残差由 mode 4 主导：其力在 `±3e-4` 附近过零（其余模态 `|F|=0.1–2.4`），单迭代绝对变化仅约 `5e-5`，而位移增量已收敛到 `1.2e-9 m`。也就是说，库内 `res = |ΔF|/|F|` 的逐模态相对力残差在近零力模态上病态，该告警并不表示物理未收敛。
+  - 结论：在现有常数松弛库下，`fsiTolerance=1e-3` 无法在启动段与过零窗口逐步满足；`α=0.004` 是当前可稳定实现的最佳耦合设置，其物理响应与旧 `α=0.01` 基线一致（梁端 `dx` p2p `24.8 mm` vs `25.4 mm`）。
+- `A=0.1 N`、2.0 s 梁端位移（`postprocess/fdm_gate_topright_disp.csv`）：`dx` p2p **24.80 mm**（min `-12.99 mm @ t=0.44 s`，max `+11.81 mm @ t=0.66 s`），每 0.4 s 周期 p2p `20.6/24.8/17.0/16.6/17.9 mm`，持续振荡无衰减；`dy` p2p `1.10 mm`。
+- 复现（组装默认 + 诊断松弛值）：
+
+```bash
+cd case/SwingBeam/FDM
+bash run_pipeline.sh --steps 3,4 --res 30 --z-layers 4 --end-time 2.0 --write-interval 5 \
+    --case-root /root/Workspace/StructTest/fdm --force-amp 0.1 --coupling-relax 0.004
+# 400 个时间目录的 8 路并行重建（本机 DrvFs 串行重建约 90 min）：
+bash /root/Workspace/StructTest/probes/reconstruct_fdm_full.sh
+bash run_pipeline.sh --steps 5,6 --res 30 --z-layers 4 --end-time 2.0 \
+    --case-root /root/Workspace/StructTest/fdm
+```
 
 ## 边界条件
 
@@ -101,4 +117,4 @@ bash run_pipeline.sh --steps 4   --res 30 --z-layers 4 --end-time 0.05 --case-ro
 bash run_pipeline.sh --steps 5,6 --res 30 --z-layers 4 --end-time 0.05 --case-root /root/Workspace/StructTest/fdm
 ```
 
-- `--no-excite` 关闭周期激励；`--force-end-time` 指定激励序列时长；`--coupling-relax` 覆盖耦合松弛；`--modal-zeta` 生成 `modalMass`/`modalDamp`。
+- `--no-excite` 关闭周期激励；`--force-end-time` 指定激励序列时长；`--coupling-relax` 覆盖耦合松弛（默认 `0.7`；本算例实测稳定诊断值 `0.004`）；`--modal-zeta` 生成 `modalMass`/`modalDamp`（默认 `0.03`）。
