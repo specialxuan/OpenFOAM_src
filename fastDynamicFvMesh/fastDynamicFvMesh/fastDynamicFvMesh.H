@@ -239,6 +239,14 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //StructNodeStrain1.csv
     word structNodeStrainPrefix_{"StructNodeStrain"};
 
+    //- Per structural mode nodal stress, flat [nodeI*6 + comp] layout with
+    //component order SXX,SYY,SZZ,SXY,SYZ,SZX (empty while switch is off)
+    List<scalarField> structModeStress_{0};
+
+    //- Per structural mode nodal strain, flat [nodeI*6 + comp] layout with
+    //component order EXX,EYY,EZZ,EXY,EYZ,EZX (empty while switch is off)
+    List<scalarField> structModeStrain_{0};
+
     //- ===== Runtime AMR controls and indicator settings =====
 
     //- Enable refinement-aware modal interpolation and FSI force aggregation
@@ -384,6 +392,9 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Read structural force files, map coordinates to structure nodes, cache
     //series
     void readStructuralForceFiles(const fileName& modeDir);
+
+    //- Read per-mode structural stress/strain files (6 components per node)
+    void readStructuralStressStrainFiles(const fileName& modeDir);
 
     //- Build cached patch IDs, projection and topology-consistent face mapping
     void buildForceProjectionCaches(const mapPolyMesh* mpmPtr = nullptr);
