@@ -336,6 +336,13 @@ void fastDynamicFvMesh::readControls()
         "structuralTargetTolerance", structuralTargetTolerance_);
     fdmDict.readIfPresent("structNodeCoorFile", structNodeCoorFile_);
     fdmDict.readIfPresent("structNodeDispPrefix", structNodeDispPrefix_);
+    fdmDict.readIfPresent("modalExtensionEnabled", modalExtensionEnabled_);
+    fdmDict.readIfPresent(
+        "modalExtensionStressEnabled", modalExtensionStressEnabled_);
+    fdmDict.readIfPresent(
+        "modalExtensionStrainEnabled", modalExtensionStrainEnabled_);
+    fdmDict.readIfPresent("structNodeStressPrefix", structNodeStressPrefix_);
+    fdmDict.readIfPresent("structNodeStrainPrefix", structNodeStrainPrefix_);
     fdmDict.readIfPresent("meshRefinementSupport", meshRefinementSupport_);
     fdmDict.readIfPresent(
         "refinementInterpTolerance", refinementInterpTolerance_);
@@ -599,6 +606,57 @@ void fastDynamicFvMesh::readControls()
             << "Structural-force entries are present, but "
             << "'structuralForceEnabled' is false; structural force files "
             << "will not be read." << endl;
+    }
+
+    if
+    (
+        (modalExtensionStressEnabled_ || modalExtensionStrainEnabled_)
+     && !modalExtensionEnabled_
+    )
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entries 'modalExtensionStressEnabled' and/or "
+            << "'modalExtensionStrainEnabled' require 'modalExtensionEnabled' "
+            << "to be true in sub-dictionary '" << typeName << "Coeffs' of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (modalExtensionEnabled_)
+    {
+        if (structNodeStressPrefix_.empty())
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'structNodeStressPrefix' cannot be empty when "
+                << "'modalExtensionEnabled' is true in sub-dictionary '"
+                << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+                << exit(FatalIOError);
+        }
+
+        if (structNodeStrainPrefix_.empty())
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'structNodeStrainPrefix' cannot be empty when "
+                << "'modalExtensionEnabled' is true in sub-dictionary '"
+                << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+                << exit(FatalIOError);
+        }
+    }
+    else if
+    (
+        Pstream::master()
+     && (
+            fdmDict.found("modalExtensionEnabled")
+         || fdmDict.found("modalExtensionStressEnabled")
+         || fdmDict.found("modalExtensionStrainEnabled")
+         || fdmDict.found("structNodeStressPrefix")
+         || fdmDict.found("structNodeStrainPrefix")
+        )
+    )
+    {
+        WarningInFunction
+            << "Modal-extension entries are present, but "
+            << "'modalExtensionEnabled' is false; structural displacement, "
+            << "stress and strain recovery will not be performed." << endl;
     }
 }
 

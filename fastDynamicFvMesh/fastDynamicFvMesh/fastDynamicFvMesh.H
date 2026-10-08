@@ -222,6 +222,23 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Current force signal for diagnostics/logging
     scalar structuralForceSignal_;
 
+    //- Enable/disable the modal extension (structural displacement recovery)
+    bool modalExtensionEnabled_{false};
+
+    //- Enable/disable structural stress recovery from modal stress files
+    bool modalExtensionStressEnabled_{false};
+
+    //- Enable/disable structural strain recovery from modal strain files
+    bool modalExtensionStrainEnabled_{false};
+
+    //- Structural stress file prefix, e.g. StructNodeStress ->
+    //StructNodeStress1.csv
+    word structNodeStressPrefix_{"StructNodeStress"};
+
+    //- Structural strain file prefix, e.g. StructNodeStrain ->
+    //StructNodeStrain1.csv
+    word structNodeStrainPrefix_{"StructNodeStrain"};
+
     //- ===== Runtime AMR controls and indicator settings =====
 
     //- Enable refinement-aware modal interpolation and FSI force aggregation
