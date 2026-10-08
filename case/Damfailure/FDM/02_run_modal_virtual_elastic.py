@@ -652,7 +652,8 @@ def write_nset(fh, name, node_ids):
 def write_combined_inp(path, gate_coords, gate_elements, gate_nsets,
                        gate_iface_faces, fluid_coords, fluid_elements,
                        fluid_meta, fluid_sets, fluid_E, n_modes,
-                       gate_e, gate_nu, gate_rho, export_mode=False):
+                       gate_e, gate_nu, gate_rho, export_mode=False,
+                       export_stress=False):
     """Write the combined modal-analysis deck.
 
     fluid_E[i] is the Young's modulus of fluid element i (0-based).  Elements
@@ -743,6 +744,9 @@ def write_combined_inp(path, gate_coords, gate_elements, gate_nsets,
         if export_mode:
             fh.write("*NODE FILE\n")
             fh.write("U,\n")
+        if export_stress:
+            fh.write("*EL FILE\n")
+            fh.write("S, E\n")
         fh.write("*BOUNDARY\n")
         fh.write("Nbottom, 1, 3, 0.0\n")
         fh.write("Nzmin, 3, 3, 0.0\n")
@@ -1000,6 +1004,9 @@ def parse_args(argv):
     p.add_argument("--export-mode", action="store_true",
                    help="export FDM mode files (FluidNodeCoor.csv + "
                         "FluidNodeDisp1..N.csv) from the ccx .frd result")
+    p.add_argument("--export-stress", action="store_true",
+                   help="add *EL FILE S,E to the *FREQUENCY step for "
+                        "structural stress/strain records (default off)")
     p.add_argument("--mode-out-dir", default=None,
                    help="output dir for FDM mode files (default <out-dir>/mode)")
     return p.parse_args(argv)
@@ -1074,7 +1081,7 @@ def main(argv):
         inp_path, gate_coords, gate_elements, gate_nsets, gate_iface_faces,
         fluid_coords, fluid_elements, fluid_meta, fluid_sets, fluid_E,
         args.n_modes, args.gate_e, args.gate_nu, args.gate_rho,
-        export_mode=args.export_mode)
+        export_mode=args.export_mode, export_stress=args.export_stress)
     size_mb = os.path.getsize(inp_path) / 1e6
     print_status("已生成组合 .inp", "%s (%.1f MB, %d 个流体材料)"
                  % (inp_path, size_mb, n_mat))

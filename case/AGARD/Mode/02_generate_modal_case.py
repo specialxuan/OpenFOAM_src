@@ -116,7 +116,7 @@ FORBIDDEN_CARD_TOKENS: Final = ("TYPE=ORTHO", "STORAGE=", "SOLVER=", "*MPC")
 ALLOWED_CARD_FAMILIES: Final = frozenset({
     "*HEADING", "*NODE", "*ELEMENT", "*NSET", "*SURFACE", "*TIE", "*MATERIAL",
     "*ELASTIC", "*DENSITY", "*ORIENTATION", "*SOLID", "*ELSET", "*STEP",
-    "*FREQUENCY", "*BOUNDARY", "*END"})
+    "*FREQUENCY", "*BOUNDARY", "*END", "*EL"})
 
 # 2x2x2 Gauss integration for the far-field brick volumes.
 NATURAL: Final = np.array(
@@ -184,6 +184,7 @@ class CaseSpec:
     layer_floor: float = DEFAULT_LAYER_FLOOR
     layers: int = DEFAULT_LAYERS
     far_field_modulus: float = DEFAULT_FAR_FIELD_MODULUS
+    export_stress: bool = False
 
     def material(self) -> Material:
         """Resolve ``wing_type`` to its calibrated material."""
@@ -712,9 +713,15 @@ def material_slot(spec: CaseSpec, config: LayeredConfig | None) -> str:
 
 
 def step_card(spec: CaseSpec) -> str:
-    """``*STEP`` / ``*FREQUENCY`` / ``*NODE FILE`` / ``*BOUNDARY`` / ``*END STEP``."""
+    """``*STEP`` / ``*FREQUENCY`` / ``*NODE FILE`` / ``*BOUNDARY`` / ``*END STEP``.
+
+    ``spec.export_stress`` adds the opt-in ``*EL FILE`` / ``S, E`` cards.
+    """
     lines = ["*STEP", "*FREQUENCY", f"{spec.modes},0.334,1.E6",
-             "*NODE FILE", "U", "*BOUNDARY"]
+             "*NODE FILE", "U"]
+    if spec.export_stress:
+        lines.extend(["*EL FILE", "S, E"])
+    lines.append("*BOUNDARY")
     lines.extend(f"{name},1,3" for name in FIXED_SETS)
     lines.extend(["*END STEP", ""])
     return "\n".join(lines)
@@ -947,8 +954,11 @@ def open_wing_source(source: Path) -> Iterator[TextIO]:
 
 
 def build_pure_deck(material: Material, source: Path, output: Path,
-                    modes: int) -> Report:
-    """Copy the wing source up to its placeholder material, then calibrate it."""
+                    modes: int, export_stress: bool = False) -> Report:
+    """Copy the wing source up to its placeholder material, then calibrate it.
+
+    ``export_stress`` adds the opt-in ``*EL FILE`` / ``S, E`` cards.
+    """
     root_count = 0
     in_root = False
     copied = False
@@ -961,9 +971,12 @@ def build_pure_deck(material: Material, source: Path, output: Path,
                 in_root = head.startswith("*NSET") and "NSET=ROOT" in head
                 if head.startswith("*MATERIAL,"):
                     dst.write(wing_material_card(material))
-                    dst.write("\n".join(["*STEP", "*FREQUENCY",
-                                         f"{modes},0.334,1.E6", "*NODE FILE", "U",
-                                         "*BOUNDARY", "ROOT,1,3", "*END STEP", ""]))
+                    step_lines = ["*STEP", "*FREQUENCY",
+                                  f"{modes},0.334,1.E6", "*NODE FILE", "U"]
+                    if export_stress:
+                        step_lines.extend(["*EL FILE", "S, E"])
+                    step_lines.extend(["*BOUNDARY", "ROOT,1,3", "*END STEP", ""])
+                    dst.write("\n".join(step_lines))
                     copied = True
                     break
             elif in_root:
@@ -1052,7 +1065,8 @@ def generate(request: BuildRequest) -> Report:
         report["pure"] = build_pure_deck(request.spec.material(),
                                          request.pure.source,
                                          request.pure.output,
-                                         request.spec.modes)
+                                         request.spec.modes,
+                                         export_stress=request.spec.export_stress)
         report["pure"]["sha256"] = sha256(request.pure.output)
     if request.run_ccx:
         report["ccx"] = run_solver(request.ccx_command, request.output)
@@ -1101,6 +1115,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--wing-source", type=Path, default=DEFAULT_WING_SOURCE,
                         help="second-order wing source deck for --pure-wing "
                              "(plain, .gz or single-member .zip)")
+    parser.add_argument("--export-stress", action="store_true",
+                        help="add *EL FILE S,E to the *FREQUENCY step of the "
+                             "combined and pure decks (default off)")
     parser.add_argument("--run-ccx", action="store_true",
                         help="run CalculiX on the combined deck (explicit only)")
     parser.add_argument("--run-pure-ccx", action="store_true",
@@ -1140,7 +1157,8 @@ def main() -> int:
                     layer_ref_modulus=args.layer_ref_modulus,
                     layer_p=args.layer_p, layer_floor=args.layer_floor,
                     layers=args.layers,
-                    far_field_modulus=args.far_field_modulus)
+                    far_field_modulus=args.far_field_modulus,
+                    export_stress=args.export_stress)
     request = BuildRequest(merged_deck=args.input, output=args.output, meta=meta,
                            spec=spec, pure=pure, run_ccx=args.run_ccx,
                            run_pure_ccx=args.run_pure_ccx,
