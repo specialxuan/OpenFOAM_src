@@ -6,9 +6,12 @@
   volume/mid-edge/KD-tree assertions, merged metadata.
 - `02_generate_modal_case.py`: element-type-aware FSI surfaces, tie, fixed
   boundaries, calibrated wing material, in-file far-field layering, read-back
-  verification.
+  verification; `--export-stress` (default off) adds `*EL FILE S,E` to the
+  frequency step.
 - `03_export_modes.py`: verification gate first (frequency window, pure-wing
-  frequency delta, mode identity), then the legacy FDM CSV contract.
+  frequency delta, mode identity), then the legacy FDM CSV contract;
+  `--export-stress` (default off) additionally writes the six-component
+  `StructNodeStress{m}.csv` / `StructNodeStrain{m}.csv`.
 - `run_pipeline.sh`: sorted/validated 3-stage driver, `--farfield-profile`
   (legacy/fluid), `--pure-wing` reference, `--dry-run`.
 - `tests/test_workflow.py`: synthetic CLI/format coverage plus an env-gated
@@ -68,6 +71,15 @@
   `span <= floor` are asserted.
 - Frequency deck: `*FREQUENCY` `10,0.334,1.E6` (no `STORAGE=`), `*NODE FILE U`,
   `ROOT,1,3` plus the six `FIXED_*` at DOF 1-3.
+- Stress/strain export is opt-in on both sides: `02_generate_modal_case.py
+  --export-stress` adds `*EL FILE` + `S, E` after `*NODE FILE U` in the
+  frequency step, and `03_export_modes.py --export-stress` writes the matching
+  `StructNodeStress{m}.csv` / `StructNodeStrain{m}.csv` (structural
+  `WING`/`WING_PART` nodes only, six components, same three-field header and
+  ascending-node-id contract as `StructNodeDisp`).  Both flags default off and
+  the flag-off outputs stay byte-identical to before.  These CSVs feed
+  `fastDynamicFvMesh` when `modalExtensionStressEnabled` /
+  `modalExtensionStrainEnabled` is on.
 - Stage 3 gates: exactly `modes` positive strictly ascending frequencies, the
   1..1e4 Hz sanity window, `max |rel delta| <= 0.01` against the pure wing, and
   mode-identity cosine `>= 0.9` with a diagonal argmax.  A failing gate writes

@@ -129,6 +129,74 @@ At each mesh `update()`:
   - source-layout note: implementation is split by subsystem into `fastDynamicFvMeshMain.C`, `fastDynamicFvMeshUpdate.C`, `fastDynamicFvMeshIO.C`, `fastDynamicFvMeshModeMapping.C`, `fastDynamicFvMeshForces.C`, `fastDynamicFvMeshSolver.C`, `fastDynamicFvMeshAMR.C`, and `fastDynamicFvMeshDiagnostics.C`; this is a maintainability-only refactor with unchanged runtime keys/behavior.
   - update-orchestration note: `fastDynamicFvMesh::update()` is decomposed into named internal stages for timing, AMR topology update, modal-force relaxation, startup initialization, mesh motion, and write-time output; this keeps the call order and runtime behavior unchanged.
 
+## 模态扩展 (modal extension)
+
+Optional structural post-processing that recovers the structure response from
+the same modal data already used to move the fluid mesh. Every switch defaults
+to `false`, so an existing case behaves exactly as before: no extra files are
+read, no output directory is created, and the default-off path is bit-identical.
+
+- `modalExtensionEnabled` (master switch, default `false`): recovers structural
+  displacement. Enabling it also loads `StructNodeCoor.csv` and
+  `StructNodeDisp1..N.csv` even when `structuralForceEnabled` is `false`.
+- `modalExtensionStressEnabled` (default `false`): additionally recovers
+  structural stress. Requires `modalExtensionEnabled true`.
+- `modalExtensionStrainEnabled` (default `false`): additionally recovers
+  structural strain. Requires `modalExtensionEnabled true`.
+- `structNodeStressPrefix` (default `StructNodeStress`): input prefix, e.g.
+  `StructNodeStress1.csv`.
+- `structNodeStrainPrefix` (default `StructNodeStrain`): input prefix, e.g.
+  `StructNodeStrain1.csv`.
+
+### Inputs
+
+When `modalExtensionStressEnabled true`:
+
+- `StructNodeStress1.csv ... StructNodeStressN.csv` (one per mode).
+
+When `modalExtensionStrainEnabled true`:
+
+- `StructNodeStrain1.csv ... StructNodeStrainN.csv` (one per mode).
+
+Each file follows the same contract as `StructNodeDisp`:
+
+- the first numeric line is the frequency, optionally followed by the node and
+  mode counts (`frequency, nStructNodes, nMode`) which are validated against
+  `StructNodeCoor.csv` when present,
+- the body has exactly `nStructNodes` rows in the same ascending node-id order
+  as `StructNodeCoor.csv`,
+- stress rows carry six components `(SXX,SYY,SZZ,SXY,SYZ,SZX)`, strain rows
+  carry six components `(EXX,EYY,EZZ,EXY,EYZ,EZX)`.
+
+Committing fewer rows, or feeding a 3-column displacement file to the 6-column
+reader, aborts with a fatal error naming the file and line. Inputs accept comma
+or whitespace separators and `#` comment lines like the other CSV readers.
+
+### Outputs
+
+At each `writeTime()`, the master process writes under
+`postProcessing/fastDynamicFvMesh/<time>/`:
+
+- `StructDisp.csv` (3 columns: `ux,uy,uz`),
+- `StructStress.csv` (6 columns) when stress recovery is on,
+- `StructStrain.csv` (6 columns) when strain recovery is on.
+
+Each file uses the FDM CSV contract shared with the CalculiX exporter: a header
+`(time, nStructNodes, nMode)` and every data row formatted as scientific
+uppercase with 10 decimals and width 20 (`%20.10E`), trailing comma included.
+Rows are ordered by the `StructNodeCoor.csv` row order.
+
+### Scope and behavior
+
+- Displacement is superposed from the modal coordinates actually applied to the
+  mesh: `u(node) = sum_m appliedModeDisp[m] * structModeShapes[m][node]`.
+  Stress and strain use the same superposition over their per-mode files.
+- Recovery runs on the master rank only, at write times (the same cadence as
+  the restart state files).
+- Output is purely derived: there are no restart fields for these quantities.
+- Scope is the structural node set only. No stress or strain recovery is
+  computed for the virtual-elastic fluid body.
+
 ## Build
 
 From repository root:
@@ -174,6 +242,15 @@ fastDynamicFvMeshCoeffs
     structuralTargetTolerance 1e-8;
     structNodeCoorFile      StructNodeCoor.csv;
     structNodeDispPrefix    StructNodeDisp;
+
+    // Optional modal extension (structural displacement/stress/strain);
+    // all switches default false, so these keys may be omitted entirely.
+    // modalExtensionEnabled      false;
+    // modalExtensionStressEnabled false;
+    // modalExtensionStrainEnabled false;
+    // structNodeStressPrefix     StructNodeStress;
+    // structNodeStrainPrefix     StructNodeStrain;
+
     meshRefinementSupport   false;
     refinementInterpTolerance 1e-8;
     refinementMappingDiagnostics false;
@@ -232,8 +309,10 @@ Required:
 Optional:
 
 - `FluidPara.csv` (legacy initial modal velocities; zero if missing)
-- `StructNodeCoor.csv`, `StructNodeDisp1.csv ... StructNodeDispN.csv` (required when `structuralForceEnabled true`)
+- `StructNodeCoor.csv`, `StructNodeDisp1.csv ... StructNodeDispN.csv` (required when `structuralForceEnabled true` or `modalExtensionEnabled true`)
 - `StructForce1.csv ... StructForceN.csv` (required when `structuralForceEnabled true`; `N = nStructuralForces`)
+- `StructNodeStress1.csv ... StructNodeStressN.csv` (required when `modalExtensionStressEnabled true`)
+- `StructNodeStrain1.csv ... StructNodeStrainN.csv` (required when `modalExtensionStrainEnabled true`)
 
 CSV-style inputs accept commas or whitespace as separators. Structural force
 files may contain blank lines and `#` comments. Fatal parse errors include the
@@ -243,6 +322,11 @@ file path and line number when available.
 
 - `modal_diagnostics.csv` (only when `writeDiagnostics true`)
   - columns: `Time`, `Force_i`, `PressureForce_i`, `ShearForce_i`, `StructuralForce_i`, `Disp_i`, `Vel_i`, `Acc_i`, `AppliedDisp_i`, `StructuralScale_i`
+- modal-extension snapshots written by master at each `writeTime()`, only when
+  the matching switch is on (see the "模态扩展 (modal extension)" section):
+  - `postProcessing/fastDynamicFvMesh/<time>/StructDisp.csv` (3 columns),
+  - `postProcessing/fastDynamicFvMesh/<time>/StructStress.csv` (6 columns),
+  - `postProcessing/fastDynamicFvMesh/<time>/StructStrain.csv` (6 columns).
 - restart modal state files written at output times:
   - `modeState`
   - `modeForce`
@@ -329,6 +413,14 @@ Conclusion:
 - `refinementFaceMapTolerance` warning:
   - this key is deprecated and ignored,
   - topology mapping uses `mapPolyMesh` lineage only (no geometric face-match fallback).
+- `modalExtensionStressEnabled`/`modalExtensionStrainEnabled` true while
+  `modalExtensionEnabled` false: fatal, both require the master switch.
+- empty `structNodeStressPrefix` or `structNodeStrainPrefix` while
+  `modalExtensionEnabled` true: fatal.
+- missing `StructNodeStress{m}.csv` or `StructNodeStrain{m}.csv` while its
+  switch is on: fatal, naming the missing file path.
+- modal-extension keys present but all switches false: warning that structural
+  displacement, stress and strain recovery will not be performed.
 
 ## Commit-by-commit change log
 
@@ -504,3 +596,26 @@ This section maps each repository commit to concrete code/document changes.
   - `fastDynamicFvMesh/Doc/快速动网格程序手册.md`,
   - `fastDynamicFvMesh/Doc/Figures/fastDynamicFvMesh_Flowchart.drawio`.
 - Follow-up maintainability refactor: decomposed `fastDynamicFvMesh::update()` into named internal stages in `fastDynamicFvMeshUpdate.C` while preserving the original call order and behavior.
+
+### `09d86c5` - add modal extension (structural displacement/stress/strain recovery) (2026-10-08)
+
+- Consolidated all structural code (force projection, mode/stress/strain
+  readers, load-summary logging) into the new translation unit
+  `fastDynamicFvMeshModalExtension.C`; the move is logic-, order- and
+  message-preserving.
+- Added modal-extension dictionary controls, all defaulting to `false`:
+  `modalExtensionEnabled` (structural displacement recovery),
+  `modalExtensionStressEnabled`, `modalExtensionStrainEnabled`, plus
+  `structNodeStressPrefix` (default `StructNodeStress`) and
+  `structNodeStrainPrefix` (default `StructNodeStrain`).
+- Added the six-component input readers for `StructNodeStress{m}.csv` /
+  `StructNodeStrain{m}.csv` and the write-time snapshot writer producing
+  `StructDisp.csv`, `StructStress.csv` and `StructStrain.csv` under
+  `postProcessing/fastDynamicFvMesh/<time>/`.
+- Structural mode files now load when `modalExtensionEnabled` is true, not only
+  under `structuralForceEnabled`.
+- Added the opt-in `--export-stress` flag to the CalculiX deck generators
+  (`*EL FILE` + `S, E` in the `*FREQUENCY` step) and the six-column
+  stress/strain CSV export in `case/AGARD/Mode/03_export_modes.py`.
+- Updated English/Chinese docs, example `dynamicMeshDict` guidance and the AGENT
+  knowledge files for the new switches, files, outputs and failure checks.

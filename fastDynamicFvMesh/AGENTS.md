@@ -14,6 +14,7 @@ Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radiu
 | `fastDynamicFvMeshIO.C` | Dictionary parsing, restart I/O, CSV/modal/structural-force reads |
 | `fastDynamicFvMeshModeMapping.C` | Mode mapping, AMR topology interpolation, reference-face mapping |
 | `fastDynamicFvMeshForces.C` | Pressure/shear/structural modal-force assembly |
+| `fastDynamicFvMeshModalExtension.C` | Modal extension: structural force projection plus displacement/stress/strain recovery and snapshot output |
 | `fastDynamicFvMeshSolver.C` | Wilson-Theta structural dynamics |
 | `fastDynamicFvMeshAMR.C` | AMR indicator cache, refine selection, topology hooks |
 | `fastDynamicFvMeshDiagnostics.C` | Diagnostics CSV and timing reports |
@@ -28,6 +29,7 @@ Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radiu
 | Startup/restart state | `fastDynamicFvMeshIO.C`, `constant/fsiRestart` docs | Fresh `t=0` must not load stale restart state |
 | AMR remapping | `fastDynamicFvMeshModeMapping.C`, `fastDynamicFvMeshAMR.C` | Topology lineage only; no geometric fallback for AMR points |
 | Force projection | `fastDynamicFvMeshForces.C`, `buildForceProjectionCaches()` | Reference-face aggregation matters under refine/unrefine |
+| Modal-extension controls/outputs | `fastDynamicFvMeshIO.C`, `fastDynamicFvMeshModalExtension.C`, `README.md` | `modalExtensionEnabled`/`StressEnabled`/`StrainEnabled` (all default false); `StructNodeStress`/`Strain` inputs; `postProcessing/fastDynamicFvMesh/<time>/` snapshots; structural nodes only |
 | FSI convergence output | `fastDynamicFvMeshUpdate.C` | Publishes `fsiResidual` read by solvers |
 | Timing/diagnostics | `fastDynamicFvMeshDiagnostics.C` | `writeDiagnostics`, `trackTiming`, `trackAmrTiming` |
 

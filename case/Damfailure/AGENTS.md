@@ -20,6 +20,7 @@ Dam-break FSI case generators: water column collapses onto an elastic gate (Calc
 
 - Drivers default to full runs against `/root/Workspace/fdm_run` (FDM) or `/root/Workspace/precice_run` (preCICE); always preview with `--dry-run` first.
 - Both drivers accept `--steps`, `--case-root`, `--res`, `--z-layers`, `--end-time`, `--nprocs`, `--settings-dir`, `--video/--no-video`; FDM adds `--amr` (off by default).
+- FDM stage 02 (`02_run_modal_virtual_elastic.py`) accepts `--export-stress` (default off), which adds `*EL FILE` + `S, E` to the `*FREQUENCY` step so CalculiX writes structural stress/strain records. It is the ccx-side counterpart of the `fastDynamicFvMesh` modal-extension stress/strain inputs (`StructNodeStress{m}.csv` / `StructNodeStrain{m}.csv`).
 - preCICE requires fluid `deltaT == preCICE time-window-size` (default `0.0005`); gate material defaults match the FDM case (`E=1e6, nu=0, rho=2500`).
 - Without arguments the drivers ask interactively; all stage commands run under the case root, never in this directory.
 - Python stages are stdlib-style scripts; verify edits with `python3 -m unittest FDM/test_display_width.py` (run from `case/Damfailure/`).

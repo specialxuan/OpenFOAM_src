@@ -123,12 +123,33 @@ S3=(2,4,3) S4=(3,4,1)`; mid-edge nodes belong implicitly).  It writes
 `ROOT` at DOF 1-3, and `*STEP` / `*FREQUENCY 10,0.334,1.E6` (no `STORAGE=`) /
 `*NODE FILE U` / `*END STEP`.
 
+### Stress/strain export (`--export-stress`)
+
+`02_generate_modal_case.py --export-stress` (default off) adds `*EL FILE` and
+`S, E` after the `*NODE FILE U` card inside the `*FREQUENCY` step of both the
+combined and pure-wing decks, so CalculiX writes the nodal `-4 STRESS` /
+`-4 TOSTRAIN` blocks.  With the flag off the generated decks stay byte-identical
+to before.
+
+`03_export_modes.py --export-stress` (default off) is the matching exporter
+side: after the normal gate, it additionally reads those blocks and writes
+`StructNodeStress{m}.csv` / `StructNodeStrain{m}.csv` for the structural
+(`WING`/`WING_PART`) node set only, six components per node with the same
+three-field header and ascending-node-id contract as the `StructNodeDisp`
+files.  With the flag off the exporter outputs are byte-identical to before.
+These CSVs are the inputs `fastDynamicFvMesh` reads when
+`modalExtensionStressEnabled` / `modalExtensionStrainEnabled` is on.
+
 ## Run
 
 ```bash
 ./run_pipeline.sh --dry-run                  # print all stage commands, write nothing
 ./run_pipeline.sh                            # stages 1,2 (no solver)
 ./run_pipeline.sh --steps 1,2,3 --run-ccx --pure-wing
+# stress/strain: call the stage scripts directly, the driver does not forward
+# --export-stress:
+#   python3 02_generate_modal_case.py ... --export-stress
+#   python3 03_export_modes.py ... --export-stress
 ./run_pipeline.sh --wing-type hard
 ./run_pipeline.sh --far-field-mode uniform --far-field-modulus 28
 ./run_pipeline.sh --farfield-profile fluid \
