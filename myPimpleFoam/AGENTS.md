@@ -28,7 +28,7 @@ Incompressible PIMPLE solver family with FSI wiring plus overset and SRF executa
 ## CONVENTIONS
 
 - Use `wmake myPimpleFoam` from repo root for the main executable.
-- Keep FSI convergence force-residual based: `fsiResidual < fsiTolerance`.
+- Keep FSI convergence force-based (`fsiResidual < fsiTolerance`); the opt-in OR absolute-displacement gate (`fsiDispTolerance > 0`, default off) may also terminate the outer loop.
 - Partitioned FSI freezes mesh motion inside the PIMPLE sub-loop; integrated/implicit FSI moves mesh every PIMPLE loop.
 - Keep displacement-change output as diagnostics and reset the reference after topology changes.
 - Update variant `Make/files` and `Make/options` independently when touching `overPimpleDyMFoam` or `SRFPimpleFoam`.

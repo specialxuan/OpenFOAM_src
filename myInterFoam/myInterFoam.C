@@ -143,7 +143,11 @@ int main(int argc, char *argv[])
                     "FSI Iteration"
                 );
                 const scalar fsiRes = readFsiResidual(mesh);
-                fsiConverged = (fsiRes < fsiControls.tolerance);
+                const bool forceOK = (fsiRes < fsiControls.tolerance);
+                const bool dispOK  = (fsiControls.dispTolerance > 0.0)
+                                  && fsiDisplacementChangeValid(mesh, points0)
+                                  && (maxDiff < fsiControls.dispTolerance);
+                fsiConverged = forceOK || dispOK;
                 points0 = mesh.points();
 
                 logFsiIteration("FSI Iteration", fsiIter, fsiRes, maxDiff);
@@ -183,8 +187,11 @@ int main(int argc, char *argv[])
                     maxDiff
                 );
 
-                // Check for FSI convergence (using force residual)
-                fsiConverged = (fsiRes < fsiControls.tolerance);
+                const bool forceOK = (fsiRes < fsiControls.tolerance);
+                const bool dispOK  = (fsiControls.dispTolerance > 0.0)
+                                  && fsiDisplacementChangeValid(mesh, points0)
+                                  && (maxDiff < fsiControls.dispTolerance);
+                fsiConverged = forceOK || dispOK;
                 points0 = mesh.points();
             }
 

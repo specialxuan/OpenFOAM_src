@@ -115,6 +115,47 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- FSI patch names
     wordRes fsiPatches_;
 
+    //- ===== Interface coupling-acceleration state =====
+
+    //- Coupling acceleration method: constant | aitken | IQN-ILS | IQN-IMVJ
+    word couplingAcceleration_;
+
+    //- Max current-window least-squares columns for the IQN accelerators
+    label iqnMaxHistory_;
+
+    //- IQN column filter: none | QR2 | exponential
+    word iqnFilter_;
+
+    //- IQN filter threshold / exponential cutoff parameter
+    scalar iqnFilterLimit_;
+
+    //- Number of retained prior-window IMVJ inverse-Jacobian chunks
+    label imvjReuse_;
+
+    //- Master-only per-iteration accelerator diagnostic print
+    bool iqnDiagnostics_;
+
+    //- Aitken (Kuttler-Wall) scalar relaxation state
+    scalarField aitkenPrevResidual_; // r_{k-1}
+    scalar aitkenAlpha_;             // alpha_{k-1}
+    bool aitkenHasPrev_;
+
+    //- IQN current-window history columns (newest first)
+    List<scalarField> iqnV_; // columns of Delta r
+    List<scalarField> iqnW_; // columns of Delta raw
+    scalarField iqnPrevResidual_;
+    scalarField iqnPrevRaw_;
+    bool iqnHasPrev_;
+
+    //- Coupling-accelerator window bookkeeping
+    bool accelIterationStarted_; // first history-enabled call of this window
+    bool accelHistoryLive_;      // startupStepCount_ >= 2 at call time
+
+    //- IQN-IMVJ cross-window chunks (row-major flat)
+    List<scalarField> imvjChunkWtilde_; // each nMode * m_q
+    List<scalarField> imvjChunkZ_;      // each m_q * nMode
+    List<label> imvjChunkCols_;         // m_q
+
     //- ===== Per-step bookkeeping, diagnostics, and timing state =====
 
     //- Number of startup calls already treated as Wilson-theta initialisation
@@ -503,7 +544,22 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Assemble fluid/structural modal forces, relax them, and publish residual
     void assembleAndRelaxModalForces(const bool firstIter);
 
-    //- Publish current FSI residual in the mesh object registry
+    //- Return the modal force to apply this iteration for the configured
+    //  coupling accelerator. Reads/writes accelerator history only; it does
+    //  NOT touch appliedModeForce_, modeForce_ or fsiResidual_ (the caller
+    //  owns them). rawFluidForce is modeForce_ after the structural-force
+    //  contribution.
+    scalarField applyCouplingAcceleration
+    (
+        const scalarField& rawFluidForce,
+        const bool firstIter
+    );
+
+    //- Reset per-window accelerator history (Aitken; IQN windows in later
+    //  tasks). IMVJ cross-window chunks are retained.
+    void resetCouplingAccelerationState(const bool newWindow);
+
+    //- Publish current FSI residual in the mesh registry
     void publishFsiResidual();
 
     //- Handle the two legacy startup initialisation passes

@@ -321,6 +321,12 @@ void fastDynamicFvMesh::readControls()
 
     fdmDict.readIfPresent("mappingTolerance", mappingTolerance_);
     fdmDict.readIfPresent("couplingRelaxation", couplingRelaxation_);
+    fdmDict.readIfPresent("couplingAcceleration", couplingAcceleration_);
+    fdmDict.readIfPresent("iqnMaxHistory", iqnMaxHistory_);
+    fdmDict.readIfPresent("iqnFilter", iqnFilter_);
+    fdmDict.readIfPresent("iqnFilterLimit", iqnFilterLimit_);
+    fdmDict.readIfPresent("imvjReuse", imvjReuse_);
+    fdmDict.readIfPresent("iqnDiagnostics", iqnDiagnostics_);
     fdmDict.readIfPresent("pressureField", pressureFieldName_);
     const bool foundRhoRef = fdmDict.readIfPresent("rhoRef", rhoRef_);
     fdmDict.readIfPresent("pRef", pRef_);
@@ -402,6 +408,72 @@ void fastDynamicFvMesh::readControls()
             << "Entry 'couplingRelaxation' must be in the range (0, 1] in "
             << "sub-dictionary '" << typeName << "Coeffs' of "
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if
+    (
+        couplingAcceleration_ != "constant"
+     && couplingAcceleration_ != "aitken"
+     && couplingAcceleration_ != "IQN-ILS"
+     && couplingAcceleration_ != "IQN-IMVJ"
+    )
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'couplingAcceleration' must be one of constant, aitken, "
+            << "IQN-ILS or IQN-IMVJ in sub-dictionary '" << typeName
+            << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << exit(FatalIOError);
+    }
+
+    if (iqnMaxHistory_ < 1)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'iqnMaxHistory' must be >= 1 in sub-dictionary '"
+            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << exit(FatalIOError);
+    }
+
+    if (imvjReuse_ < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'imvjReuse' must be >= 0 in sub-dictionary '"
+            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << exit(FatalIOError);
+    }
+
+    if (iqnFilterLimit_ <= 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'iqnFilterLimit' must be > 0 in sub-dictionary '"
+            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << exit(FatalIOError);
+    }
+
+    if
+    (
+        iqnFilter_ != "none"
+     && iqnFilter_ != "QR2"
+     && iqnFilter_ != "exponential"
+    )
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'iqnFilter' must be one of none, QR2 or exponential in "
+            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (iqnFilter_ == "exponential" && iqnFilterLimit_ >= 1)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'iqnFilterLimit' must be < 1 when 'iqnFilter' is "
+            << "exponential in sub-dictionary '" << typeName << "Coeffs' of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (Pstream::master())
+    {
+        Info << "Coupling acceleration: " << couplingAcceleration_
+             << " (initialRelaxation=" << couplingRelaxation_ << ')' << endl;
     }
 
     if (theta_ < 1)

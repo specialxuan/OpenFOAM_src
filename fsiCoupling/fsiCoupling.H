@@ -46,6 +46,7 @@ struct fsiCouplingControls
     word coupling;
     label maxIter;
     scalar tolerance;
+    scalar dispTolerance;
 };
 
 
@@ -74,6 +75,8 @@ inline fsiCouplingControls readFsiCouplingControls
         dynamicMeshDict.lookupOrDefault<label>("maxFsiIter", 10);
     controls.tolerance =
         dynamicMeshDict.lookupOrDefault<scalar>("fsiTolerance", 1e-4);
+    controls.dispTolerance =
+        dynamicMeshDict.lookupOrDefault<scalar>("fsiDispTolerance", 0.0);
 
     if
     (
@@ -147,6 +150,20 @@ inline scalar fsiMaxDisplacementChange
     }
 
     return maxDiff;
+}
+
+
+inline bool fsiDisplacementChangeValid
+(
+    const fvMesh& mesh,
+    const pointField& previousPoints
+)
+{
+    label topologyChanged =
+        mesh.points().size() == previousPoints.size() ? 0 : 1;
+    reduce(topologyChanged, maxOp<label>());
+
+    return !topologyChanged;
 }
 
 

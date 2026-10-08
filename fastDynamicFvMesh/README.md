@@ -8,7 +8,7 @@ At each mesh `update()`:
 
 1. Computes pressure and viscous-shear traction on configured `fsiPatches`.
 2. Projects face loads onto modal coordinates (pressure and shear tracked separately).
-3. Applies force relaxation (`couplingRelaxation`) and updates `fsiResidual`.
+3. Applies the configured interface coupling acceleration (`couplingAcceleration`, default `constant` force relaxation) and updates `fsiResidual`.
 4. Integrates modal dynamics with Wilson-Theta (`theta`).
 5. Reconstructs mesh-point displacement and moves the mesh.
 6. On `writeTime()`, writes global modal state files for restart continuity.
@@ -16,11 +16,16 @@ At each mesh `update()`:
 ## Key runtime behavior
 
 - Force-based coupling in mesh update path:
+  - the raw modal fluid force is turned into the applied force by the configured
+    `couplingAcceleration` (`constant` default, or `aitken`/`IQN-ILS`/`IQN-IMVJ`),
   - relaxed force is used for structural solve,
   - `fsiResidual` is computed from force update magnitude.
   - integrated/implicit FSI outer-loop convergence should use
     `fsiResidual < fsiTolerance` (force criterion); displacement change can be
     retained as diagnostics only.
+  - the solver-side OR absolute-displacement criterion (`fsiDispTolerance`, see
+    `fsiCoupling/AGENTS.md`) can additionally terminate the loop when the mesh
+    displacement freezes; it is opt-in (default `0` = disabled).
 - Restart support:
   - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`) for non-zero-time continuation/restart only,
   - startup modal mapping now uses current mesh points by default, and only uses `constant/polyMesh/points` when its point count matches the current mesh (prevents `latestTime`+AMR point-count mismatch on restart),
@@ -129,6 +134,47 @@ At each mesh `update()`:
   - source-layout note: implementation is split by subsystem into `fastDynamicFvMeshMain.C`, `fastDynamicFvMeshUpdate.C`, `fastDynamicFvMeshIO.C`, `fastDynamicFvMeshModeMapping.C`, `fastDynamicFvMeshForces.C`, `fastDynamicFvMeshSolver.C`, `fastDynamicFvMeshAMR.C`, and `fastDynamicFvMeshDiagnostics.C`; this is a maintainability-only refactor with unchanged runtime keys/behavior.
   - update-orchestration note: `fastDynamicFvMesh::update()` is decomposed into named internal stages for timing, AMR topology update, modal-force relaxation, startup initialization, mesh motion, and write-time output; this keeps the call order and runtime behavior unchanged.
 
+## 界面耦合加速器 (interface coupling accelerators)
+
+`couplingAcceleration` selects how the raw modal fluid force `raw = modeForce_` is
+turned into the applied modal force each FSI/PIMPLE outer iteration. All keys are
+read with `readIfPresent` and default to the historical constant-relaxation
+behaviour, so an existing dictionary behaves exactly as before (verified by the
+frozen-decomposition regression; see `case/SwingBeam`).
+
+| Key | Default | Range / tokens | Meaning |
+|---|---|---|---|
+| `couplingAcceleration` | `constant` | `constant` \| `aitken` \| `IQN-ILS` \| `IQN-IMVJ` | Accelerator selector. `constant` reproduces the historical `F + α(raw-F)` path exactly (including the first-iteration override). |
+| `couplingRelaxation` | `1.0` | `(0, 1]` | `constant`: relaxation factor. Others: initial relaxation `α0` on the first iteration of every time window. |
+| `iqnMaxHistory` | `10` | `>= 1` | Max current-window least-squares columns kept by IQN-ILS/IMVJ. |
+| `iqnFilter` | `QR2` | `none` \| `QR2` \| `exponential` | Column filter. `QR2` is preCICE-faithful (relative orthogonal-complement threshold). `exponential` is an age-cutoff defined by this library (not a preCICE construct). |
+| `iqnFilterLimit` | `1e-2` | `> 0`; `< 1` when `exponential` | QR2 relative threshold / exponential decay base. |
+| `imvjReuse` | `5` | `>= 0` | Finished time windows whose IMVJ `(W̃, Z)` chunks are retained. `0` degenerates to per-window IQN-ILS. |
+| `iqnDiagnostics` | `false` | `true`/`false` | Master-only per-iteration `CouplingAcceleration ...` line (name, active columns, `||r||`). |
+
+- `aitken`: scalar Küttler–Wall secant `α_k = -α_{k-1}(r_{k-1}·(r_k-r_{k-1}))/||r_k-r_{k-1}||²`, clamped to `(0,1]`.
+- `IQN-ILS`: current-window interface quasi-Newton with inverse least squares; `F_{k+1} = raw + W c`, `(V)c = -r`.
+- `IQN-IMVJ`: adds a cross-window multi-vector inverse-Jacobian approximation with `imvjReuse` retained chunks.
+- The first history-live iteration of each window always uses the initial relaxation `couplingRelaxation`; the two startup pseudo-updates (`initializeStartupStateIfNeeded`) never train history.
+- Accelerator state is in-memory only (no new restart files); after a restart the accelerator re-seeds from `couplingRelaxation`.
+- The published `fsiResidual_` formula is unchanged (`max_m |ΔF|/(|F_new|+1e-12)`) and remains the only published residual.
+
+### Added-mass caveat (measured)
+
+The accelerators are implemented and were verified against their reference formulas,
+but on the strongly added-mass-dominated SwingBeam case (closed water tank, fixed-point
+gain `|g| ≈ 30–130`) they diverge. Every IQN-ILS/IQN-IMVJ configuration probed —
+`α0 ∈ {1e-4, 5e-4, 1e-3}`, `iqnMaxHistory ∈ {5, 10}`, `iqnFilter ∈ {QR2, none}`,
+`imvjReuse ∈ {0, 5}` — hit a GAMG SIGFPE between `t=0.001` and `t=0.017 s` at
+`endTime 0.05 s` (13/13 cells); Aitken diverges at `t=0.001–0.023 s`. The published
+`fsiResidual` stays small mid-window while the internal fixed-point defect `||r||`
+grows ≈1.3–2× per step until SIGFPE. preCICE's mature Aitken/IQN-ILS fail on the same
+case, so this is a property of the added-mass problem, not of this implementation.
+
+For such cases keep `couplingAcceleration constant` with a small `couplingRelaxation`
+(SwingBeam uses `0.004`) and use the solver-side OR displacement criterion
+(`fsiDispTolerance`, see `fsiCoupling/AGENTS.md`).
+
 ## 模态扩展 (modal extension)
 
 Optional structural post-processing that recovers the structure response from
@@ -232,6 +278,15 @@ fastDynamicFvMeshCoeffs
 
     mappingTolerance   4e-6;
     couplingRelaxation 0.25;    // must be in (0, 1]
+    // Interface coupling accelerator; default constant (historical behaviour).
+    // aitken | IQN-ILS | IQN-IMVJ are implemented but diverge on strongly
+    // added-mass-dominated cases - see the accelerator section above.
+    couplingAcceleration constant;
+    iqnMaxHistory      10;
+    iqnFilter          QR2;      // none | QR2 | exponential
+    iqnFilterLimit     1e-2;
+    imvjReuse          5;
+    iqnDiagnostics     false;
     pressureField      p;
     rhoRef             1000;    // optional; required only for kinematic p when rho is unavailable
     pRef               0;
@@ -399,6 +454,9 @@ Conclusion:
 
 - `Missing required entry 'fsiPatches'`: add `fsiPatches` in `fastDynamicFvMeshCoeffs`.
 - `couplingRelaxation` out of range: keep it in `(0, 1]`.
+- unknown `couplingAcceleration` token: use one of `constant | aitken | IQN-ILS | IQN-IMVJ`.
+- `iqnMaxHistory < 1`, `imvjReuse < 0` or `iqnFilterLimit <= 0` are fatal; `iqnFilter` must be `none | QR2 | exponential`, and `exponential` additionally needs `iqnFilterLimit < 1`.
+- IQN/Aitken divergence on added-mass-dominated cases is expected (see the accelerator section); use `constant` with a small `couplingRelaxation` there.
 - pressure field not found: set `pressureField` correctly.
 - kinematic pressure with no density: provide `rhoRef`, `transportProperties/rho`, or `rho` field.
 - zero mapped points: check coordinate frame/units and increase `mappingTolerance`.

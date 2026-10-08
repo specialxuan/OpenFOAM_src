@@ -35,7 +35,7 @@ mesh/modal converters, staged pipelines).
 | -------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | Dynamic mesh runtime       | `fastDynamicFvMesh/fastDynamicFvMesh/`                                       | `update()`, AMR, restart, force assembly, diagnostics          |
 | Mesh library docs          | `fastDynamicFvMesh/README.md`, `fastDynamicFvMesh/Doc/快速动网格程序手册.md` | Must stay synced with library code                             |
-| Shared FSI controls        | `fsiCoupling/fsiCoupling.H`                                                  | `fsiCoupling`, `maxFsiIter`, `fsiTolerance`, `fsiResidual`     |
+| Shared FSI controls        | `fsiCoupling/fsiCoupling.H`                                                  | `fsiCoupling`, `maxFsiIter`, `fsiTolerance`, `fsiDispTolerance`, `fsiResidual` |
 | Incompressible FSI solver  | `myPimpleFoam/`                                                              | Main solver plus overset and SRF variants                      |
 | VOF FSI solver             | `myInterFoam/`                                                               | Two-phase main, overset variant, nested three-phase executable |
 | Compressible FSI solver    | `myRhoPimpleFoam/`                                                           | Main solver, equation headers, overset variant, baseline copy  |
@@ -78,7 +78,7 @@ include `fsiCoupling.H`; no overset/SRF/three-phase variant carries FSI wiring.
 - Run `ccx` and OpenFOAM tools (`blockMesh`, `checkMesh`, solvers, etc.) only inside a case directory under `/root/Workspace/...` — never in the `src/` repository root. Running them in `src/` drops `.sta/.dat/.cvg` and other artifacts into the repo and pollutes it.
 - Scratch files, temporary extraction, tool output, and intermediate files must go under `/root/Workspace/tmp/` — never in the system `/tmp` (a system directory where everything written is treated as disposable).
 - New dictionary keys need safe defaults (`readIfPresent`) preserving current behavior. Removing/renaming keys requires a deprecation warning path (canonical example: `refinementFaceMapTolerance` in `fastDynamicFvMeshIO.C`).
-- FSI convergence is force-residual based: `fsiResidual < fsiTolerance`. Displacement change is diagnostic-only.
+- FSI convergence is force-residual based: `fsiResidual < fsiTolerance`; opt-in OR absolute-displacement gate `fsiDispTolerance > 0` (default off). Displacement change is otherwise diagnostic-only.
 - Changes under `fastDynamicFvMesh/fastDynamicFvMesh/` must update both English and Chinese docs, build the library, and run a smoke path.
 - Runtime-control, file-format, or workflow changes must update example case configs and `dynamicMeshDict` guidance.
 - Baseline archives live at `/root/Workspace/case_damfailure.zip` and `/root/Workspace/case_transient.zip`; copy them to temp run dirs before testing.
