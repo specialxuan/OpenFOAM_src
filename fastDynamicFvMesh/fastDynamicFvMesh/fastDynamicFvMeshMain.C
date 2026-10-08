@@ -40,6 +40,48 @@ namespace Foam
 defineTypeNameAndDebug(fastDynamicFvMesh, 0);
 addToRunTimeSelectionTable(dynamicFvMesh, fastDynamicFvMesh, IOobject);
 
+namespace
+{
+    //- Should the mesh geometry be initialised before the refinement engine
+    //  is constructed?
+    //
+    //  The dynamicRefineFvMesh base constructs its hexRef8 refinement engine
+    //  in the constructor initialiser list. hexRef8's constructor runs
+    //  checkMesh(), which validates the anchors of coupled-patch faces via
+    //  syncTools::swapBoundaryFaceList(). For patches that need a
+    //  transformation (cyclic rotational/translational), those anchors can
+    //  only be compared once the coupled-patch transformation tensors have
+    //  been calculated by polyMesh::init(). polyMesh::init() only runs from
+    //  the polyMesh constructor when the base is constructed with doInit=true;
+    //  without it, transformed cyclic patches abort with
+    //  "Faces do not seem to be correct across coupled boundaries".
+    //
+    //  The eager path makes dynamicMotionSolverListFvMesh construct its
+    //  mandatory motion solver (unless a 'solvers' sub-dictionary is present,
+    //  which may be empty to construct none). Opt in explicitly through
+    //  dynamicMeshDict:
+    //    - 'solvers' sub-dictionary present  -> eager initialisation,
+    //    - otherwise the legacy lazy path is kept.
+    bool eagerMeshInit(const IOobject& io)
+    {
+        IOdictionary dynamicMeshDict
+        (
+            IOobject
+            (
+                "dynamicMeshDict",
+                io.time().constant(),
+                polyMesh::regionName(io.name()),
+                io.db(),
+                IOobject::MUST_READ_IF_MODIFIED,
+                IOobject::NO_WRITE,
+                IOobject::NO_REGISTER
+            )
+        );
+
+        return dynamicMeshDict.found("solvers");
+    }
+}
+
 // * * * * * * * * * * * * * * * * Constructors  * * * * * * * * * * * * * * //
 
 // Constructor
@@ -54,7 +96,7 @@ addToRunTimeSelectionTable(dynamicFvMesh, fastDynamicFvMesh, IOobject);
 //    between CSV node coordinates and local mesh points. This mapping is
 //    intentionally brute-force for correctness.
 fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
-    : dynamicRefineFvMesh(io, false), nMode_(0),
+    : dynamicRefineFvMesh(io, eagerMeshInit(io)), nMode_(0),
       // Initialize restart containers; dedicated restart I/O is handled
       // explicitly in readRestartStateStore()/writeRestartStateStore().
       modeForce_(
@@ -135,6 +177,16 @@ bool fastDynamicFvMesh::init(const bool doInit)
 
     runtimeRefinementEnabled_ =
         dynamicMeshDict.found("dynamicRefineFvMeshCoeffs");
+
+    if (runtimeRefinementEnabled_)
+    {
+        // refineInterval 0 is dynamicRefineFvMesh's own "no refinement"
+        // setting (updateTopology returns immediately); honour it here so
+        // such dictionaries do not take the runtime-AMR path.
+        runtimeRefinementEnabled_ =
+            dynamicMeshDict.subDict("dynamicRefineFvMeshCoeffs")
+                .getOrDefault<label>("refineInterval", 1) != 0;
+    }
 
     if (runtimeRefinementEnabled_)
     {
