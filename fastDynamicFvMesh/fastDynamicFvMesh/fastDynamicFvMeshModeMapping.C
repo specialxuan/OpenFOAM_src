@@ -421,7 +421,7 @@ void fastDynamicFvMesh::readModeShapes()
 
     buildForceProjectionCaches();
 
-    if (structuralForceEnabled_)
+    if (structuralForceEnabled_ || modalExtensionEnabled_)
     {
         pointField structPoints;
         List<vectorField> structShapes;
@@ -447,20 +447,29 @@ void fastDynamicFvMesh::readModeShapes()
 
         structNodeCoords_.transfer(structPoints);
         structModeShapes_.transfer(structShapes);
+
+        // Optional stress/strain mode files (no-op while both switches are
+        // off); requires the structural nodes to be loaded already
+        readStructuralStressStrainFiles(modeDir);
+
         structuralModeForce_.setSize(nMode_, 0.0);
-        readStructuralForceFiles(modeDir);
 
-        if (Pstream::master())
+        if (structuralForceEnabled_)
         {
-            label totalNodes = 0;
-            forAll(structuralForceNodeIDs_, fi)
-            {
-                totalNodes += structuralForceNodeIDs_[fi].size();
-            }
+            readStructuralForceFiles(modeDir);
 
-            Info << "Loaded " << nStructuralForces_
-                 << " structural force files with mapped node references="
-                 << totalNodes << endl;
+            if (Pstream::master())
+            {
+                label totalNodes = 0;
+                forAll(structuralForceNodeIDs_, fi)
+                {
+                    totalNodes += structuralForceNodeIDs_[fi].size();
+                }
+
+                Info << "Loaded " << nStructuralForces_
+                     << " structural force files with mapped node references="
+                     << totalNodes << endl;
+            }
         }
     }
     else
@@ -471,6 +480,8 @@ void fastDynamicFvMesh::readModeShapes()
         structuralForceValues_.clear();
         structNodeCoords_.clear();
         structModeShapes_.clear();
+        structModeStress_.clear();
+        structModeStrain_.clear();
     }
 }
 
