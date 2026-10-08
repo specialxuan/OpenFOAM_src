@@ -1,7 +1,7 @@
 ---
 description: Runs OpenFOAM jobs in the background and monitors solver logs/PIDs while the main conversation stays interactive.
 mode: subagent
-model: deepseek/deepseek-v4-flash
+model: deepseek/deepseek-flash
 permission:
   edit: deny
   read: allow

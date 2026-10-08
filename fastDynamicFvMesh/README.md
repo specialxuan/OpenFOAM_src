@@ -50,6 +50,18 @@ At each mesh `update()`:
   - dictionary validation now checks `theta >= 1`, positive `mappingTolerance`
     and `maxDispChange`, positive `modalMass` entries, and non-negative
     `modalDamp` entries.
+- Transformed coupled patches (e.g. rotational `cyclic` periodicity) require
+  eager mesh initialisation:
+  - add an empty `solvers` sub-dictionary to `constant/dynamicMeshDict`; the
+    `dynamicRefineFvMesh` base then initialises the mesh (and its cyclic
+    transformation tensors) before constructing its `hexRef8` engine, which
+    otherwise aborts with `Faces do not seem to be correct across coupled
+    boundaries`,
+  - the refinement engine is still constructed, so such dictionaries must also
+    provide `dynamicRefineFvMeshCoeffs { correctFluxes (); dumpLevel false;
+    refineInterval 0; }`; `refineInterval 0` disables the runtime AMR path
+    (and its mesh-refinement-support warning),
+  - dictionaries without `solvers` keep the previous lazy initialisation.
 - Optional refinement-aware FSI coupling:
   - enable by `meshRefinementSupport true`,
   - if `dynamicRefineFvMeshCoeffs` exists in `constant/dynamicMeshDict`, runtime AMR is executed in `fastDynamicFvMesh::update()` before modal-force/mesh-motion steps (same keys as OpenFOAM `dynamicRefineFvMesh`),
@@ -306,6 +318,10 @@ Conclusion:
 - pressure field not found: set `pressureField` correctly.
 - kinematic pressure with no density: provide `rhoRef`, `transportProperties/rho`, or `rho` field.
 - zero mapped points: check coordinate frame/units and increase `mappingTolerance`.
+- `Faces do not seem to be correct across coupled boundaries` with cyclic
+  patches: add `solvers { }` and
+  `dynamicRefineFvMeshCoeffs { correctFluxes (); dumpLevel false; refineInterval 0; }`
+  to `constant/dynamicMeshDict` (eager mesh initialisation, see above).
 - refinement startup interpolation failure (`...points remain unmapped...`):
   - ensure the refined mesh is generated from the same base topology as the mode files,
   - check refinement is hex-like for 2/4/8 corner classification,
