@@ -326,6 +326,8 @@ void fastDynamicFvMesh::writeUpdateOutputs(const label currentTimeIndex)
         writeRestartStateStore();
         Info << "Wrote restart modal state files to " << restartStateInstance()
              << " at t=" << this->time().timeName() << endl;
+
+        writeModalExtensionOutputs();
     }
 }
 
