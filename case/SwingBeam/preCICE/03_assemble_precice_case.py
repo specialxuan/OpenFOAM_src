@@ -13,7 +13,7 @@ from the outputs of 01_generate_mesh.py (preCICE variant):
 This script produces:
 
     <out-dir>/
-    |-- precice-config.xml          (verified template, parallel-implicit + IQN-ILS)
+    |-- precice-config.xml          (parallel-implicit, 1 iteration + python force relaxation)
     |-- run-coupled.sh              (two-background-subshell coupled launcher)
     |-- fluid-openfoam/
     |   |-- constant/
@@ -213,9 +213,9 @@ def check_solid_inp(solid_path, solid_dir=None):
     if not re.search(r'^\*NSET,\s*NSET\s*=\s*Ninterface\s*$', text, flags=re.M | re.I):
         problems.append("dam_gate.inp missing '*NSET, NSET=Ninterface' "
                         "(preCICE solid adapter patch 'interface' -> 'Ninterface')")
-    if not re.search(r'^\*DYNAMIC,\s*ALPHA\s*=\s*0\.0\s*,\s*DIRECT\s*$',
+    if not re.search(r'^\*DYNAMIC,\s*ALPHA\s*=\s*-?[0-9.]+\s*,\s*DIRECT\s*$',
                      main_text, flags=re.M | re.I):
-        problems.append("dam_gate.inp missing '*DYNAMIC, ALPHA=0.0, DIRECT' "
+        problems.append("dam_gate.inp missing '*DYNAMIC, ALPHA=<num>, DIRECT' "
                         "(solid must march at the coupling time-window)")
     return problems
 
@@ -495,6 +495,12 @@ PRECICE_CONFIG_XML = """<?xml version="1.0" encoding="UTF-8" ?>
     <read-data name="Force" mesh="Solid-Mesh" />
     <write-data name="DisplacementDelta" mesh="Solid-Mesh" />
     <watch-point mesh="Solid-Mesh" name="Gate-Top-Center" coordinate="0.298;0.120;0.006" />
+    <action:python mesh="Solid-Mesh" timing="read-mapping-post">
+      <path name="__ACTION_PATH__" />
+      <module name="force_relax" />
+      <source-data name="Force" />
+      <target-data name="Force" />
+    </action:python>
   </participant>
 
   <m2n:sockets acceptor="Fluid" connector="Solid" exchange-directory=".." />
@@ -505,24 +511,49 @@ PRECICE_CONFIG_XML = """<?xml version="1.0" encoding="UTF-8" ?>
   <max-time value="0.5" />
   <exchange data="Force" mesh="Solid-Mesh" from="Fluid" to="Solid" />
   <exchange data="DisplacementDelta" mesh="Solid-Mesh" from="Solid" to="Fluid" />
-  <max-iterations value="50" />
-  <min-iterations value="3" />
-  <!-- Force-only: preCICE ORs convergence measures, and a DisplacementDelta
-       limit of 5e-7 stopped iterating before the coupling force converged,
-       pumping energy into the soft beam (closed-tank added mass). -->
+  <max-iterations value="1" />
+  <min-iterations value="1" />
+  <!-- Closed-tank added-mass stability (E=1e6): the fixed-point iteration cannot
+       converge for the soft beam (forces double per window from ~0.005 s), so the
+       coupling is deliberately run as ONE iteration per window and the received
+       Force is low-passed by the 'force_relax' python action (read-mapping-post):
+       appliedForce = old + 0.01 * (raw - old) per 0.0005 s window.  Together with
+       the solid deck's HHT-alpha = -0.1 (2*dt mode damping) this is the measured
+       stable envelope for the 2.0 s run; alpha must stay near 0.01/TW (0.0025 at
+       a 0.00025 s window is unstable, 0.02 at 0.0005 s is unstable). -->
   <absolute-convergence-measure limit="1e-3" data="Force" mesh="Solid-Mesh" />
-  <acceleration:IQN-ILS>
-    <data name="DisplacementDelta" mesh="Solid-Mesh" />
-    <data name="Force" mesh="Solid-Mesh" />
-    <preconditioner type="residual-sum" />
-    <filter type="QR2" limit="1e-1" />
-    <initial-relaxation value="0.1" />
-    <max-used-iterations value="50" />
-    <time-windows-reused value="5" />
-  </acceleration:IQN-ILS>
+  <acceleration:constant>
+    <relaxation value="1.0" />
+  </acceleration:constant>
 </coupling-scheme:parallel-implicit>
 </precice-configuration>
 """
+
+FORCE_RELAX_PY = '''"""FDM-mirror force under-relaxation for the preCICE solid participant.
+
+fastDynamicFvMesh stabilizes this closed-tank added-mass coupling with a force
+low-pass (couplingRelaxation = 0.01 per 1e-3 s step).  This preCICE python
+action (read-mapping-post on Force) applies the same style of filter to the
+force the solid reads; with min-iterations = max-iterations = 1 it runs once per
+time window.  ALPHA = 0.01 per 0.0005 s window is the measured stability sweet
+spot for the 2.0 s E=1e6 run (with the deck's HHT-alpha = -0.1): larger alpha
+(0.02) and smaller alpha (0.0025) both run away.  The fluid still receives the
+solid's raw DisplacementDelta, so the interface kinematics stay consistent;
+only the force input is relaxed.
+"""
+ALPHA = 0.01
+_prev = None
+
+
+def performAction(time, sourceData, targetData):
+    global _prev
+    n = targetData.size
+    if _prev is None:
+        _prev = [sourceData[i] for i in range(n)]
+    for i in range(n):
+        _prev[i] = _prev[i] + ALPHA * (sourceData[i] - _prev[i])
+        targetData[i] = _prev[i]
+'''
 
 
 # --------------------------------------------------------------------------- #
@@ -1190,9 +1221,11 @@ def main(argv):
                '<time-window-size value="%s" />' % _fmt_num(args.delta_t))
            .replace(
                '<max-time value="0.5" />',
-               '<max-time value="%s" />' % _fmt_num(args.precice_max_time)))
+               '<max-time value="%s" />' % _fmt_num(args.precice_max_time))
+           .replace("__ACTION_PATH__", solid_out))
     _write(os.path.join(out_dir, "run-coupled.sh"), RUN_COUPLED_SH)
-    log("wrote precice-config.xml + run-coupled.sh")
+    _write(os.path.join(solid_out, "force_relax.py"), FORCE_RELAX_PY)
+    log("wrote precice-config.xml + run-coupled.sh + solid-calculix/force_relax.py")
 
     # ---- fluid constant/ ----------------------------------------------------
     _write(os.path.join(fluid_out, "constant", "dynamicMeshDict"),
@@ -1292,7 +1325,8 @@ def main(argv):
            _fmt_num(args.write_interval)))
     log("solid deck    : dam_gate.inp (E=%s nu=%s rho=%s)"
         % (_fmt_num(args.gate_e), _fmt_num(args.gate_nu), _fmt_num(args.gate_rho)))
-    log("precice       : time-window %s, max-time %s, parallel-implicit IQN-ILS"
+    log("precice       : time-window %s, max-time %s, parallel-implicit 1-iteration "
+        "+ python force relaxation (alpha=0.01, FDM couplingRelaxation mirror)"
         % (_fmt_num(args.delta_t), _fmt_num(args.precice_max_time)))
     log("next step     : python3 04_run_precice.py --case %s [--end-time 0.02]"
         % out_dir)

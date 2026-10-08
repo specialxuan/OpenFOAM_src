@@ -12,7 +12,7 @@ Closed, water-filled tank enclosing a centrally-clamped elastic cantilever beam 
 | `FDM/run_pipeline.sh` | Six-stage driver: `01` mesh → `02` modal → `03` assemble → `04` FDM run → `05` reconstruct/post → `06` video |
 | `FDM/01_generate_mesh.py` | Fluid `blockMesh` topology plus solid CalculiX hex mesh (beam `6 x 45 x 3`, 1288 nodes / 810 cells) |
 | `FDM/02_run_modal_virtual_elastic.py` | CalculiX modal analysis → fluid mode CSVs, and structural `mode/StructNodeCoor.csv` + `mode/StructNodeDisp{m}.csv`; `--excite-force` also writes `mode/StructForce1.csv` |
-| `FDM/03_assemble_fdm_case.py` | Owns the OpenFOAM case settings; injects the `structuralForceEnabled` keys (`nStructuralForces 1; structuralForceFilePrefix StructForce; structuralTargetTolerance 1e-3;`) plus `couplingRelaxation` (and `modalMass`/`modalDamp` under `--modal-zeta`) |
+| `FDM/03_assemble_fdm_case.py` | Owns the OpenFOAM case settings; injects the `structuralForceEnabled` keys (`nStructuralForces 1; structuralForceFilePrefix StructForce; structuralTargetTolerance 1e-3;`), top-level `fsiTolerance` (default `1e-3`), `couplingRelaxation` (default `0.7`) and `modalMass`/`modalDamp` (default `--modal-zeta 0.03`); `nOuterCorrectors 100` |
 | `FDM/04_run_fdm.py` | Runs the `fastDynamicFvMesh` modal-superposition solver |
 | `FDM/05_postprocess.py` | Reconstruct + tip-displacement post-processing (`postprocess/fdm_gate_topright_disp.csv`) |
 | `FDM/06_export_fdm_video.py` | ParaView frames + MP4 export |
@@ -36,7 +36,8 @@ Closed, water-filled tank enclosing a centrally-clamped elastic cantilever beam 
 
 ## KEY TUNING
 
-- FDM: the closed, fully water-filled tank makes the beam added-mass-dominated. Stable default is `couplingRelaxation = 0.01`; higher values (`1/0.2/0.05`) blow up in the first time step. Override with `--coupling-relax`.
+- FDM: the closed, fully water-filled tank makes the beam added-mass-dominated. The generated defaults are the requested implicit set: `couplingRelaxation 0.7`, top-level `fsiTolerance 1e-3`, `modalMass (1..1)` + `modalDamp (2*zeta*omega_m)` at `zeta=0.03`, `nOuterCorrectors 100`. Measured on `res=30`/`z=4`, `A=0.1 N`, `dt=1e-3`: `0.7` diverges inside the first step (mesh displacement change ×22 per iteration → GAMG SIGFPE at `t=0.001`); the constant-relaxation stable window is `α ≤ ~6e-3` (`α=0.01`+100 iters crashes at `t=0.029`; `nOuterCorrectors 300` crashes at `t=0.021`; halving `dt` only re-samples the startup window). The library has no Aitken/adaptive relaxation, so `--coupling-relax` sweeps are the only lever.
+- FDM convergence evidence (best full run, `--coupling-relax 0.004`, 2.0 s): all 2000 steps physically converged — last-iteration mesh displacement change < `1e-6 m` (median `1.1e-9 m`), tip `dx` p2p `24.8 mm` (old `0.01` baseline `25.4 mm`). Force residual median `6.7e-4`, 60.2% of steps `< 1e-3`. The remaining "FSI force residual did not converge" prints are ill-conditioned `|ΔF|/|F|` spikes on near-zero modal forces (mode crossing zero, `|F|~3e-4`, absolute change ~`5e-5`) during startup (`t≤0.011`) and force zero-crossing windows — they do not indicate physical non-convergence.
 - preCICE: partitioned coupling requires the 10x stiffer `--gate-e 1.0e7` for stability. At the spec `E=1e6` the coupled run survives ~15 time windows and then aborts with a fluid SIGFPE at about `t=0.008`.
 - preCICE additionally pins `p_rgh` TOP to `fixedValue 0`, uses force-only convergence, `correctPhi yes` with PCG/DIC pcorr, and the `NtipAux` + `*EQUATION` MPC for the periodic load.
 

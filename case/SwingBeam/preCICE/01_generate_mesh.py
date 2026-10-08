@@ -70,6 +70,8 @@ FORCE_FREQ_DEFAULT = 2.5       # Hz
 FORCE_END_TIME_DEFAULT = 0.5   # s, span of the amplitude table (= *DYNAMIC total)
 FORCE_AMP_NAME = "FORCE_AMP"
 SOLID_DELTA_T = 0.0005         # deck *DYNAMIC increment = preCICE time-window
+SOLID_ALPHA = -0.1             # HHT-alpha: numerical damping of the 2*dt mode
+SOLID_END_MARGIN = 20          # extra *DYNAMIC steps past the amplitude table
 
 # x / y / z split coordinates
 XS = [0.0, WATER_X, FSI_X0, FSI_X1, LX]           # 5 points
@@ -920,7 +922,9 @@ def build_force_amplitude(force_amp, force_freq, force_end_time,
 def write_solid_inp(path, coords, elements, nsets, e_mod, nu, rho,
                     force_amp=FORCE_AMP_DEFAULT,
                     force_freq=FORCE_FREQ_DEFAULT,
-                    force_end_time=FORCE_END_TIME_DEFAULT):
+                    force_end_time=FORCE_END_TIME_DEFAULT,
+                    solid_delta_t=SOLID_DELTA_T,
+                    solid_alpha=SOLID_ALPHA):
     """Write the CalculiX deck (nodes, elements, nsets, material, step).
 
     The periodic tip load F(t)=force_amp*sin(2*pi*force_freq*t) is written as
@@ -973,8 +977,9 @@ def write_solid_inp(path, coords, elements, nsets, e_mod, nu, rho,
         lines.append("%d, 1, %s" % (nid, g(-share)))
 
     lines.append("*STEP, INC=1000000")
-    lines.append("*DYNAMIC, ALPHA=0.0, DIRECT")
-    lines.append("%s, 0.5" % g(SOLID_DELTA_T))
+    lines.append("*DYNAMIC, ALPHA=%s, DIRECT" % g(solid_alpha))
+    lines.append("%s, %s" % (g(solid_delta_t),
+                             g(force_end_time + SOLID_END_MARGIN * solid_delta_t)))
     lines.append("*RESTART,WRITE,FREQUENCY=1")
     lines.append("*BOUNDARY")
     lines.append("Nbottom, 1, 3, 0.0")
@@ -982,7 +987,8 @@ def write_solid_inp(path, coords, elements, nsets, e_mod, nu, rho,
     lines.append("Nzmax, 3, 3, 0.0")
     lines.append("NtipAux, 2, 3, 0.0")
     lines.append("*AMPLITUDE, NAME=%s, TIME=TOTAL TIME" % FORCE_AMP_NAME)
-    for t, value in build_force_amplitude(force_amp, force_freq, force_end_time):
+    for t, value in build_force_amplitude(force_amp, force_freq, force_end_time,
+                                          delta_t=solid_delta_t):
         lines.append("%s, %s" % (g(t), g(value)))
     lines.append("*CLOAD")
     lines.append("Ninterface, 1, 0.0")
@@ -1463,6 +1469,13 @@ def parse_args(argv):
     p.add_argument("--force-end-time", type=float, default=FORCE_END_TIME_DEFAULT,
                    help="span of the tabular *AMPLITUDE in s "
                         "(default %.4g = deck *DYNAMIC total)" % FORCE_END_TIME_DEFAULT)
+    p.add_argument("--solid-delta-t", type=float, default=SOLID_DELTA_T,
+                   help="deck *DYNAMIC increment / amplitude-table spacing in s; "
+                        "must equal the preCICE time-window (default %.4g)"
+                        % SOLID_DELTA_T)
+    p.add_argument("--solid-alpha", type=float, default=SOLID_ALPHA,
+                   help="CalculiX *DYNAMIC HHT-alpha (-1/3..0); numerical damping "
+                        "of the 2*dt partition mode (default %.3g)" % SOLID_ALPHA)
     return p.parse_args(argv)
 
 
@@ -1555,7 +1568,8 @@ def main(argv):
     inp_path = os.path.join(solid_dir, "dam_gate.inp")
     write_solid_inp(inp_path, coords, elements, nsets,
                     args.gate_e, args.gate_nu, args.gate_rho,
-                    args.force_amp, args.force_freq, args.force_end_time)
+                    args.force_amp, args.force_freq, args.force_end_time,
+                    args.solid_delta_t, args.solid_alpha)
     log.log("periodic tip force: A=%s N, f=%s Hz, amplitude table 0..%s s "
             "(MPC NtipAux <-> Ntip x %d)"
             % (g(args.force_amp), g(args.force_freq), g(args.force_end_time),
