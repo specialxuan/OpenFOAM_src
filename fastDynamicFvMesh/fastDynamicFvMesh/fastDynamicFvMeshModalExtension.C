@@ -105,6 +105,115 @@ bool parseCsvValues(const string& input, Values&... values)
     return ok;
 }
 
+//- Read one 6-component structural mode quantity (stress or strain) for all
+//  modes from <prefix><m>.csv into a flat [nodeI*6 + component] layout.
+//  Header is (frequency, [nStructNodes, nMode]) like the shape files; each
+//  body row must provide six values in the given component order.
+void readSixComponentStructuralModeFiles(
+    const fileName& modeDir,
+    const word& prefix,
+    const label nStructNodes,
+    const label nMode,
+    const word& referenceFileName,
+    const char* quantityName,
+    const char* componentOrder,
+    List<scalarField>& modeValues)
+{
+    modeValues.setSize(nMode);
+
+    for (label m = 0; m < nMode; ++m)
+    {
+        const fileName quantityPath =
+            modeDir / (prefix + std::to_string(m + 1) + ".csv");
+        std::ifstream in(quantityPath);
+
+        if (!in.good())
+        {
+            FatalErrorInFunction
+                << "Cannot open required structural " << quantityName
+                << " file " << quantityPath << exit(FatalError);
+        }
+
+        string line;
+        label lineNo = 0;
+
+        if (!readNextCsvDataLine(in, line, lineNo))
+        {
+            FatalErrorInFunction
+                << "Missing frequency line in structural " << quantityName
+                << " file " << quantityPath << exit(FatalError);
+        }
+
+        scalar freq = 0.0;
+        scalar fileNodeCount = 0.0;
+        scalar fileModeCount = 0.0;
+
+        string headerLine(line);
+        normalizeCsvLine(headerLine);
+        std::stringstream hLine(headerLine);
+        if (!(hLine >> freq))
+        {
+            FatalErrorInFunction
+                << "Failed to read frequency from structural " << quantityName
+                << " file " << quantityPath << " at line " << lineNo << ": "
+                << line << exit(FatalError);
+        }
+
+        if ((hLine >> fileNodeCount) && (hLine >> fileModeCount))
+        {
+            if (label(fileNodeCount) != nStructNodes ||
+                label(fileModeCount) != nMode)
+            {
+                FatalErrorInFunction
+                    << "Structural " << quantityName << " file "
+                    << quantityPath << " reports " << label(fileNodeCount)
+                    << " nodes and " << label(fileModeCount) << " modes, but "
+                    << referenceFileName << " reports " << nStructNodes
+                    << " nodes and " << nMode << " modes."
+                    << exit(FatalError);
+            }
+        }
+
+        scalarField& nodeValues = modeValues[m];
+        nodeValues.setSize(nStructNodes*6, 0.0);
+
+        for (label nodeI = 0; nodeI < nStructNodes; ++nodeI)
+        {
+            if (!readNextCsvDataLine(in, line, lineNo))
+            {
+                FatalErrorInFunction
+                    << "Unexpected end of file while reading structural "
+                    << quantityName << " node " << nodeI << " from "
+                    << quantityPath << exit(FatalError);
+            }
+
+            scalar s0 = 0.0;
+            scalar s1 = 0.0;
+            scalar s2 = 0.0;
+            scalar s3 = 0.0;
+            scalar s4 = 0.0;
+            scalar s5 = 0.0;
+
+            if (!parseCsvValues(line, s0, s1, s2, s3, s4, s5))
+            {
+                FatalErrorInFunction
+                    << "Invalid structural " << quantityName
+                    << " entry for node " << nodeI << " in " << quantityPath
+                    << " at line " << lineNo << ": " << line
+                    << ". Expected six values (" << componentOrder << ")."
+                    << exit(FatalError);
+            }
+
+            nodeValues[nodeI*6 + 0] = s0;
+            nodeValues[nodeI*6 + 1] = s1;
+            nodeValues[nodeI*6 + 2] = s2;
+            nodeValues[nodeI*6 + 3] = s3;
+            nodeValues[nodeI*6 + 4] = s4;
+            nodeValues[nodeI*6 + 5] = s5;
+        }
+    }
+}
+
 } // End anonymous namespace
 
 vector fastDynamicFvMesh::interpolateStructuralForce(
@@ -358,6 +467,48 @@ void fastDynamicFvMesh::readStructuralModeFiles(const fileName& modeDir,
             ++dataRow;
         }
     }
+}
+
+void fastDynamicFvMesh::readStructuralStressStrainFiles(const fileName& modeDir)
+{
+    structModeStress_.clear();
+    structModeStrain_.clear();
+
+    if (!modalExtensionStressEnabled_ && !modalExtensionStrainEnabled_)
+    {
+        return;
+    }
+
+    if (structNodeCoords_.size() == 0)
+    {
+        FatalErrorInFunction
+            << "Structural nodes must be loaded before reading structural "
+            << "stress/strain files." << exit(FatalError);
+    }
+
+    const label nStructNodes = structNodeCoords_.size();
+
+    if (Pstream::master())
+    {
+        if (modalExtensionStressEnabled_)
+        {
+            readSixComponentStructuralModeFiles(
+                modeDir, structNodeStressPrefix_, nStructNodes, nMode_,
+                structNodeCoorFile_, "stress", "SXX,SYY,SZZ,SXY,SYZ,SZX",
+                structModeStress_);
+        }
+
+        if (modalExtensionStrainEnabled_)
+        {
+            readSixComponentStructuralModeFiles(
+                modeDir, structNodeStrainPrefix_, nStructNodes, nMode_,
+                structNodeCoorFile_, "strain", "EXX,EYY,EZZ,EXY,EYZ,EZX",
+                structModeStrain_);
+        }
+    }
+
+    Pstream::broadcast(structModeStress_);
+    Pstream::broadcast(structModeStrain_);
 }
 
 void fastDynamicFvMesh::readStructuralForceFiles(const fileName& modeDir)
