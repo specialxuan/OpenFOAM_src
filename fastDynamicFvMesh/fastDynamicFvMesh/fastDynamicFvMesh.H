@@ -396,6 +396,10 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Read per-mode structural stress/strain files (6 components per node)
     void readStructuralStressStrainFiles(const fileName& modeDir);
 
+    //- Recover structural modal displacement/stress/strain and write CSV
+    //snapshots under postProcessing/fastDynamicFvMesh/<time>/
+    void writeModalExtensionOutputs();
+
     //- Build cached patch IDs, projection and topology-consistent face mapping
     void buildForceProjectionCaches(const mapPolyMesh* mpmPtr = nullptr);
 

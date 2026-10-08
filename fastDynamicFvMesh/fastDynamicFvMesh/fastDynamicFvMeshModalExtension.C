@@ -16,6 +16,7 @@ Description
 
 #include "Pstream.H"
 #include "SortableList.H"
+#include "OSspecific.H"
 #include "fastDynamicFvMesh.H"
 #include "Time.H"
 #include <algorithm>
@@ -103,6 +104,51 @@ bool parseCsvValues(const string& input, Values&... values)
     (void)expander{0, ((ok = ok && bool(ss >> values)), 0)...};
 
     return ok;
+}
+
+//- Write one structural snapshot CSV in the FDM CSV contract used by
+//  case/AGARD/Mode/03_export_modes.py `_write_group`:
+//  header (time, nStructNodes, nMode) then one row per structural node, every
+//  field formatted as Python "%20.10E" (scientific, 10 decimals, uppercase E,
+//  width 20, trailing comma, newline-terminated).
+template<class RowFunction>
+void writeStructuralSnapshot(
+    const fileName& outputPath,
+    const scalar timeValue,
+    const label nStructNodes,
+    const label nMode,
+    const label nComponents,
+    const char* quantityName,
+    RowFunction rowValues)
+{
+    std::ofstream out(outputPath.c_str());
+
+    if (!out.good())
+    {
+        FatalErrorInFunction
+            << "Cannot open " << outputPath << " for writing structural "
+            << quantityName << " snapshot." << exit(FatalError);
+    }
+
+    out << std::scientific << std::uppercase << std::setprecision(10);
+
+    out << std::setw(20) << timeValue << ','
+        << std::setw(20) << scalar(nStructNodes) << ','
+        << std::setw(20) << scalar(nMode) << ",\n";
+
+    scalar values[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+    for (label nodeI = 0; nodeI < nStructNodes; ++nodeI)
+    {
+        rowValues(nodeI, values);
+
+        for (label k = 0; k < nComponents; ++k)
+        {
+            out << std::setw(20) << values[k] << ',';
+        }
+
+        out << '\n';
+    }
 }
 
 //- Read one 6-component structural mode quantity (stress or strain) for all
@@ -701,6 +747,102 @@ void fastDynamicFvMesh::logStructuralLoadSummary()
         Info << "Structural modal load summary at t=" << this->time().timeName()
              << ": mode0=" << structuralModeForce_[0]
              << ", signal=" << structuralForceSignal_ << endl;
+    }
+}
+
+void fastDynamicFvMesh::writeModalExtensionOutputs()
+{
+    if (!modalExtensionEnabled_ || !Pstream::master())
+    {
+        return;
+    }
+
+    const label nStructNodes = structNodeCoords_.size();
+    const label nComponents = 6;
+
+    if (nMode_ <= 0 || nStructNodes == 0 ||
+        structModeShapes_.size() != nMode_)
+    {
+        return;
+    }
+
+    const bool haveStress = modalExtensionStressEnabled_ &&
+        structModeStress_.size() == nMode_ &&
+        structModeStress_[0].size() == nStructNodes*nComponents;
+    const bool haveStrain = modalExtensionStrainEnabled_ &&
+        structModeStrain_.size() == nMode_ &&
+        structModeStrain_[0].size() == nStructNodes*nComponents;
+
+    const fileName outputDir = this->time().globalPath() / "postProcessing" /
+        "fastDynamicFvMesh" / this->time().timeName();
+
+    mkDir(outputDir);
+
+    const scalar timeValue = this->time().value();
+
+    writeStructuralSnapshot(
+        outputDir / "StructDisp.csv", timeValue, nStructNodes, nMode_, 3,
+        "displacement",
+        [this](const label nodeI, scalar* values)
+        {
+            vector u = vector::zero;
+
+            for (label m = 0; m < nMode_; ++m)
+            {
+                u += appliedModeDisp_[m] * structModeShapes_[m][nodeI];
+            }
+
+            values[0] = u.x();
+            values[1] = u.y();
+            values[2] = u.z();
+        });
+
+    if (haveStress)
+    {
+        writeStructuralSnapshot(
+            outputDir / "StructStress.csv", timeValue, nStructNodes, nMode_,
+            nComponents, "stress",
+            [this](const label nodeI, scalar* values)
+            {
+                const label base = nodeI*nComponents;
+
+                for (label k = 0; k < nComponents; ++k)
+                {
+                    scalar sigma = 0.0;
+
+                    for (label m = 0; m < nMode_; ++m)
+                    {
+                        sigma += appliedModeDisp_[m] *
+                            structModeStress_[m][base + k];
+                    }
+
+                    values[k] = sigma;
+                }
+            });
+    }
+
+    if (haveStrain)
+    {
+        writeStructuralSnapshot(
+            outputDir / "StructStrain.csv", timeValue, nStructNodes, nMode_,
+            nComponents, "strain",
+            [this](const label nodeI, scalar* values)
+            {
+                const label base = nodeI*nComponents;
+
+                for (label k = 0; k < nComponents; ++k)
+                {
+                    scalar epsilon = 0.0;
+
+                    for (label m = 0; m < nMode_; ++m)
+                    {
+                        epsilon += appliedModeDisp_[m] *
+                            structModeStrain_[m][base + k];
+                    }
+
+                    values[k] = epsilon;
+                }
+            });
     }
 }
 
