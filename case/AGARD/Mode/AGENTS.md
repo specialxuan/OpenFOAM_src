@@ -111,6 +111,7 @@
 
 ```bash
 ./run_pipeline.sh --dry-run
+./run_pipeline.sh --dry-run --skip-if-fresh   # show which generation stages would be skipped
 ./run_pipeline.sh --farfield-profile fluid --farfield-deck /path/to/fluid_icem.inp --dry-run
 ./run_pipeline.sh --steps 1,2,3 --run-ccx --pure-wing
 AGARD_RUN_SLOW_TESTS=1 python3 -m unittest tests/test_workflow.py

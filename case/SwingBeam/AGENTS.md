@@ -29,6 +29,7 @@ Closed, water-filled tank enclosing a centrally-clamped elastic cantilever beam 
 
 - Run roots default to `/root/Workspace/StructTest/fdm` (FDM) and `/root/Workspace/StructTest/precice` (preCICE); always preview with `--dry-run` first.
 - Both drivers accept `--case-root`, `--steps`, `--res`, `--z-layers`, `--end-time`, `--write-interval`, `--nprocs`, `--settings-dir`, `--video/--no-video`.
+- Both drivers accept `--skip-if-fresh` (opt-in mtime-based skip of fresh generation stages; solver/post/video stages always run).
 - FDM extras: `--delta-t`, `--no-excite` (stage 02 `--excite-force` is on by default), `--force-amp`, `--force-freq`, `--force-end-time`, `--modal-zeta`, `--coupling-relax`, `--coupling-acceleration`, `--fsi-disp-tolerance`, `--amr`.
 - preCICE extras: `--delta-t`, `--gate-e`, `--gate-nu`, `--gate-rho`, `--force-amp`, `--force-freq`, `--force-end-time`, `--solid-threads`.
 - FDM `--write-interval` is a step count; preCICE `--write-interval` is runTime, and preCICE `--delta-t` must equal the preCICE time-window-size (default `0.0005`).

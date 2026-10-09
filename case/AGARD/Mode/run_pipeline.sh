@@ -28,6 +28,7 @@ MIN_COSINE=""
 RUN_CCX=0
 CCX_COMMAND="ccx"
 DRY_RUN=0
+SKIP_IF_FRESH=0
 
 usage() {
     cat <<'EOF'
@@ -89,6 +90,8 @@ Solver / stage 3 pass-through:
   --max-rel X              max |relative frequency difference| (default 0.01)
   --min-cosine X           min mode field cosine (default 0.9)
   --dry-run                print every stage command; write nothing
+  --skip-if-fresh          skip a generation stage (1,2) when all outputs are newer than all inputs;
+                           only mtime is used; stage 3 (verification/export) always runs
 EOF
 }
 
@@ -123,6 +126,7 @@ while [ "$#" -gt 0 ]; do
         --run-ccx) RUN_CCX=1; shift ;;
         --ccx-command) CCX_COMMAND="${2:?--ccx-command requires an executable}"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --skip-if-fresh) SKIP_IF_FRESH=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) error "unknown option: $1"; usage >&2; exit 2 ;;
     esac
@@ -192,6 +196,48 @@ if [ "$PURE_WING" -eq 1 ]; then
     [ -n "$PURE_FRD" ] || PURE_FRD="$MODAL_DIR/pure_${WING_TYPE}.frd"
 fi
 
+# --------------------------------------------------------------------------- #
+#  --skip-if-fresh: generation-stage freshness gate (mtime only)
+#  stage_fresh <out...> -- <in...>: returns 0 when every output exists and is
+#  newer than every input. A directory is compared by its newest file.
+# --------------------------------------------------------------------------- #
+stage_fresh() {
+    local arg sep=0
+    local outs=() ins=()
+    for arg in "$@"; do
+        if [ "$arg" = "--" ]; then
+            sep=1
+            continue
+        fi
+        if [ "$sep" -eq 0 ]; then outs+=("$arg"); else ins+=("$arg"); fi
+    done
+    [ "${#outs[@]}" -gt 0 ] && [ "${#ins[@]}" -gt 0 ] || return 1
+
+    local o i om im newest
+    for o in "${outs[@]}"; do
+        [ -e "$o" ] || return 1
+    done
+    for i in "${ins[@]}"; do
+        [ -e "$i" ] || return 1
+    done
+    for o in "${outs[@]}"; do
+        om="$(stat -c %Y "$o")"
+        if [ -d "$o" ]; then
+            newest="$(find "$o" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -n 1 | cut -d. -f1)"
+            [ -n "$newest" ] && om="$newest"
+        fi
+        for i in "${ins[@]}"; do
+            im="$(stat -c %Y "$i")"
+            if [ -d "$i" ]; then
+                newest="$(find "$i" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -n 1 | cut -d. -f1)"
+                [ -n "$newest" ] && im="$newest"
+            fi
+            [ "$om" -gt "$im" ] || return 1
+        done
+    done
+    return 0
+}
+
 run_step() {
     local step="$1" command
     case "$step" in
@@ -228,6 +274,50 @@ run_step() {
     eval "$command" 2>&1 | tee "$WORK_ROOT/logs/stage_${step}.log"
 }
 
+# --------------------------------------------------------------------------- #
+#  Stage wrapper: with --skip-if-fresh, stages 1-2 are skipped when their
+#  outputs are fresh (mtime). Stage 3 (the verification gate + CSV export)
+#  always runs; a stale output file never proves a completed run.
+# --------------------------------------------------------------------------- #
+run_stage() {
+    local step="$1" fresh=0
+    if [ "$SKIP_IF_FRESH" -eq 1 ]; then
+        case "$step" in
+            1)
+                if stage_fresh "$MESH_DECK" "$MESH_META" -- \
+                        "$SCRIPT_DIR/01_assemble_mesh.py" \
+                        "$FARFIELD_DECK" "$WING_DECK"; then
+                    fresh=1
+                fi
+                ;;
+            2)
+                local stage2_out=("$MODAL_DECK" "$MODAL_META")
+                [ "$RUN_CCX" -eq 1 ] && stage2_out+=("$MODAL_DIR/$STEM.dat" "$MODAL_DIR/$STEM.frd")
+                if [ "$PURE_WING" -eq 1 ]; then
+                    stage2_out+=("$PURE_DECK")
+                    [ "$RUN_CCX" -eq 1 ] && stage2_out+=("$MODAL_DIR/pure_${WING_TYPE}.dat" "$MODAL_DIR/pure_${WING_TYPE}.frd")
+                fi
+                local stage2_in=("$SCRIPT_DIR/02_generate_modal_case.py" "$MESH_DECK")
+                [ "$PURE_WING" -eq 1 ] && stage2_in+=("$WING_DECK")
+                if stage_fresh "${stage2_out[@]}" -- "${stage2_in[@]}"; then
+                    fresh=1
+                fi
+                ;;
+        esac
+        if [ "$DRY_RUN" -eq 1 ]; then
+            if [ "$fresh" -eq 1 ]; then
+                echo "[DRY] stage $step: would skip (outputs fresh)"
+            else
+                echo "[DRY] stage $step: would run"
+            fi
+        elif [ "$fresh" -eq 1 ]; then
+            echo "[SKIP] stage $step: outputs fresh"
+            return 0
+        fi
+    fi
+    run_step "$step"
+}
+
 echo "[AGARD-PIPE] work-root=$WORK_ROOT steps=$STEPS modes=$MODES tie-tolerance=$TIE_TOLERANCE wing-type=$WING_TYPE far-field=$FAR_FIELD_MODE layers=$LAYERS layer-emax-factor=$LAYER_EMAX_FACTOR layer-ref=$LAYER_REF_MODULUS layer-p=$LAYER_P layer-floor=$LAYER_FLOOR farfield-profile=$FARFIELD_PROFILE pure-wing=$PURE_WING run-ccx=$RUN_CCX dry-run=$DRY_RUN"
-for step in $NORMALIZED_STEPS; do run_step "$step"; done
+for step in $NORMALIZED_STEPS; do run_stage "$step"; done
 echo "[AGARD-PIPE] complete"

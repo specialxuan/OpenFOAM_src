@@ -43,6 +43,7 @@ VIDEO_LUT=""             # LUT 预设名 (空 = 06 默认: magU -> Rainbow Desat
 VIDEO_FPS=30             # 视频帧率
 VIDEO_RES=""             # 视频分辨率 WxH (空 = 06 默认 1920x1080)
 DRY_RUN=0
+SKIP_IF_FRESH=0   # --skip-if-fresh: 跳过输出比输入新的生成阶段
 STEP_04_FAILED=0
 STEP_04_RC=0
 
@@ -90,6 +91,7 @@ usage() {
   --video-fps <N>        视频帧率 (默认 $VIDEO_FPS)
   --video-res <WxH>      视频分辨率 (默认 06 内置 1920x1080)
   --dry-run              只打印将执行的命令, 不执行
+  --skip-if-fresh        仅按 mtime 跳过输出已最新的生成阶段 (1/2/3); 求解/后处理/视频阶段 (4/5/6) 始终运行
   -h, --help             显示本帮助
 
 示例:
@@ -143,6 +145,7 @@ while [ $# -gt 0 ]; do
         --video-fps)       VIDEO_FPS="${2:?--video-fps 需要一个参数}"; shift 2 ;;
         --video-res)       VIDEO_RES="${2:?--video-res 需要一个参数}"; shift 2 ;;
         --dry-run)         DRY_RUN=1; shift ;;
+        --skip-if-fresh)   SKIP_IF_FRESH=1; shift ;;
         -h|--help)         usage; exit 0 ;;
         *)                 error "未知选项: $1"; usage >&2; exit 2 ;;
     esac
@@ -269,6 +272,48 @@ run_script() {
     eval "$*" 2>&1 | tee "$logf" | awk '/^\[(FDM|PRECICE)/ {print; fflush()}'
     rc=${PIPESTATUS[0]}
     return "$rc"
+}
+
+# --------------------------------------------------------------------------- #
+#  --skip-if-fresh: 生成阶段新鲜度门控 (mtime)
+#  stage_fresh <out...> -- <in...>: 所有输出均存在且比所有输入新时返回 0。
+#  目录按其中最新文件的 mtime 比较; 求解/后处理/视频阶段不经过此门控。
+# --------------------------------------------------------------------------- #
+stage_fresh() {
+    local arg sep=0
+    local outs=() ins=()
+    for arg in "$@"; do
+        if [ "$arg" = "--" ]; then
+            sep=1
+            continue
+        fi
+        if [ "$sep" -eq 0 ]; then outs+=("$arg"); else ins+=("$arg"); fi
+    done
+    [ "${#outs[@]}" -gt 0 ] && [ "${#ins[@]}" -gt 0 ] || return 1
+
+    local o i om im newest
+    for o in "${outs[@]}"; do
+        [ -e "$o" ] || return 1
+    done
+    for i in "${ins[@]}"; do
+        [ -e "$i" ] || return 1
+    done
+    for o in "${outs[@]}"; do
+        om="$(stat -c %Y "$o")"
+        if [ -d "$o" ]; then
+            newest="$(find "$o" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -n 1 | cut -d. -f1)"
+            [ -n "$newest" ] && om="$newest"
+        fi
+        for i in "${ins[@]}"; do
+            im="$(stat -c %Y "$i")"
+            if [ -d "$i" ]; then
+                newest="$(find "$i" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -n 1 | cut -d. -f1)"
+                [ -n "$newest" ] && im="$newest"
+            fi
+            [ "$om" -gt "$im" ] || return 1
+        done
+    done
+    return 0
 }
 
 # --------------------------------------------------------------------------- #
@@ -414,6 +459,61 @@ run_step() {
 }
 
 # --------------------------------------------------------------------------- #
+#  阶段包装: --skip-if-fresh 时按 mtime 跳过新鲜的生成阶段 (1/2/3);
+#  求解/后处理/视频阶段 (4/5/6) 始终运行 (日志/产物存在不能证明求解完成)。
+# --------------------------------------------------------------------------- #
+run_stage() {
+    local step="$1" fresh=0
+    if [ "$SKIP_IF_FRESH" -eq 1 ]; then
+        case "$step" in
+            1)
+                if stage_fresh \
+                        "$CASE_ROOT/mesh/fluid-openfoam/system/blockMeshDict" \
+                        "$CASE_ROOT/mesh/fluid-openfoam/constant/polyMesh/points" \
+                        "$CASE_ROOT/mesh/solid-calculix/dam_gate.inp" -- \
+                        "$SCRIPT_DIR/01_generate_mesh.py"; then
+                    fresh=1
+                fi
+                ;;
+            2)
+                local stage2_outs=("$CASE_ROOT/modal_ve/gate_fluid_modal.dat"
+                                   "$CASE_ROOT/modal_ve/mode/FluidNodeCoor.csv"
+                                   "$CASE_ROOT/modal_ve/mode/StructNodeCoor.csv")
+                [ "$EXCITE" = "yes" ] && stage2_outs+=("$CASE_ROOT/modal_ve/mode/StructForce1.csv")
+                if stage_fresh "${stage2_outs[@]}" -- \
+                        "$SCRIPT_DIR/02_run_modal_virtual_elastic.py" \
+                        "$CASE_ROOT/mesh/fluid-openfoam/system/blockMeshDict"; then
+                    fresh=1
+                fi
+                ;;
+            3)
+                local stage3_in=("$SCRIPT_DIR/03_assemble_fdm_case.py"
+                                 "$CASE_ROOT/mesh/fluid-openfoam/constant/polyMesh/points"
+                                 "$CASE_ROOT/modal_ve/mode/FluidNodeCoor.csv")
+                [ -n "$SETTINGS_DIR" ] && stage3_in+=("$SETTINGS_DIR")
+                if stage_fresh \
+                        "$CASE_ROOT/fdm_case/system/controlDict" \
+                        "$CASE_ROOT/fdm_case/constant/dynamicMeshDict" -- \
+                        "${stage3_in[@]}"; then
+                    fresh=1
+                fi
+                ;;
+        esac
+        if [ "$DRY_RUN" -eq 1 ]; then
+            if [ "$fresh" -eq 1 ]; then
+                echo "[DRY] stage $step: would skip (outputs fresh)"
+            else
+                echo "[DRY] stage $step: would run"
+            fi
+        elif [ "$fresh" -eq 1 ]; then
+            echo "[SKIP] stage $step: outputs fresh"
+            return 0
+        fi
+    fi
+    run_step "$step"
+}
+
+# --------------------------------------------------------------------------- #
 #  打印配置摘要
 # --------------------------------------------------------------------------- #
 echo "[FDM-PIPE] ===== StructTest 封闭水箱悬臂梁六脚本流水线 (步骤 $STEPS) ====="
@@ -456,7 +556,7 @@ echo
 for s in $(echo "$STEPS" | tr ',' '\n' | sort -u -n); do
     if [ "$s" -eq 4 ]; then
         set +e
-        run_step "$s"
+        run_stage "$s"
         STEP_04_RC=$?
         set -e
         if [ "$STEP_04_RC" -ne 0 ]; then
@@ -464,7 +564,7 @@ for s in $(echo "$STEPS" | tr ',' '\n' | sort -u -n); do
             error "步骤 4 执行失败 (exit $STEP_04_RC), 继续尝试步骤 5/6"
         fi
     else
-        run_step "$s"
+        run_stage "$s"
     fi
 done
 
