@@ -8,7 +8,8 @@ Compressible PIMPLE solver family with FSI convergence wiring and dynamic-mesh v
 
 | Path | Purpose |
 |---|---|
-| `myRhoPimpleFoam.C` | Custom compressible FSI solver main |
+| `myRhoPimpleFoam.C` | Custom compressible FSI solver main; FSI branches share `pimpleLoopBody.H` |
+| `pimpleLoopBody.H` | Shared PIMPLE loop body included by partitioned, integrated and explicit branches |
 | `rhoPimpleFoam.C` | Baseline/reference copy kept in-tree |
 | `UEqn.H`, `EEqn.H`, `pEqn.H`, `pcEqn.H` | Equation snippets for coupled flow solve |
 | `createFields.H`, `createFieldRefs.H` | Field setup and references |

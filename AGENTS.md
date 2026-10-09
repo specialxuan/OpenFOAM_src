@@ -63,7 +63,7 @@ LSP is not configured for OpenFOAM `.C/.H` in this harness; a codegraph index ex
 | `readFsiResidual()`                                     | function | `fsiCoupling/fsiCoupling.H`                                            | 3 solver mains, 6 sites     | Solver-side force residual convergence                         |
 | `myPimpleFoam.C`                                        | main     | `myPimpleFoam/`                                                        | exe `$(FOAM_USER_APPBIN)`   | Incompressible FSI solver; mesh via `controlledUpdate()`       |
 | `myInterFoam.C`                                         | main     | `myInterFoam/`                                                         | exe `$(FOAM_USER_APPBIN)`   | Two-phase VOF FSI solver                                       |
-| `myRhoPimpleFoam.C`                                     | main     | `myRhoPimpleFoam/`                                                     | exe `$(FOAM_USER_APPBIN)`   | Compressible FSI solver; PIMPLE body inlined 3x (no loop hdr)  |
+| `myRhoPimpleFoam.C`                                     | main     | `myRhoPimpleFoam/`                                                     | exe `$(FOAM_USER_APPBIN)`   | Compressible FSI solver; branches share `pimpleLoopBody.H`       |
 | `interMixingFoam.C`                                     | main     | `myInterFoam/interMixingFoam/`                                         | exe `$(FOAM_APPBIN)`        | Three-phase VOF solver with local mixture models               |
 | `rhoPimpleFoam.C`                                       | main     | `myRhoPimpleFoam/`                                                     | NOT built (no Make entry)   | Upstream baseline reference copy; do not treat as a target     |
 

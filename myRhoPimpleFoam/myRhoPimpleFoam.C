@@ -147,66 +147,7 @@ int main(int argc, char *argv[])
 
                 while (pimple.loop())
                 {
-                    if (pimple.firstIter() || moveMeshOuterCorrectors)
-                    {
-                        // Store momentum to set rhoUf for introduced faces.
-                        autoPtr<volVectorField> rhoU;
-                        if (rhoUf.valid())
-                        {
-                            rhoU.reset(new volVectorField("rhoU", rho*U));
-                        }
-
-                        // Do any mesh changes
-                        mesh.controlledUpdate();
-
-                        if (mesh.changing())
-                        {
-                            MRF.update();
-
-                            if (correctPhi)
-                            {
-                                // Calculate absolute flux
-                                // from the mapped surface velocity
-                                phi = mesh.Sf() & rhoUf();
-
-                                #include "correctPhi.H"
-
-                                // Make the fluxes relative to the mesh-motion
-                                fvc::makeRelative(phi, rho, U);
-                            }
-
-                            if (checkMeshCourantNo)
-                            {
-                                #include "meshCourantNo.H"
-                            }
-                        }
-                    }
-
-                    if (pimple.firstIter() && !pimple.SIMPLErho())
-                    {
-                        #include "rhoEqn.H"
-                    }
-
-                    #include "UEqn.H"
-                    #include "EEqn.H"
-
-                    // --- Pressure corrector loop
-                    while (pimple.correct())
-                    {
-                        if (pimple.consistent())
-                        {
-                            #include "pcEqn.H"
-                        }
-                        else
-                        {
-                            #include "pEqn.H"
-                        }
-                    }
-
-                    if (pimple.turbCorr())
-                    {
-                        turbulence->correct();
-                    }
+                    #include "pimpleLoopBody.H"
                 }
 
                 // Now update mesh based on new forces
@@ -243,66 +184,7 @@ int main(int argc, char *argv[])
                  #include "readDyMControls.H"
                  moveMeshOuterCorrectors = true;
 
-                 if (pimple.firstIter() || moveMeshOuterCorrectors)
-                 {
-                    // Store momentum to set rhoUf for introduced faces.
-                    autoPtr<volVectorField> rhoU;
-                    if (rhoUf.valid())
-                    {
-                        rhoU.reset(new volVectorField("rhoU", rho*U));
-                    }
-
-                    // Do any mesh changes
-                    mesh.controlledUpdate();
-
-                    if (mesh.changing())
-                    {
-                        MRF.update();
-
-                        if (correctPhi)
-                        {
-                            // Calculate absolute flux
-                            // from the mapped surface velocity
-                            phi = mesh.Sf() & rhoUf();
-
-                            #include "correctPhi.H"
-
-                            // Make the fluxes relative to the mesh-motion
-                            fvc::makeRelative(phi, rho, U);
-                        }
-
-                        if (checkMeshCourantNo)
-                        {
-                            #include "meshCourantNo.H"
-                        }
-                    }
-                }
-
-                if (pimple.firstIter() && !pimple.SIMPLErho())
-                {
-                    #include "rhoEqn.H"
-                }
-
-                #include "UEqn.H"
-                #include "EEqn.H"
-
-                // --- Pressure corrector loop
-                while (pimple.correct())
-                {
-                    if (pimple.consistent())
-                    {
-                        #include "pcEqn.H"
-                    }
-                    else
-                    {
-                        #include "pEqn.H"
-                    }
-                }
-
-                if (pimple.turbCorr())
-                {
-                    turbulence->correct();
-                }
+                 #include "pimpleLoopBody.H"
 
                 const scalar maxDiff = fsiMaxDisplacementChange
                 (
@@ -339,66 +221,7 @@ int main(int argc, char *argv[])
             pimpleControl pimple(mesh);
             while (pimple.loop())
             {
-                if (pimple.firstIter() || moveMeshOuterCorrectors)
-                {
-                    // Store momentum to set rhoUf for introduced faces.
-                    autoPtr<volVectorField> rhoU;
-                    if (rhoUf.valid())
-                    {
-                        rhoU.reset(new volVectorField("rhoU", rho*U));
-                    }
-
-                    // Do any mesh changes
-                    mesh.controlledUpdate();
-
-                    if (mesh.changing())
-                    {
-                        MRF.update();
-
-                        if (correctPhi)
-                        {
-                            // Calculate absolute flux
-                            // from the mapped surface velocity
-                            phi = mesh.Sf() & rhoUf();
-
-                            #include "correctPhi.H"
-
-                            // Make the fluxes relative to the mesh-motion
-                            fvc::makeRelative(phi, rho, U);
-                        }
-
-                        if (checkMeshCourantNo)
-                        {
-                            #include "meshCourantNo.H"
-                        }
-                    }
-                }
-
-                if (pimple.firstIter() && !pimple.SIMPLErho())
-                {
-                    #include "rhoEqn.H"
-                }
-
-                #include "UEqn.H"
-                #include "EEqn.H"
-
-                // --- Pressure corrector loop
-                while (pimple.correct())
-                {
-                    if (pimple.consistent())
-                    {
-                        #include "pcEqn.H"
-                    }
-                    else
-                    {
-                        #include "pEqn.H"
-                    }
-                }
-
-                if (pimple.turbCorr())
-                {
-                    turbulence->correct();
-                }
+                #include "pimpleLoopBody.H"
             }
         }
 
