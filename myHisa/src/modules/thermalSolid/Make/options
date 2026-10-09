@@ -1,6 +1,6 @@
 include ../../../buildDefs.include
 
-EXE_INC = -g \
+EXE_INC = \
     $(FOAM_VERSION) \
     -I../solver/lnInclude \
     -I$(LIB_SRC)/finiteVolume/lnInclude \

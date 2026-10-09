@@ -303,13 +303,25 @@ vector fastDynamicFvMesh::interpolateStructuralForce(
 
 void fastDynamicFvMesh::calcStructuralModalForces()
 {
-    structuralModeForce_ = 0.0;
-    structuralForceSignal_ = 0.0;
-
     if (!structuralForceEnabled_ || structuralForceNodeIDs_.size() == 0)
+    {
+        structuralModeForce_ = 0.0;
+        structuralForceSignal_ = 0.0;
+        return;
+    }
+
+    // Prescribed structural loading depends only on the physical time, which
+    // is constant across the FSI sub-iterations of a time step: reuse the
+    // values evaluated for this time index instead of recomputing and
+    // broadcasting them every call.
+    const label timeIndex = this->time().timeIndex();
+    if (structuralForceTimeIndex_ == timeIndex)
     {
         return;
     }
+
+    structuralModeForce_ = 0.0;
+    structuralForceSignal_ = 0.0;
 
     if (Pstream::master())
     {
@@ -344,6 +356,8 @@ void fastDynamicFvMesh::calcStructuralModalForces()
 
     Pstream::broadcast(structuralModeForce_);
     Pstream::broadcast(structuralForceSignal_);
+
+    structuralForceTimeIndex_ = timeIndex;
 }
 
 void fastDynamicFvMesh::readStructuralModeFiles(const fileName& modeDir,

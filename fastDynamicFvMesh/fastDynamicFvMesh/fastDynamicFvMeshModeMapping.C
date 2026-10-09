@@ -510,13 +510,19 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
         referenceFsiBuilt_ = false;
         referenceFaceModeProjection_.clear();
         referenceFsiFaceAreas_.clear();
+        aggregatedPressureRefs_.clear();
+        aggregatedShearRefs_.clear();
     }
     else if (!referenceFsiBuilt_ ||
         referenceFaceModeProjection_.size() != fsiPatches_.size() ||
-        referenceFsiFaceAreas_.size() != fsiPatches_.size())
+        referenceFsiFaceAreas_.size() != fsiPatches_.size() ||
+        aggregatedPressureRefs_.size() != fsiPatches_.size() ||
+        aggregatedShearRefs_.size() != fsiPatches_.size())
     {
         referenceFaceModeProjection_.setSize(fsiPatches_.size());
         referenceFsiFaceAreas_.setSize(fsiPatches_.size());
+        aggregatedPressureRefs_.setSize(fsiPatches_.size());
+        aggregatedShearRefs_.setSize(fsiPatches_.size());
         referenceFsiBuilt_ = false;
     }
 
@@ -554,7 +560,13 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
         const polyPatch& pp = *fsiPolyPatches_[i];
         const label nFaces = pp.size();
 
-        pressureScaleCache_[i].setSize(nFaces, 1.0);
+        if (pressureScaleCache_[i].size() != nFaces)
+        {
+            pressureScaleCache_[i].setSize(nFaces, 1.0);
+            // Face set changed (e.g. AMR): the cached per-face pressure scale
+            // is only valid for the face set it was computed on.
+            pressureScaleInitialized_[i] = false;
+        }
         faceModeProjection_[i].setSize(nMode_);
 
         for (label modeI = 0; modeI < nMode_; ++modeI)
@@ -600,6 +612,8 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
         {
             referenceFsiFaceAreas_[i].setSize(nFaces, 0.0);
             referenceFaceModeProjection_[i].setSize(nMode_);
+            aggregatedPressureRefs_[i].setSize(nFaces, vector::zero);
+            aggregatedShearRefs_[i].setSize(nFaces, vector::zero);
 
             forAll(pp, faceI)
             {

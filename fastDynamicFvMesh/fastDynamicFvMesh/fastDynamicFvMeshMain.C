@@ -130,6 +130,7 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       lastGlobalWriteTimeIndex_(-1), fsiPatchIDs_(0), fsiPolyPatches_(0),
       faceModeProjection_(0), pressureScaleCache_(0),
       pressureScaleInitialized_(0), diagnosticsHeaderWritten_(false),
+      diagStream_(nullptr),
       modelPointersCached_(false), icoTurbPtr_(nullptr), cmpTurbPtr_(nullptr),
       fluidThermoPtr_(nullptr), laminarTransportPtr_(nullptr),
       structuralForceEnabled_(false), nStructuralForces_(0),
@@ -140,6 +141,7 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       structModeShapes_(0), structuralForceNodeIDs_(0),
       structuralForceTimes_(0), structuralForceValues_(0),
       structuralModeForce_(0), structuralForceSignal_(0.0),
+      structuralForceTimeIndex_(-1),
       meshRefinementSupport_(false), runtimeRefinementEnabled_(false),
       refinementInterpTolerance_(1e-8), refinementMappingDiagnostics_(false),
       refinementMinCellVolume_(0.0), refinementMinEdgeLength_(0.0),
@@ -171,7 +173,8 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       amrLayerDiagnosticsUnrefinePoints_(0),
       amrLayerDiagnosticsPendingSummary_(false), referenceFsiBuilt_(false),
       referenceFaceModeProjection_(0), fsiFaceToReferenceFaces_(0),
-      fsiFaceToReferenceWeights_(0), referenceFsiFaceAreas_(0)
+      fsiFaceToReferenceWeights_(0), referenceFsiFaceAreas_(0),
+      aggregatedPressureRefs_(0), aggregatedShearRefs_(0)
 {
     init(true);
 }

@@ -1,6 +1,6 @@
 include ../../buildDefs.include
 
-EXE_INC = -g \
+EXE_INC = \
     $(FOAM_VERSION) \
     $(BLUECFD) \
     -I./lnInclude \

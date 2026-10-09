@@ -450,6 +450,33 @@ Conclusion:
 
 - For this damfailure benchmark, efficiency improvements provide a small but stable speedup (~1.5%) with no observed result drift.
 
+## Per-iteration overhead reduction (v6.3.0, 2026-10-09)
+
+Behavior-preserving optimizations in the per-FSI-iteration mesh-update path;
+no dictionary key, output format, or numerical behavior changed:
+
+- `calcModalForces()`: FSI patch face areas are now held as a lightweight
+  view instead of a per-call deep copy; the kinematic-pressure density scale
+  is computed once per run when no `rho` field is registered (constant
+  density), and recomputed only when `rho` exists or the patch face count
+  changes (AMR); the reference-face aggregation buffers under
+  `meshRefinementSupport` are reused members instead of per-call heap
+  allocations; the modal-force parallel reduction now packs each field into a
+  single allreduce (`3` collectives instead of `3 x nMode` per iteration).
+- `calcStructuralModalForces()`: prescribed structural loading depends only on
+  physical time, so it is now evaluated once per time index instead of every
+  FSI sub-iteration (removing two `Pstream::broadcast` calls per iteration
+  when `structuralForceEnabled` is on).
+- `writeDiagnostics()`: `modal_diagnostics.csv` uses a persistent stream
+  (opened lazily once, flushed per row) instead of an open/close pair per
+  FSI iteration.
+
+Validation (damfailure FDM+AMR case, 8 ranks, 100 steps to `t=0.05`,
+`/root/Workspace/Test`): all processor field checksums
+(`U`, `p_rgh`, `alpha.water`, `k`, `omega`) and `modal_diagnostics.csv` are
+bit-identical before/after; `ExecutionTime` `95.86 s -> 95.31 s` (~-0.6%) on
+this small case — the savings scale with FSI iteration count and patch size.
+
 ## Common failure checks
 
 - `Missing required entry 'fsiPatches'`: add `fsiPatches` in `fastDynamicFvMeshCoeffs`.
@@ -677,3 +704,24 @@ This section maps each repository commit to concrete code/document changes.
   stress/strain CSV export in `case/AGARD/Mode/03_export_modes.py`.
 - Updated English/Chinese docs, example `dynamicMeshDict` guidance and the AGENT
   knowledge files for the new switches, files, outputs and failure checks.
+
+### v6.3.0 — reduce per-iteration overhead in mesh update path (2026-10-09)
+
+- `fastDynamicFvMeshForces.C`: face-area view instead of per-call copy;
+  constant-density pressure scale computed once (recompute only when a `rho`
+  field is registered); reference-face aggregation buffers promoted to reused
+  members; modal-force parallel reduction packed to 3 whole-field allreduces.
+- `fastDynamicFvMeshModeMapping.C`: pressure-scale cache is invalidated when
+  an AMR topology change alters the FSI patch face count (correctness guard);
+  the aggregation members are sized alongside the reference-face caches.
+- `fastDynamicFvMeshModalExtension.C`: structural modal force is cached per
+  time index, removing recompute + two broadcasts per FSI sub-iteration.
+- `fastDynamicFvMeshDiagnostics.C`: persistent diagnostics stream replaces
+  per-iteration open/close.
+- Hygiene: removed the stale `kappa/kappa.C` entry from a myHisa
+  `surfaceInterpolationSchemes/Make/files`; marked `myRhoPimpleFoam/rhoPimpleFoam.C`
+  as an unbuilt baseline reference; removed a misplaced `-g` from myHisa
+  `EXE_INC` flags.
+- Validation: damfailure FDM+AMR benchmark (8 ranks, 100 steps) — processor
+  field checksums and `modal_diagnostics.csv` bit-identical; `ExecutionTime`
+  `95.86 s -> 95.31 s`.

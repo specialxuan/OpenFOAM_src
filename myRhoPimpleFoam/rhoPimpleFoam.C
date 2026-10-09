@@ -43,6 +43,11 @@ Note
 
 \*---------------------------------------------------------------------------*/
 
+// NOTE: This file is NOT built. It is not listed in Make/files and is kept
+// in-tree only as an upstream OpenFOAM baseline reference. The built
+// compressible FSI solver of this family is myRhoPimpleFoam.C. Do not add
+// this file to Make/files.
+
 #include "fvCFD.H"
 #include "dynamicFvMesh.H"
 #include "fluidThermo.H"

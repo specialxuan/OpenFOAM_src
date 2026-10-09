@@ -41,22 +41,29 @@ void fastDynamicFvMesh::writeDiagnostics()
         return;
     }
 
-    fileName diagnosticsPath = this->time().path() / "modal_diagnostics.csv";
-
-    if (Pstream::parRun())
+    if (!diagStream_.valid())
     {
-        diagnosticsPath = this->time().path().path() / "modal_diagnostics.csv";
+        fileName diagnosticsPath = this->time().path() / "modal_diagnostics.csv";
+
+        if (Pstream::parRun())
+        {
+            diagnosticsPath =
+                this->time().path().path() / "modal_diagnostics.csv";
+        }
+
+        diagStream_.reset(new std::ofstream(diagnosticsPath.c_str(),
+            std::ios::app));
+
+        if (!diagStream_->good())
+        {
+            WarningInFunction << "Unable to open " << diagnosticsPath
+                              << " for writing." << endl;
+            diagStream_.clear();
+            return;
+        }
     }
 
-    std::ofstream diagFile;
-    diagFile.open(diagnosticsPath.c_str(), std::ios::app);
-
-    if (!diagFile.good())
-    {
-        WarningInFunction << "Unable to open " << diagnosticsPath
-                          << " for writing." << endl;
-        return;
-    }
+    std::ofstream& diagFile = *diagStream_;
 
     if (!diagnosticsHeaderWritten_)
     {
@@ -127,6 +134,7 @@ void fastDynamicFvMesh::writeDiagnostics()
     }
 
     diagFile << "\n";
+    diagFile.flush();
 }
 
 void fastDynamicFvMesh::writeTimingReport()

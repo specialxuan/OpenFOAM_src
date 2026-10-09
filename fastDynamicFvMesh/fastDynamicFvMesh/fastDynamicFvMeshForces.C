@@ -253,18 +253,29 @@ void fastDynamicFvMesh::calcModalForces()
             << "to modal forces will be skipped." << endl;
     }
 
+    // Density supplied as a registered 'rho' field may vary between calls;
+    // a constant density (rhoRef_/transportProperties) is invariant for the
+    // whole run, so its per-face pressure scale is computed only once.
+    const bool rhoFieldRegistered = this->foundObject<volScalarField>("rho");
+
     // Iterate over cached FSI patches
     forAll(fsiPatchIDs_, i)
     {
         const label patchID = fsiPatchIDs_[i];
         const polyPatch& pp = *fsiPolyPatches_[i];
         const fvPatchScalarField& pPatch = p.boundaryField()[patchID];
-        const vectorField faceAreas(pp.faceAreas());
+        // faceAreas() returns a lightweight by-value subField view in this
+        // OpenFOAM version; holding the view avoids the per-call deep copy
+        // without binding a reference to a temporary.
+        const vectorField::subField faceAreas(pp.faceAreas());
         scalarField& pressureScale = pressureScaleCache_[i];
         if (kinematicPressure)
         {
-            pressureScale = patchDensity(patchID, defaultRho);
-            pressureScaleInitialized_[i] = true;
+            if (rhoFieldRegistered || !pressureScaleInitialized_[i])
+            {
+                pressureScale = patchDensity(patchID, defaultRho);
+                pressureScaleInitialized_[i] = true;
+            }
         }
         else if (!pressureScaleInitialized_[i])
         {
@@ -287,8 +298,10 @@ void fastDynamicFvMesh::calcModalForces()
             referenceFaceModeProjection_.size() == fsiPatches_.size())
         {
             const label nRefFaces = referenceFsiFaceAreas_[i].size();
-            vectorField aggregatedPressure(nRefFaces, vector::zero);
-            vectorField aggregatedShear(nRefFaces, vector::zero);
+            vectorField& aggregatedPressure = aggregatedPressureRefs_[i];
+            vectorField& aggregatedShear = aggregatedShearRefs_[i];
+            aggregatedPressure = vector::zero;
+            aggregatedShear = vector::zero;
             const List<labelList>& faceToRefs = fsiFaceToReferenceFaces_[i];
             const List<scalarField>& faceToRefWeights =
                 fsiFaceToReferenceWeights_[i];
@@ -416,13 +429,12 @@ void fastDynamicFvMesh::calcModalForces()
         }
     }
 
-    // Parallel reduction (all-reduce style)
-    forAll(modeForce_, i)
-    {
-        reduce(modeForce_[i], sumOp<scalar>());
-        reduce(modePressureForce_[i], sumOp<scalar>());
-        reduce(modeShearForce_[i], sumOp<scalar>());
-    }
+    // Parallel reduction (whole-field allreduce; element-wise identical to
+    // the previous per-mode reduce loop)
+    scalarField& modeForceField = modeForce_;
+    reduce(modeForceField, sumOp<scalarField>());
+    reduce(modePressureForce_, sumOp<scalarField>());
+    reduce(modeShearForce_, sumOp<scalarField>());
 }
 
 } // End namespace Foam

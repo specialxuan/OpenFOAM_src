@@ -22,6 +22,7 @@ Description
 #include "turbulentFluidThermoModel.H"
 #include "turbulentTransportModel.H"
 #include "polyPatch.H"
+#include <fstream>
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -217,6 +218,10 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Cache writeDiagnostics header status to avoid file existence checks
     bool diagnosticsHeaderWritten_;
 
+    //- Persistent master-only modal diagnostics stream (opened lazily on the
+    //  first writeDiagnostics() call, flushed per call)
+    autoPtr<std::ofstream> diagStream_;
+
     //- Cached model pointers for shear evaluation
     bool modelPointersCached_;
     const incompressible::turbulenceModel* icoTurbPtr_;
@@ -262,6 +267,10 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
 
     //- Current force signal for diagnostics/logging
     scalar structuralForceSignal_;
+
+    //- Time index for which structuralModeForce_/structuralForceSignal_ were
+    //  last evaluated (-1 until first evaluation)
+    label structuralForceTimeIndex_;
 
     //- Enable/disable the modal extension (structural displacement recovery)
     bool modalExtensionEnabled_{false};
@@ -409,6 +418,14 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
 
     //- Reference face areas captured on initial FSI topology
     List<scalarField> referenceFsiFaceAreas_;
+
+    //- Reused per-patch reference-face accumulation buffer (pressure force)
+    //  [patch][referenceFace]
+    List<vectorField> aggregatedPressureRefs_;
+
+    //- Reused per-patch reference-face accumulation buffer (shear force)
+    //  [patch][referenceFace]
+    List<vectorField> aggregatedShearRefs_;
 
     // Private Member Functions
 
