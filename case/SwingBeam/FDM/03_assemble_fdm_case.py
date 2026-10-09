@@ -27,6 +27,7 @@ Usage:
         --mode-dir /path/to/mode \\
         --out-dir  /path/to/fdm_case \\
          [--end-time 0.5] [--write-interval 50] [--delta-t 0.001] [--nprocs 8] \\
+         [--fluid water|air] \\
          [--modal-zeta 0.03] [--coupling-relaxation 0.7] [--fsi-tolerance 1e-3] \\
          [--amr] [--amr-interval N] [--amr-lower-refine N] [--amr-unrefine N] \\
          [--amr-max-refinement N] [--amr-max-cells N] [--settings-dir DIR]
@@ -545,7 +546,7 @@ def _write_nut(case_dir):
                        "uniform 0", boundary))
 
 
-def _write_alpha_water(case_dir):
+def _write_alpha_water(case_dir, fluid="water"):
     boundary = _SYM_PLANES + """    TOP
     {
         type            zeroGradient;
@@ -567,19 +568,24 @@ def _write_alpha_water(case_dir):
         type            zeroGradient;
     }
 """
+    # water (default): flooded tank, alpha.water = 1 everywhere.
+    # air: full-air tank, alpha.water = 0 everywhere; mixture density then
+    # comes from the `air` phase in constant/transportProperties (1.225 kg/m3),
+    # which is NOT modified by --fluid.
+    internal = "uniform 0" if fluid == "air" else "uniform 1"
     _write(os.path.join(case_dir, "0", "alpha.water"),
            _field_file("volScalarField", "alpha.water", "[0 0 0 0 0 0 0]",
-                       "uniform 1", boundary))
+                       internal, boundary))
 
 
-def write_zero_dir(case_dir):
+def write_zero_dir(case_dir, fluid="water"):
     _write_u(case_dir)
     _write_p(case_dir)
     _write_p_rgh(case_dir)
     _write_k(case_dir)
     _write_omega(case_dir)
     _write_nut(case_dir)
-    _write_alpha_water(case_dir)
+    _write_alpha_water(case_dir, fluid=fluid)
 
 
 # --------------------------------------------------------------------------- #
@@ -798,7 +804,7 @@ relaxationFactors
 }
 """
 
-SET_FIELDS_DICT_BODY = """defaultFieldValues
+_SET_FIELDS_DICT_BODY_TEMPLATE = """defaultFieldValues
 (
     volScalarFieldValue alpha.water 0
 );
@@ -807,25 +813,74 @@ regions
 (
     boxToCell
     {
-        // closed tank: single-phase water everywhere
+        // closed tank: single-phase %(phase)s everywhere
         box (0 0 0) (0.584 0.365 0.012);
         fieldValues
         (
-            volScalarFieldValue alpha.water 1
+            volScalarFieldValue alpha.water %(box_value)d
         );
     }
 );
 """
 
+SET_FIELDS_DICT_BODY = _SET_FIELDS_DICT_BODY_TEMPLATE % {
+    "phase": "water", "box_value": 1}
 
-def write_system(case_dir, end_time, delta_t, write_interval, nprocs):
+
+_FV_SOLUTION_P_RGH_GAMG = """    "p_rgh.*"
+    {
+        solver          GAMG;
+        tolerance       1e-7;
+        relTol          0.01;
+        smoother        GaussSeidel;
+    }"""
+
+# Air-only p_rgh linear-solver override. With alpha.water=0 everywhere the
+# moving-mesh p_rgh Poisson system is so ill-conditioned that GAMG stalls at
+# its 1000-iteration cap on every FSI/PIMPLE iteration (measured ~14-20 s/step
+# at res=30/z=4), while PCG+DIC converges in ~160 iterations (measured
+# ~0.15-0.6 s/step). The water path keeps the GAMG block byte-for-byte; pcorr
+# and p_rghFinal inherit the swapped solver through their $p_rgh references.
+_FV_SOLUTION_P_RGH_PCG_AIR = """    "p_rgh.*"
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       1e-7;
+        relTol          0.01;
+    }"""
+
+
+def fv_solution_body(fluid="water"):
+    """Render system/fvSolution; air swaps only the p_rgh linear solver."""
+    if fluid == "air":
+        return FV_SOLUTION_BODY.replace(_FV_SOLUTION_P_RGH_GAMG,
+                                        _FV_SOLUTION_P_RGH_PCG_AIR)
+    return FV_SOLUTION_BODY
+
+
+def set_fields_dict_body(fluid="water"):
+    """Render system/setFieldsDict for the selected tank fluid.
+
+    water (default) keeps the historical body byte-for-byte: default field
+    alpha.water 0 plus a whole-tank box that sets alpha.water 1 (flooded tank).
+    air changes the box value to 0: with the box still at 1, ``setFields``
+    would re-flood the tank even when ``0/alpha.water`` is ``uniform 0``.
+    """
+    if fluid == "air":
+        return _SET_FIELDS_DICT_BODY_TEMPLATE % {
+            "phase": "air", "box_value": 0}
+    return SET_FIELDS_DICT_BODY
+
+
+def write_system(case_dir, end_time, delta_t, write_interval, nprocs,
+                 fluid="water"):
     write_control_dict(case_dir, end_time, delta_t, write_interval)
     _write(os.path.join(case_dir, "system", "fvSchemes"),
            _dict_file("fvSchemes", "system", FV_SCHEMES_BODY))
     _write(os.path.join(case_dir, "system", "fvSolution"),
-           _dict_file("fvSolution", "system", FV_SOLUTION_BODY))
+           _dict_file("fvSolution", "system", fv_solution_body(fluid)))
     _write(os.path.join(case_dir, "system", "setFieldsDict"),
-           _dict_file("setFieldsDict", "system", SET_FIELDS_DICT_BODY))
+           _dict_file("setFieldsDict", "system", set_fields_dict_body(fluid)))
     if nprocs > 1:
         write_decompose_dict(case_dir, nprocs)
 
@@ -958,6 +1013,14 @@ def parse_args(argv):
     p.add_argument("--nprocs", type=int, default=8,
                    help="number of MPI subdomains for decomposeParDict "
                         "(default 8)")
+    p.add_argument("--fluid", choices=("water", "air"), default="water",
+                   help="tank fluid written to 0/alpha.water and "
+                        "system/setFieldsDict: 'water' (default) floods the "
+                        "tank (alpha.water=1 everywhere), 'air' fills it with "
+                        "air (alpha.water=0 everywhere; needs --coupling-"
+                        "relaxation near 1 since added mass is tiny). "
+                        "transportProperties/g/turbulenceProperties are "
+                        "unchanged (both phases are already defined)")
     p.add_argument("--amr", action="store_true",
                    help="enable dynamic AMR (dynamicRefineFvMeshCoeffs) in "
                         "dynamicMeshDict (default off)")
@@ -1125,9 +1188,12 @@ def main(argv):
                  args.amr_max_cells))
     else:
         print("[FDM 03] AMR: disabled")
-    write_zero_dir(out_dir)
+    print("[FDM 03] fluid: %s (%s)" % (args.fluid,
+          "alpha.water=0 everywhere, setFields box value 0" if args.fluid == "air"
+          else "alpha.water=1 everywhere, setFields box value 1"))
+    write_zero_dir(out_dir, fluid=args.fluid)
     write_system(out_dir, args.end_time, args.delta_t, args.write_interval,
-                 args.nprocs)
+                 args.nprocs, fluid=args.fluid)
     if args.settings_dir:
         try:
             copied_settings = copy_settings(out_dir, args.settings_dir)

@@ -33,6 +33,7 @@ MODAL_ZETA=0.03   # 每阶模态阻尼比 (默认 0.03: modalMass/modalDamp = 2*
 COUPLING_REL=0.7  # 隐式耦合力松弛 (默认 0.7; fsiTolerance=1e-3, nOuterCorrectors=100)
 COUPLING_ACCEL="" # 界面耦合加速器 (空: 用库内默认 constant)
 FSI_DISP_TOL=""   # 绝对位移判据容差 m (空: 不写, 求解器默认 0 关闭)
+FLUID="water"     # 步骤 3 流体: water=满水 (默认) / air=满空气 (附加质量极小)
 VIDEO_FIELD="magU"       # 视频着色场: magU=速度幅值云图 (默认); alpha.water=旧白蓝水相
 VIDEO_VIEWS="full,beam"  # 视频视图: full(全流域) / beam(梁区放大) / both; 逗号组合
 VIDEO_SCALE=""           # beam 视图平行投影尺度 (空 = 06 默认 0.08)
@@ -75,6 +76,9 @@ usage() {
                          (constant|aitken|IQN-ILS|IQN-IMVJ; 默认不写 = 库内 constant)
   --fsi-disp-tolerance <d>  传给 03: fsiDispTolerance (OR 绝对位移判据, 单位 m;
                         默认不写 = 求解器默认 0 关闭)
+  --fluid <water|air>    传给 03: 水箱流体 (默认 $FLUID = 满水 alpha.water=1;
+                         air = 满空气 alpha.water=0, 附加质量极小, 应配大
+                         --coupling-relax, 如 1.0)
   --video-field <name>   步骤 6 着色场 (默认 $VIDEO_FIELD = 速度幅值云图 magU;
                          alpha.water 恢复旧白蓝水相视频)
   --video-views <list>   步骤 6 视图 (默认 $VIDEO_VIEWS): full=全流域, beam=梁区放大
@@ -129,6 +133,7 @@ while [ $# -gt 0 ]; do
         --coupling-relax)  COUPLING_REL="${2:?--coupling-relax 需要一个参数}"; shift 2 ;;
         --coupling-acceleration) COUPLING_ACCEL="${2:?--coupling-acceleration 需要一个参数}"; shift 2 ;;
         --fsi-disp-tolerance) FSI_DISP_TOL="${2:?--fsi-disp-tolerance 需要一个参数}"; shift 2 ;;
+        --fluid)           FLUID="${2:?--fluid 需要一个参数}"; shift 2 ;;
         --video-field)     VIDEO_FIELD="${2:?--video-field 需要一个参数}"; shift 2 ;;
         --video-views)     VIDEO_VIEWS="${2:?--video-views 需要一个参数}"; shift 2 ;;
         --video-scale)     VIDEO_SCALE="${2:?--video-scale 需要一个参数}"; shift 2 ;;
@@ -142,6 +147,11 @@ while [ $# -gt 0 ]; do
         *)                 error "未知选项: $1"; usage >&2; exit 2 ;;
     esac
 done
+
+case "$FLUID" in
+    water|air) ;;
+    *) error "--fluid 只接受 water 或 air (got '$FLUID')"; exit 2 ;;
+esac
 
 # --------------------------------------------------------------------------- #
 #  无参数: 交互式询问 (回车 = 用默认值)
@@ -284,7 +294,7 @@ run_step() {
                 cmd+=" --excite-force --force-amp $FORCE_AMP --force-freq $FORCE_FREQ --force-end-time $force_end"
             fi
             ;;
-        3) cmd="python3 '$SCRIPT_DIR/03_assemble_fdm_case.py' --mesh-dir '$CASE_ROOT/mesh/fluid-openfoam' --mode-dir '$CASE_ROOT/modal_ve/mode' --out-dir '$CASE_ROOT/fdm_case' --end-time $END_TIME --write-interval $WRITE_INTERVAL --nprocs $NPROCS" ;;
+        3) cmd="python3 '$SCRIPT_DIR/03_assemble_fdm_case.py' --mesh-dir '$CASE_ROOT/mesh/fluid-openfoam' --mode-dir '$CASE_ROOT/modal_ve/mode' --out-dir '$CASE_ROOT/fdm_case' --end-time $END_TIME --write-interval $WRITE_INTERVAL --nprocs $NPROCS --fluid '$FLUID'" ;;
         4) cmd="python3 '$SCRIPT_DIR/04_run_fdm.py' -f --case '$CASE_ROOT/fdm_case' --end-time $END_TIME --write-interval $WRITE_INTERVAL --nprocs $NPROCS" ;;
         5) cmd="python3 '$SCRIPT_DIR/05_postprocess.py' --case '$CASE_ROOT/fdm_case' --out-dir '$CASE_ROOT/postprocess'" ;;
         6)
@@ -412,6 +422,7 @@ echo "[FDM-PIPE] 步骤        : $STEPS"
 echo "[FDM-PIPE] 网格        : --res $RES --z-layers $Z_LAYERS"
 echo "[FDM-PIPE] 仿真        : endTime=$END_TIME writeInterval=$WRITE_INTERVAL"
 echo "[FDM-PIPE] 时间步长    : ${DELTA_T:-使用组装设置}"
+echo "[FDM-PIPE] 流体        : $FLUID$( [ "$FLUID" = air ] && echo " (满空气, alpha.water=0)" || echo " (满水, alpha.water=1)" )"
 echo "[FDM-PIPE] 并行        : $NPROCS 进程"
 echo "[FDM-PIPE] AMR         : $AMR"
 echo "[FDM-PIPE] 设置来源    : ${SETTINGS_DIR:-内嵌默认模板}"

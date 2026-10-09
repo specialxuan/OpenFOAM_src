@@ -45,7 +45,8 @@ Usage:
         --solid-dir /path/to/solid-calculix \\
         --out-dir   /path/to/precice_case \\
         [--end-time 0.02] [--write-interval 0.01] [--delta-t 0.0005] \\
-        [--nprocs 1] [--gate-e 1e6] [--gate-nu 0.0] [--gate-rho 2500]
+        [--nprocs 1] [--gate-e 1e6] [--gate-nu 0.0] [--gate-rho 2500] \\
+        [--fluid water|air] [--solid-beta 0.047]
 """
 
 import argparse
@@ -356,12 +357,14 @@ def write_case_description(case_root, args):
 #  Material patching for the solid deck                                         #
 # --------------------------------------------------------------------------- #
 
-def patch_solid_material(src, dst, e_mod, nu, rho):
+def patch_solid_material(src, dst, e_mod, nu, rho, damping_beta=0.0):
     """Copy dam_gate.inp, overriding only the *MATERIAL/*ELASTIC/*DENSITY values.
 
     The preCICE solid material matches the FDM baseline (E=1e6, nu=0, rho=2500)
     so results are comparable.  Geometry, *NSET and *BOUNDARY cards are copied
-    byte-for-byte.
+    byte-for-byte.  When damping_beta > 0, a Rayleigh stiffness-proportional
+    *DAMPING, BETA=<v> card (s) is inserted after *DENSITY; zeta(omega) =
+    beta*omega/2, so beta = 2*zeta/omega_mode gives the requested modal ratio.
     """
     lines = _read_text(src).splitlines()
     out = []
@@ -379,6 +382,9 @@ def patch_solid_material(src, dst, e_mod, nu, rho):
             else:
                 out.append(_fmt_num(rho))
                 patched["DENSITY"] = True
+                if damping_beta > 0.0:
+                    out.append("*DAMPING, ALPHA=0.0, BETA=%s"
+                               % _fmt_num(damping_beta))
             pending = None
             continue
         if s.upper().startswith("*MATERIAL"):
@@ -443,6 +449,8 @@ def check_periodic_force_survived(src, dst):
 #  precice-config.xml  (verified zip baseline)                                  #
 # --------------------------------------------------------------------------- #
 
+# __COUPLING_BODY__ selects the fluid-specific coupling stabilisation below
+# (water: fixed 1-iteration + python force low-pass; air: Aitken + 50 iters).
 PRECICE_CONFIG_XML = """<?xml version="1.0" encoding="UTF-8" ?>
 <precice-configuration>
   <log>
@@ -511,7 +519,12 @@ PRECICE_CONFIG_XML = """<?xml version="1.0" encoding="UTF-8" ?>
   <max-time value="0.5" />
   <exchange data="Force" mesh="Solid-Mesh" from="Fluid" to="Solid" />
   <exchange data="DisplacementDelta" mesh="Solid-Mesh" from="Solid" to="Fluid" />
-  <max-iterations value="1" />
+__COUPLING_BODY__
+</coupling-scheme:parallel-implicit>
+</precice-configuration>
+"""
+
+PRECICE_COUPLING_WATER = """  <max-iterations value="1" />
   <min-iterations value="1" />
   <!-- Closed-tank added-mass stability (E=1e6): the fixed-point iteration cannot
        converge for the soft beam (forces double per window from ~0.005 s), so the
@@ -524,24 +537,40 @@ PRECICE_CONFIG_XML = """<?xml version="1.0" encoding="UTF-8" ?>
   <absolute-convergence-measure limit="1e-3" data="Force" mesh="Solid-Mesh" />
   <acceleration:constant>
     <relaxation value="1.0" />
-  </acceleration:constant>
-</coupling-scheme:parallel-implicit>
-</precice-configuration>
-"""
+  </acceleration:constant>"""
+
+PRECICE_COUPLING_AIR = """  <max-iterations value="50" />
+  <min-iterations value="1" />
+  <!-- Air has negligible added mass, so the water-case low-pass filter is not
+       needed: the python force_relax action runs with ALPHA = 1.0 (identity) and
+       the coupling is a regular accelerated fixed-point iteration.  preCICE
+       Aitken acceleration drives the exchanged Force and DisplacementDelta to
+       the 1e-6 absolute force tolerance within max-iterations. -->
+  <absolute-convergence-measure limit="1e-6" data="Force" mesh="Solid-Mesh" />
+  <acceleration:aitken>
+    <data name="Force" mesh="Solid-Mesh" />
+    <data name="DisplacementDelta" mesh="Solid-Mesh" />
+    <initial-relaxation value="1.0" />
+  </acceleration:aitken>"""
+
+
+def precice_config_xml(fluid):
+    """Render precice-config.xml for the selected tank fluid.
+
+    water (default) reproduces the verified 1-iteration + python force-relax
+    template byte-for-byte; air uses Aitken + 50 iterations + 1e-6 force
+    tolerance (see PRECICE_COUPLING_AIR).
+    """
+    body = PRECICE_COUPLING_AIR if fluid == "air" else PRECICE_COUPLING_WATER
+    return PRECICE_CONFIG_XML.replace("__COUPLING_BODY__", body)
 
 FORCE_RELAX_PY = '''"""FDM-mirror force under-relaxation for the preCICE solid participant.
 
-fastDynamicFvMesh stabilizes this closed-tank added-mass coupling with a force
-low-pass (couplingRelaxation = 0.01 per 1e-3 s step).  This preCICE python
-action (read-mapping-post on Force) applies the same style of filter to the
-force the solid reads; with min-iterations = max-iterations = 1 it runs once per
-time window.  ALPHA = 0.01 per 0.0005 s window is the measured stability sweet
-spot for the 2.0 s E=1e6 run (with the deck's HHT-alpha = -0.1): larger alpha
-(0.02) and smaller alpha (0.0025) both run away.  The fluid still receives the
+%(note)s  The fluid still receives the
 solid's raw DisplacementDelta, so the interface kinematics stay consistent;
 only the force input is relaxed.
 """
-ALPHA = 0.01
+ALPHA = %(alpha)s
 _prev = None
 
 
@@ -554,6 +583,26 @@ def performAction(time, sourceData, targetData):
         _prev[i] = _prev[i] + ALPHA * (sourceData[i] - _prev[i])
         targetData[i] = _prev[i]
 '''
+
+
+def force_relax_py(fluid):
+    """Render the python action source; air uses ALPHA = 1.0 (identity)."""
+    if fluid == "air":
+        return FORCE_RELAX_PY % {
+            "alpha": "1.0",
+            "note": "Air has negligible added mass, so ALPHA = 1.0 makes this action an\n"
+                    "identity transform and preCICE's Aitken acceleration handles the\n"
+                    "coupling instead."}
+    return FORCE_RELAX_PY % {
+        "alpha": "0.01",
+        "note": "fastDynamicFvMesh stabilizes this closed-tank added-mass coupling\n"
+                "with a force low-pass (couplingRelaxation = 0.01 per 1e-3 s step).\n"
+                "This preCICE python action (read-mapping-post on Force) applies the\n"
+                "same style of filter to the force the solid reads; with\n"
+                "min-iterations = max-iterations = 1 it runs once per time window.\n"
+                "ALPHA = 0.01 per 0.0005 s window is the measured stability sweet spot\n"
+                "for the 2.0 s E=1e6 run (with the deck's HHT-alpha = -0.1): larger\n"
+                "alpha (0.02) and smaller alpha (0.0025) both run away."}
 
 
 # --------------------------------------------------------------------------- #
@@ -694,7 +743,10 @@ functions
 """ % (_fmt_num(end_time), _fmt_num(delta_t), _fmt_num(write_interval)))
 
 
-PRECICE_DICT = _dict_file("preciceDict", "system", """preciceConfig "../precice-config.xml";
+def precice_dict(fluid):
+    """Render system/preciceDict; FSI rho follows the tank fluid."""
+    rho = 1.225 if fluid == "air" else 998.2
+    return _dict_file("preciceDict", "system", """preciceConfig "../precice-config.xml";
 
 participant Fluid;
 
@@ -737,9 +789,9 @@ interfaces
 
 FSI
 {
-    rho rho [1 -3 0 0 0 0 0] 998.2;
+    rho rho [1 -3 0 0 0 0 0] %s;
 }
-""")
+""" % _fmt_num(rho))
 
 FV_SCHEMES = _dict_file("fvSchemes", "system", """ddtSchemes
 {
@@ -894,7 +946,15 @@ relaxationFactors
 }
 """)
 
-SET_FIELDS_DICT = _dict_file("setFieldsDict", "system", """defaultFieldValues
+def set_fields_dict(fluid):
+    """Render system/setFieldsDict.
+
+    water floods the whole tank box (alpha.water 1); air leaves it at 0 -- both
+    the defaultFieldValues and the boxToCell value must agree or setFields would
+    re-flood the tank with water.
+    """
+    box_value = 0 if fluid == "air" else 1
+    return _dict_file("setFieldsDict", "system", """defaultFieldValues
 (
     volScalarFieldValue alpha.water 0
 );
@@ -906,11 +966,11 @@ regions
         box (0 0 0) (0.584 0.365 0.012);
         fieldValues
         (
-            volScalarFieldValue alpha.water 1
+            volScalarFieldValue alpha.water %d
         );
     }
 );
-""")
+""" % box_value)
 
 
 def decompose_par_dict(nprocs):
@@ -928,10 +988,13 @@ roots           ();
 #  fluid-openfoam/0/  (zip baseline fields)                                    #
 # --------------------------------------------------------------------------- #
 
-ALPHA_WATER_0 = _field_file(
-    "volScalarField", "alpha.water", "[0 0 0 0 0 0 0]",
-    "uniform 1",
-    """    FRONT
+def alpha_water_0(fluid):
+    """Render 0/alpha.water; air fills the tank with alpha.water = 0."""
+    internal = "uniform 0" if fluid == "air" else "uniform 1"
+    return _field_file(
+        "volScalarField", "alpha.water", "[0 0 0 0 0 0 0]",
+        internal,
+        """    FRONT
     {
         type            symmetryPlane;
     }
@@ -1169,6 +1232,16 @@ def parse_args(argv):
                    help="gate Poisson ratio (FDM baseline 0)")
     p.add_argument("--gate-rho", type=float, default=2500.0,
                    help="gate density kg/m3 (FDM baseline 2500)")
+    p.add_argument("--fluid", choices=("water", "air"), default="water",
+                   help="tank fluid (default water): water writes alpha.water=1 "
+                        "everywhere with the measured 1-iteration coupling; air "
+                        "writes alpha.water=0, FSI rho=1.225 and an Aitken "
+                        "50-iteration / 1e-6-force-tolerance coupling")
+    p.add_argument("--solid-beta", type=float, default=0.0,
+                   help="Rayleigh stiffness-proportional damping beta (s) added "
+                        "to the solid deck as '*DAMPING, ALPHA=0.0, BETA=<v>'; "
+                        "default 0 = none. beta = 2*zeta/omega_1 (0.047 -> "
+                        "zeta=0.4 at the 2.708 Hz first mode)")
     p.add_argument("--precice-max-time", type=float, default=0.5,
                    help="max-time in precice-config.xml (default 0.5)")
     return p.parse_args(argv)
@@ -1211,12 +1284,13 @@ def main(argv):
               os.path.join(fluid_out, "constant", "polyMesh"))
 
     # ---- copy + patch solid deck ------------------------------------------
-    log("copying dam_gate.inp (material -> E=%s nu=%s rho=%s)"
-        % (_fmt_num(args.gate_e), _fmt_num(args.gate_nu), _fmt_num(args.gate_rho)))
+    log("copying dam_gate.inp (material -> E=%s nu=%s rho=%s, beta=%s)"
+        % (_fmt_num(args.gate_e), _fmt_num(args.gate_nu), _fmt_num(args.gate_rho),
+           _fmt_num(args.solid_beta)))
 
     # ---- root files ---------------------------------------------------------
     _write(os.path.join(out_dir, "precice-config.xml"),
-           PRECICE_CONFIG_XML.replace(
+           precice_config_xml(args.fluid).replace(
                '<time-window-size value="0.0005" />',
                '<time-window-size value="%s" />' % _fmt_num(args.delta_t))
            .replace(
@@ -1224,7 +1298,7 @@ def main(argv):
                '<max-time value="%s" />' % _fmt_num(args.precice_max_time))
            .replace("__ACTION_PATH__", solid_out))
     _write(os.path.join(out_dir, "run-coupled.sh"), RUN_COUPLED_SH)
-    _write(os.path.join(solid_out, "force_relax.py"), FORCE_RELAX_PY)
+    _write(os.path.join(solid_out, "force_relax.py"), force_relax_py(args.fluid))
     log("wrote precice-config.xml + run-coupled.sh + solid-calculix/force_relax.py")
 
     # ---- fluid constant/ ----------------------------------------------------
@@ -1240,10 +1314,12 @@ def main(argv):
     # ---- fluid system/ ------------------------------------------------------
     _write(os.path.join(fluid_out, "system", "controlDict"),
            control_dict(args.end_time, args.delta_t, args.write_interval))
-    _write(os.path.join(fluid_out, "system", "preciceDict"), PRECICE_DICT)
+    _write(os.path.join(fluid_out, "system", "preciceDict"),
+           precice_dict(args.fluid))
     _write(os.path.join(fluid_out, "system", "fvSchemes"), FV_SCHEMES)
     _write(os.path.join(fluid_out, "system", "fvSolution"), FV_SOLUTION)
-    _write(os.path.join(fluid_out, "system", "setFieldsDict"), SET_FIELDS_DICT)
+    _write(os.path.join(fluid_out, "system", "setFieldsDict"),
+           set_fields_dict(args.fluid))
     _write(os.path.join(fluid_out, "system", "decomposeParDict"),
            decompose_par_dict(args.nprocs))
     log("wrote system/controlDict (deltaT=%s, endTime=%s), preciceDict, "
@@ -1252,7 +1328,7 @@ def main(argv):
 
     # ---- fluid 0/ ------------------------------------------------------------
     fields = {
-        "alpha.water": ALPHA_WATER_0,
+        "alpha.water": alpha_water_0(args.fluid),
         "U": U_0,
         "p_rgh": P_RGH_0,
         "p": P_0,
@@ -1292,7 +1368,8 @@ def main(argv):
         return 1
     patch_solid_material(solid_path,
                          os.path.join(solid_out, "dam_gate.inp"),
-                         args.gate_e, args.gate_nu, args.gate_rho)
+                         args.gate_e, args.gate_nu, args.gate_rho,
+                         args.solid_beta)
     force_problems = check_periodic_force_survived(
         solid_path, os.path.join(solid_out, "dam_gate.inp"))
     if force_problems:
@@ -1320,14 +1397,24 @@ def main(argv):
     # ---- summary ---------------------------------------------------------------
     log("=== summary ===")
     log("case root     : %s" % out_dir)
+    log("tank fluid    : %s (%s)" % (args.fluid,
+        "alpha.water=0 everywhere, FSI rho=1.225" if args.fluid == "air"
+        else "alpha.water=1 everywhere, FSI rho=998.2"))
     log("fluid solver  : interFoam (deltaT %s, endTime %s, writeInterval %s)"
         % (_fmt_num(args.delta_t), _fmt_num(args.end_time),
            _fmt_num(args.write_interval)))
-    log("solid deck    : dam_gate.inp (E=%s nu=%s rho=%s)"
-        % (_fmt_num(args.gate_e), _fmt_num(args.gate_nu), _fmt_num(args.gate_rho)))
-    log("precice       : time-window %s, max-time %s, parallel-implicit 1-iteration "
-        "+ python force relaxation (alpha=0.01, FDM couplingRelaxation mirror)"
-        % (_fmt_num(args.delta_t), _fmt_num(args.precice_max_time)))
+    log("solid deck    : dam_gate.inp (E=%s nu=%s rho=%s beta=%s)"
+        % (_fmt_num(args.gate_e), _fmt_num(args.gate_nu), _fmt_num(args.gate_rho),
+           _fmt_num(args.solid_beta)))
+    if args.fluid == "air":
+        log("precice       : time-window %s, max-time %s, parallel-implicit "
+            "Aitken (max-iterations 50, min 1, force tol 1e-6, python force "
+            "relax action alpha=1.0 identity)"
+            % (_fmt_num(args.delta_t), _fmt_num(args.precice_max_time)))
+    else:
+        log("precice       : time-window %s, max-time %s, parallel-implicit 1-iteration "
+            "+ python force relaxation (alpha=0.01, FDM couplingRelaxation mirror)"
+            % (_fmt_num(args.delta_t), _fmt_num(args.precice_max_time)))
     log("next step     : python3 04_run_precice.py --case %s [--end-time 0.02]"
         % out_dir)
     log("DONE")

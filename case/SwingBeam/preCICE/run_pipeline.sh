@@ -29,7 +29,9 @@ GATE_NU=0.0
 GATE_RHO=2500.0
 FORCE_AMP=0.02        # 周期梁尖力幅值 A (N), F(t)=A*sin(2*pi*f*t)
 FORCE_FREQ=2.5        # 周期梁尖力频率 f (Hz)
-FORCE_END_TIME=0.5    # *AMPLITUDE 表跨度 (s), 默认 = 固体 deck *DYNAMIC 总时长
+FORCE_END_TIME=""     # *AMPLITUDE 表跨度 (s), 空 = 用 --end-time (deck *DYNAMIC 总时长)
+FLUID="water"         # 步骤 3 流体: water=满水 (默认) / air=满空气 (附加质量极小)
+SOLID_BETA=""         # 固体 Rayleigh beta 阻尼 (s), 空 = 不写 (与 FDM --modal-zeta 0.4 对应约 0.047)
 VIDEO=""              # "" 未定(交互询问) / "yes" / "no"
 VIDEO_FIELD="magU"       # 视频着色场: magU=速度幅值云图 (默认); alpha.water=旧白蓝水相
 VIDEO_VIEWS="full,beam"  # 视频视图: full(全流域) / beam(梁区放大) / both; 逗号组合
@@ -66,8 +68,13 @@ usage() {
   --gate-rho <R>         门材料密度 kg/m3 (非默认时透传给 03, 默认 $GATE_RHO)
   --force-amp <A>        周期梁尖力幅值 A (N) (传给 01, 默认 $FORCE_AMP)
   --force-freq <f>       周期梁尖力频率 f (Hz) (传给 01, 默认 $FORCE_FREQ)
-  --force-end-time <T>   *AMPLITUDE 表跨度 (s) (传给 01, 默认 $FORCE_END_TIME)
-  --video / --no-video   步骤 6 MP4 行为 (--no-video 仍保留 PNG)
+  --force-end-time <T>   *AMPLITUDE 表跨度 (s) (传给 01, 默认空 = 用 --end-time)
+  --fluid <water|air>    传给 03: 水箱流体 (默认 $FLUID = 满水 alpha.water=1;
+                         air = 满空气 alpha.water=0, FSI rho=1.225, 弱耦合
+                         Aitken 50 次迭代 / 1e-6 力容差, 无需力低通)
+  --solid-beta <b>       传给 03: 固体 Rayleigh beta 阻尼 (s), 空 = 不加
+                         (*DAMPING, ALPHA=0.0, BETA=b; beta≈2*zeta/omega_1,
+                         0.047 对应首阶 zeta≈0.4, 用于抑制空气大摆幅折叠)  --video / --no-video   步骤 6 MP4 行为 (--no-video 仍保留 PNG)
   --video-field <name>   步骤 6 着色场 (默认 $VIDEO_FIELD = 速度幅值云图 magU;
                          alpha.water 恢复旧白蓝水相视频)
   --video-views <list>   步骤 6 视图 (默认 $VIDEO_VIEWS): full=全流域, beam=梁区放大
@@ -117,6 +124,8 @@ while [ $# -gt 0 ]; do
         --force-amp)       FORCE_AMP="${2:?--force-amp 需要一个参数}"; shift 2 ;;
         --force-freq)      FORCE_FREQ="${2:?--force-freq 需要一个参数}"; shift 2 ;;
         --force-end-time)  FORCE_END_TIME="${2:?--force-end-time 需要一个参数}"; shift 2 ;;
+        --fluid)           FLUID="${2:?--fluid 需要一个参数}"; shift 2 ;;
+        --solid-beta)      SOLID_BETA="${2:?--solid-beta 需要一个参数}"; shift 2 ;;
         --video)           VIDEO=yes; shift ;;
         --no-video)        VIDEO=no; shift ;;
         --video-field)     VIDEO_FIELD="${2:?--video-field 需要一个参数}"; shift 2 ;;
@@ -133,6 +142,11 @@ while [ $# -gt 0 ]; do
         *)                 error "未知选项: $1"; usage >&2; exit 2 ;;
     esac
 done
+
+case "$FLUID" in
+    water|air) ;;
+    *) error "--fluid 只接受 water 或 air (got '$FLUID')"; exit 2 ;;
+esac
 
 # --------------------------------------------------------------------------- #
 #  无参数: 交互式询问 (回车 = 用默认值)
@@ -164,7 +178,7 @@ if [ "$INTERACTIVE" -eq 1 ]; then
     if [ -n "${inp:-}" ]; then FORCE_AMP="$inp"; fi
     read -p "  --force-freq 频率 Hz (默认 $FORCE_FREQ): " inp
     if [ -n "${inp:-}" ]; then FORCE_FREQ="$inp"; fi
-    read -p "  --force-end-time 表跨度 s (默认 $FORCE_END_TIME): " inp
+    read -p "  --force-end-time 表跨度 s (默认 ${FORCE_END_TIME:-$END_TIME} = end-time): " inp
     if [ -n "${inp:-}" ]; then FORCE_END_TIME="$inp"; fi
 
     read -p "并行进程数 --nprocs (默认 $NPROCS): " inp
@@ -243,6 +257,8 @@ GATE_ARGS=""
 [ "$GATE_E"  != "1.0e6" ]  && GATE_ARGS+=" --gate-e $GATE_E"
 [ "$GATE_NU" != "0.0" ]    && GATE_ARGS+=" --gate-nu $GATE_NU"
 [ "$GATE_RHO" != "2500.0" ] && GATE_ARGS+=" --gate-rho $GATE_RHO"
+[ -n "$SOLID_BETA" ]       && GATE_ARGS+=" --solid-beta $SOLID_BETA"
+FORCE_END_EFFECTIVE="${FORCE_END_TIME:-$END_TIME}"
 
 # --------------------------------------------------------------------------- #
 #  捕获 + 过滤执行器 (步骤 1/3/5/6 及视频合成)
@@ -275,8 +291,8 @@ run_step() {
     local step="$1"
     local cmd=""
     case "$step" in
-        1) cmd="python3 '$SCRIPT_DIR/01_generate_mesh.py' --res $RES --z-layers $Z_LAYERS --out-dir '$CASE_ROOT/mesh' --view --render --force-amp $FORCE_AMP --force-freq $FORCE_FREQ --force-end-time $FORCE_END_TIME --solid-delta-t $DELTA_T" ;;
-        3) cmd="python3 '$SCRIPT_DIR/03_assemble_precice_case.py' --mesh-dir '$CASE_ROOT/mesh/fluid-openfoam' --solid-dir '$CASE_ROOT/mesh/solid-calculix' --out-dir '$CASE_ROOT/pc_case' --end-time $END_TIME --delta-t $DELTA_T --write-interval $WRITE_INTERVAL --nprocs $NPROCS"$GATE_ARGS ;;
+        1) cmd="python3 '$SCRIPT_DIR/01_generate_mesh.py' --res $RES --z-layers $Z_LAYERS --out-dir '$CASE_ROOT/mesh' --view --render --force-amp $FORCE_AMP --force-freq $FORCE_FREQ --force-end-time $FORCE_END_EFFECTIVE --solid-delta-t $DELTA_T" ;;
+        3) cmd="python3 '$SCRIPT_DIR/03_assemble_precice_case.py' --mesh-dir '$CASE_ROOT/mesh/fluid-openfoam' --solid-dir '$CASE_ROOT/mesh/solid-calculix' --out-dir '$CASE_ROOT/pc_case' --end-time $END_TIME --delta-t $DELTA_T --write-interval $WRITE_INTERVAL --nprocs $NPROCS --fluid $FLUID"$GATE_ARGS ;;
         4) cmd="python3 '$SCRIPT_DIR/04_run_precice.py' -f --case '$CASE_ROOT/pc_case' --end-time $END_TIME --delta-t $DELTA_T --write-interval $WRITE_INTERVAL --nprocs $NPROCS --solid-threads $SOLID_THREADS" ;;
         5) cmd="python3 '$SCRIPT_DIR/05_postprocess.py' --case '$CASE_ROOT/pc_case' --out-dir '$CASE_ROOT/postprocess'" ;;
         6)
@@ -382,7 +398,7 @@ case "$label" in
     算例根目录) padding=1 ;;
     门材料)     padding=5 ;;
     周期力)     padding=5 ;;
-    步骤|网格|仿真|并行|视频) padding=7 ;;
+    步骤|网格|仿真|并行|视频|流体) padding=7 ;;
     *)          padding=1 ;;
 esac
     printf '[PRECICE-PIPE] %s%*s: %s\n' "$label" "$padding" '' "$value"
@@ -394,8 +410,9 @@ summary_line "步骤" "$STEPS"
 summary_line "网格" "--res $RES --z-layers $Z_LAYERS"
 summary_line "仿真" "endTime=$END_TIME deltaT=$DELTA_T writeInterval=$WRITE_INTERVAL"
 summary_line "并行" "$NPROCS 流体进程 / $SOLID_THREADS 固体线程"
+summary_line "流体" "$FLUID$( [ "$FLUID" = air ] && echo " (满空气, alpha.water=0, 弱耦合 Aitken)" || echo " (满水, alpha.water=1, 1 次迭代 + 力低通)" )"
 summary_line "门材料" "E=$GATE_E nu=$GATE_NU rho=$GATE_RHO${GATE_ARGS:+ (透传: ${GATE_ARGS# }) }"
-summary_line "周期力" "A=$FORCE_AMP N f=$FORCE_FREQ Hz (amplitude 0..$FORCE_END_TIME s)"
+summary_line "周期力" "A=$FORCE_AMP N f=$FORCE_FREQ Hz (amplitude 0..$FORCE_END_EFFECTIVE s)"
 summary_line "视频着色" "--video-field $VIDEO_FIELD"
 summary_line "视频视图" "--video-views $VIDEO_VIEWS (full -> frames/precice_result.mp4, beam -> frames_beam/precice_result_beam.mp4)"
 if [ "$VIDEO" = "yes" ]; then
