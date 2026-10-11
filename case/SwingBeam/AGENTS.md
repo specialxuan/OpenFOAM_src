@@ -1,4 +1,4 @@
-# case/StructTest Knowledge
+# case/SwingBeam Knowledge
 
 ## OVERVIEW
 
@@ -27,7 +27,7 @@ Closed, water-filled tank enclosing a centrally-clamped elastic cantilever beam 
 
 ## CONVENTIONS
 
-- Run roots default to `/root/Workspace/StructTest/fdm` (FDM) and `/root/Workspace/StructTest/precice` (preCICE); always preview with `--dry-run` first.
+- Run roots default to `/root/Workspace/SwingBeam/fdm_water` (FDM) and `/root/Workspace/SwingBeam/precice_air` (preCICE); always preview with `--dry-run` first.
 - Both drivers accept `--case-root`, `--steps`, `--res`, `--z-layers`, `--end-time`, `--write-interval`, `--nprocs`, `--settings-dir`, `--video/--no-video`.
 - Both drivers accept `--skip-if-fresh` (opt-in mtime-based skip of fresh generation stages; solver/post/video stages always run).
 - FDM extras: `--delta-t`, `--no-excite` (stage 02 `--excite-force` is on by default), `--force-amp`, `--force-freq`, `--force-end-time`, `--modal-zeta`, `--coupling-relax`, `--coupling-acceleration`, `--fsi-disp-tolerance`, `--amr`.
@@ -45,7 +45,7 @@ Closed, water-filled tank enclosing a centrally-clamped elastic cantilever beam 
 
 ## ANTI-PATTERNS
 
-- Do not run solvers or OpenFOAM/CalculiX tools in the `src/` repository root; use the run roots under `/root/Workspace/StructTest/`.
+- Do not run solvers or OpenFOAM/CalculiX tools in the `src/` repository root; use the run roots under `/root/Workspace/SwingBeam/`.
 - Do not commit generated case output, logs, or video artifacts.
 - Do not mix a preCICE `deltaT` with a mismatched time-window; the driver does not repair it.
 - Do not treat `E=1e6` as preCICE-stable — use `--gate-e 1.0e7` for the stable smoke.

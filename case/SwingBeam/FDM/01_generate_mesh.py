@@ -17,7 +17,7 @@ Geometry (metres; tank outer box unchanged from DamFailure):
     elastic beam: 0.012 x 0.120 x 0.012 m, clamped at y=0, x in [0.292, 0.304]
 
 Usage:
-    python3 01_generate_mesh.py --res 240 --out-dir /root/Workspace/StructTest/fdm/mesh --view
+    python3 01_generate_mesh.py --res 240 --out-dir /root/Workspace/SwingBeam/fdm_water/mesh --view
 """
 
 import argparse

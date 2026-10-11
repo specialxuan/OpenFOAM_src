@@ -1,4 +1,4 @@
-# StructTest 封闭水箱悬臂梁基础算例说明
+# SwingBeam 封闭水箱悬臂梁基础算例说明
 
 ## 计算域与流体几何
 
@@ -67,7 +67,7 @@
 ```bash
 cd case/SwingBeam/FDM
 bash run_pipeline.sh --steps 1,2,3,4 --res 30 --z-layers 4 --end-time 2.0 --write-interval 5 \
-    --case-root /root/Workspace/StructTest/fdm --force-amp 0.1 --coupling-relax 0.004 \
+    --case-root /root/Workspace/SwingBeam/fdm_water --force-amp 0.1 --coupling-relax 0.004 \
     --fsi-disp-tolerance 1e-6
 ```
 
@@ -77,15 +77,15 @@ bash run_pipeline.sh --steps 1,2,3,4 --res 30 --z-layers 4 --end-time 2.0 --writ
   单独跑步骤 6 出速度云图视频：
 
 ```bash
-CD=/root/Workspace/StructTest/fdm/fdm_case
+CD=/root/Workspace/SwingBeam/fdm_water/fdm_case
 for r in 0.005:0.25 0.255:0.50 0.505:0.75 0.755:1.00 \
          1.005:1.25 1.255:1.50 1.505:1.75 1.755:2.00; do
   ( cd "$CD" && reconstructPar -newTimes -fields '(U pointDisplacement)' -time "$r" ) &
 done; wait
 python3 05_postprocess.py --case "$CD" \
-    --out-dir /root/Workspace/StructTest/fdm/postprocess --no-reconstruct
+    --out-dir /root/Workspace/SwingBeam/fdm_water/postprocess --no-reconstruct
 bash run_pipeline.sh --steps 6 --res 30 --z-layers 4 --end-time 2.0 \
-    --case-root /root/Workspace/StructTest/fdm
+    --case-root /root/Workspace/SwingBeam/fdm_water
 ```
 
 ## 边界条件
@@ -119,18 +119,18 @@ bash run_pipeline.sh --steps 6 --res 30 --z-layers 4 --end-time 2.0 \
 - 冒烟命令：
 
 ```bash
-cd case/StructTest/preCICE
-bash run_pipeline.sh --steps 1,3,4,5,6 --end-time 0.02 --res 30 --z-layers 4 --gate-e 1.0e7 --write-interval 0.002 --case-root /root/Workspace/StructTest/precice
+cd case/SwingBeam/preCICE
+bash run_pipeline.sh --steps 1,3,4,5,6 --end-time 0.02 --res 30 --z-layers 4 --gate-e 1.0e7 --write-interval 0.002 --case-root /root/Workspace/SwingBeam/precice_air
 ```
 
 ## 流水线
 
 ```bash
-cd case/StructTest/FDM
-bash run_pipeline.sh --steps 1,2 --res 30 --z-layers 4 --case-root /root/Workspace/StructTest/fdm
-bash run_pipeline.sh --steps 3   --res 30 --z-layers 4 --end-time 0.05 --case-root /root/Workspace/StructTest/fdm
-bash run_pipeline.sh --steps 4   --res 30 --z-layers 4 --end-time 0.05 --case-root /root/Workspace/StructTest/fdm
-bash run_pipeline.sh --steps 5,6 --res 30 --z-layers 4 --end-time 0.05 --case-root /root/Workspace/StructTest/fdm
+cd case/SwingBeam/FDM
+bash run_pipeline.sh --steps 1,2 --res 30 --z-layers 4 --case-root /root/Workspace/SwingBeam/fdm_water
+bash run_pipeline.sh --steps 3   --res 30 --z-layers 4 --end-time 0.05 --case-root /root/Workspace/SwingBeam/fdm_water
+bash run_pipeline.sh --steps 4   --res 30 --z-layers 4 --end-time 0.05 --case-root /root/Workspace/SwingBeam/fdm_water
+bash run_pipeline.sh --steps 5,6 --res 30 --z-layers 4 --end-time 0.05 --case-root /root/Workspace/SwingBeam/fdm_water
 ```
 
 - `--no-excite` 关闭周期激励；`--force-end-time` 指定激励序列时长；`--coupling-relax` 覆盖耦合松弛（默认 `0.7`；本算例实测稳定诊断值 `0.004`）；`--modal-zeta` 生成 `modalMass`/`modalDamp`（默认 `0.03`）。

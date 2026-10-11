@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # --------------------------------------------------------------------------- #
 #  默认值
 # --------------------------------------------------------------------------- #
-CASE_ROOT="/root/Workspace/StructTest/precice"
+CASE_ROOT="/root/Workspace/SwingBeam/precice_air"
 STEPS="1,3,4,5,6"
 RES=115
 Z_LAYERS=12
