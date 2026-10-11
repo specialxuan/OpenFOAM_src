@@ -150,9 +150,6 @@ int main(int argc, char *argv[])
                     #include "pimpleLoopBody.H"
                 }
 
-                // Now update mesh based on new forces
-                mesh.update();
-
                 const scalar maxDiff = fsiMaxDisplacementChange
                 (
                     mesh,
