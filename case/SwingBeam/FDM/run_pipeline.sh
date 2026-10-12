@@ -33,6 +33,7 @@ MODAL_ZETA=0.03   # 每阶模态阻尼比 (默认 0.03: modalMass/modalDamp = 2*
 COUPLING_REL=0.7  # 隐式耦合力松弛 (默认 0.7; fsiTolerance=1e-3, nOuterCorrectors=100)
 COUPLING_ACCEL="" # 界面耦合加速器 (空: 用库内默认 constant)
 FSI_DISP_TOL=""   # 绝对位移判据容差 m (空: 不写, 求解器默认 0 关闭)
+FSI_DISP_CONSEC="" # 位移判据连续冻结轮数 (空: 不写, 求解器默认 1)
 FLUID="water"     # 步骤 3 流体: water=满水 (默认) / air=满空气 (附加质量极小)
 VIDEO_FIELD="magU"       # 视频着色场: magU=速度幅值云图 (默认); alpha.water=旧白蓝水相
 VIDEO_VIEWS="full,beam"  # 视频视图: full(全流域) / beam(梁区放大) / both; 逗号组合
@@ -77,6 +78,9 @@ usage() {
                          (constant|aitken|IQN-ILS|IQN-IMVJ; 默认不写 = 库内 constant)
   --fsi-disp-tolerance <d>  传给 03: fsiDispTolerance (OR 绝对位移判据, 单位 m;
                         默认不写 = 求解器默认 0 关闭)
+  --fsi-disp-consecutive-iters <n>  传给 03: fsiDispConsecutiveIters (位移
+                        判据需连续 n 轮冻结; 整数 >= 1; 默认不写 = 求解器
+                        默认 1; 需同时给出 --fsi-disp-tolerance)
   --fluid <water|air>    传给 03: 水箱流体 (默认 $FLUID = 满水 alpha.water=1;
                          air = 满空气 alpha.water=0, 附加质量极小, 应配大
                          --coupling-relax, 如 1.0)
@@ -135,6 +139,7 @@ while [ $# -gt 0 ]; do
         --coupling-relax)  COUPLING_REL="${2:?--coupling-relax 需要一个参数}"; shift 2 ;;
         --coupling-acceleration) COUPLING_ACCEL="${2:?--coupling-acceleration 需要一个参数}"; shift 2 ;;
         --fsi-disp-tolerance) FSI_DISP_TOL="${2:?--fsi-disp-tolerance 需要一个参数}"; shift 2 ;;
+        --fsi-disp-consecutive-iters) FSI_DISP_CONSEC="${2:?--fsi-disp-consecutive-iters 需要一个参数}"; shift 2 ;;
         --fluid)           FLUID="${2:?--fluid 需要一个参数}"; shift 2 ;;
         --video-field)     VIDEO_FIELD="${2:?--video-field 需要一个参数}"; shift 2 ;;
         --video-views)     VIDEO_VIEWS="${2:?--video-views 需要一个参数}"; shift 2 ;;
@@ -404,6 +409,9 @@ run_step() {
     if [ "$step" -eq 3 ] && [ -n "$FSI_DISP_TOL" ]; then
         cmd+=" --fsi-disp-tolerance '$FSI_DISP_TOL'"
     fi
+    if [ "$step" -eq 3 ] && [ -n "$FSI_DISP_CONSEC" ]; then
+        cmd+=" --fsi-disp-consecutive-iters '$FSI_DISP_CONSEC'"
+    fi
     if [ "$step" -eq 4 ] && [ -n "$DELTA_T" ]; then
         cmd+=" --delta-t '$DELTA_T'"
     fi
@@ -535,6 +543,7 @@ echo "[FDM-PIPE] 模态阻尼    : ${MODAL_ZETA:-无 (modalMass/modalDamp 缺省
 echo "[FDM-PIPE] 耦合松弛    : ${COUPLING_REL:-内嵌默认 1}"
 echo "[FDM-PIPE] 耦合加速    : ${COUPLING_ACCEL:-库内默认 (constant)}"
 echo "[FDM-PIPE] 位移判据容差: ${FSI_DISP_TOL:-关闭 (求解器默认 0)}"
+echo "[FDM-PIPE] 位移判据连续轮数: ${FSI_DISP_CONSEC:-默认 1}"
 echo "[FDM-PIPE] 视频着色    : --video-field $VIDEO_FIELD"
 echo "[FDM-PIPE] 视频视图    : --video-views $VIDEO_VIEWS (full -> frames/fdm_result.mp4, beam -> frames_beam/fdm_result_beam.mp4)"
 if [ "$VIDEO" = "yes" ]; then

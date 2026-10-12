@@ -335,6 +335,7 @@ def build_dynamic_mesh_dict(amr=False, amr_interval=1, amr_lower_refine=12,
                             modal_mass=None, modal_damp=None,
                             coupling_relaxation=None, fsi_tolerance=None,
                             fsi_disp_tolerance=None,
+                            fsi_disp_consecutive_iters=None,
                             coupling_acceleration=None):
     """Render constant/dynamicMeshDict body.
 
@@ -342,7 +343,9 @@ def build_dynamic_mesh_dict(amr=False, amr_interval=1, amr_lower_refine=12,
     baseline.  fsi_tolerance adds the top-level solver-side ``fsiTolerance``
     key (sibling to ``fsiCoupling``, read by fsiCoupling.H); fsi_disp_tolerance
     adds the top-level ``fsiDispTolerance`` key for the OR absolute
-    displacement criterion; coupling_relaxation
+    displacement criterion; fsi_disp_consecutive_iters adds the top-level
+    ``fsiDispConsecutiveIters`` key (consecutive frozen outer iterations the
+    gate requires, integer >= 1); coupling_relaxation
     overrides the embedded 1; coupling_acceleration injects the
     fastDynamicFvMeshCoeffs couplingAcceleration selector before trackTiming;
     structural_force injects the structuralForceEnabled keys before
@@ -352,13 +355,17 @@ def build_dynamic_mesh_dict(amr=False, amr_interval=1, amr_lower_refine=12,
     """
     anchor = "    trackTiming        true;\n"
     body = DYNAMIC_MESH_DICT_BODY
-    if fsi_tolerance is not None or fsi_disp_tolerance is not None:
+    if (fsi_tolerance is not None or fsi_disp_tolerance is not None
+            or fsi_disp_consecutive_iters is not None):
         top_level = ""
         if fsi_tolerance is not None:
             top_level += "\n\nfsiTolerance %s;" % _fmt_num(fsi_tolerance)
         if fsi_disp_tolerance is not None:
             top_level += "\nfsiDispTolerance %s;" \
                 % _fmt_num(fsi_disp_tolerance)
+        if fsi_disp_consecutive_iters is not None:
+            top_level += "\nfsiDispConsecutiveIters %d;" \
+                % fsi_disp_consecutive_iters
         body = body.replace(
             "fsiCoupling integrated;",
             "fsiCoupling integrated;" + top_level)
@@ -433,6 +440,7 @@ def write_constant(case_dir, amr=False, amr_interval=1, amr_lower_refine=12,
                    modal_mass=None, modal_damp=None,
                    coupling_relaxation=None, fsi_tolerance=None,
                    fsi_disp_tolerance=None,
+                   fsi_disp_consecutive_iters=None,
                    coupling_acceleration=None):
     body = build_dynamic_mesh_dict(
         amr=amr, amr_interval=amr_interval, amr_lower_refine=amr_lower_refine,
@@ -443,6 +451,7 @@ def write_constant(case_dir, amr=False, amr_interval=1, amr_lower_refine=12,
         modal_damp=modal_damp, coupling_relaxation=coupling_relaxation,
         fsi_tolerance=fsi_tolerance,
         fsi_disp_tolerance=fsi_disp_tolerance,
+        fsi_disp_consecutive_iters=fsi_disp_consecutive_iters,
         coupling_acceleration=coupling_acceleration)
     _write(os.path.join(case_dir, "constant", "dynamicMeshDict"),
            _dict_file("dynamicMeshDict", "constant", body))
@@ -1060,6 +1069,12 @@ def parse_args(argv):
                    help="top-level dynamicMeshDict fsiDispTolerance (metres) "
                         "for the OR absolute displacement criterion "
                         "(default: omitted -> solver default 0 = disabled)")
+    p.add_argument("--fsi-disp-consecutive-iters", type=int, default=None,
+                   help="top-level dynamicMeshDict fsiDispConsecutiveIters "
+                        "(integer >= 1): consecutive frozen outer iterations "
+                        "the OR displacement gate requires (default: omitted "
+                        "-> solver default 1 = legacy single-step; requires "
+                        "--fsi-disp-tolerance > 0)")
     p.add_argument("--coupling-acceleration",
                    choices=_COUPLING_ACCEL_TOKENS, default=None,
                    help="fastDynamicFvMeshCoeffs couplingAcceleration selector "
@@ -1153,6 +1168,16 @@ def main(argv):
         print("[FDM ERR] --fsi-disp-tolerance must be > 0 (got %s)"
               % _fmt_num(args.fsi_disp_tolerance))
         return 1
+    if (args.fsi_disp_consecutive_iters is not None
+            and args.fsi_disp_consecutive_iters < 1):
+        print("[FDM ERR] --fsi-disp-consecutive-iters must be >= 1 (got %s)"
+              % args.fsi_disp_consecutive_iters)
+        return 1
+    if (args.fsi_disp_consecutive_iters is not None
+            and args.fsi_disp_tolerance is None):
+        print("[FDM ERR] --fsi-disp-consecutive-iters requires "
+              "--fsi-disp-tolerance > 0 (the gate is disabled otherwise)")
+        return 1
     write_constant(out_dir, amr=args.amr, amr_interval=args.amr_interval,
                    amr_lower_refine=args.amr_lower_refine,
                    amr_unrefine=args.amr_unrefine,
@@ -1166,6 +1191,7 @@ def main(argv):
                    coupling_relaxation=args.coupling_relaxation,
                    fsi_tolerance=args.fsi_tolerance,
                    fsi_disp_tolerance=args.fsi_disp_tolerance,
+                   fsi_disp_consecutive_iters=args.fsi_disp_consecutive_iters,
                    coupling_acceleration=args.coupling_acceleration)
     if args.coupling_relaxation is not None:
         print("[FDM 03] couplingRelaxation: %s"
@@ -1177,6 +1203,9 @@ def main(argv):
     if args.fsi_disp_tolerance is not None:
         print("[FDM 03] fsiDispTolerance: %s"
               % _fmt_num(args.fsi_disp_tolerance))
+    if args.fsi_disp_consecutive_iters is not None:
+        print("[FDM 03] fsiDispConsecutiveIters: %s"
+              % args.fsi_disp_consecutive_iters)
     print("[FDM 03] structuralForce: %s"
           % ("enabled (StructForce1.csv found)"
              if structural_force else "disabled (no mode/StructForce1.csv)"))

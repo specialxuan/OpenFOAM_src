@@ -51,7 +51,7 @@
 ## FSI 耦合与稳定性调参
 
 - 结构文件：`mode/StructNodeCoor.csv`、`mode/StructNodeDisp1..N.csv`（梁节点，升序节点号）；流体文件：`mode/FluidNodeCoor.csv`、`mode/FluidNodeDisp1..N.csv`。
-- 耦合方式：`fsiCoupling integrated`，模态叠加动网格（`fastDynamicFvMesh`）。收敛判据：力残差 `fsiResidual < fsiTolerance`，**或**（可选）绝对位移判据 `maxDispChange < fsiDispTolerance`；两者为 **OR** 关系（任一满足即收敛），`fsiDispTolerance` 默认 `0` 关闭，本算例生产取 `1e-6 m`。
+- 耦合方式：`fsiCoupling integrated`，模态叠加动网格（`fastDynamicFvMesh`）。收敛判据：力残差 `fsiResidual < fsiTolerance`，**或**（可选）绝对位移判据 `maxDispChange < fsiDispTolerance`；两者为 **OR** 关系（任一满足即收敛），`fsiDispTolerance` 默认 `0` 关闭，本算例生产取 `1e-6 m`。位移判据可选配 `fsiDispConsecutiveIters`（默认 `1` = 单轮；设为 `2` 要求连续两轮冻结）。
 - **组装默认值**（`03_assemble_fdm_case.py` 生成，`run_pipeline.sh` 同步）：`couplingRelaxation 0.7`、顶层 `fsiTolerance 1e-3`、`modalMass (1..1)` 与 `modalDamp (2*zeta*omega_m)`（`zeta=0.03`）、`nOuterCorrectors 100`；梁材料（`E=1e6, nu=0, rho=2500`）与周期端部激励保持不变。
 - **稳定性实测**（`res=30`、`z-layers=4`、`A=0.1 N`、`dt=1e-3`、8 ranks）：
   - 请求值 `couplingRelaxation=0.7`：在第一个时间步内发散——位移增量逐迭代放大（`2.1e-5 → 1.4e-4 → 3.1e-3 m`，×7/×22），随后压力求解 GAMG SIGFPE（`t=0.001`，退出码 136）。
@@ -136,3 +136,4 @@ bash run_pipeline.sh --steps 5,6 --res 30 --z-layers 4 --end-time 0.05 --case-ro
 - `--no-excite` 关闭周期激励；`--force-end-time` 指定激励序列时长；`--coupling-relax` 覆盖耦合松弛（默认 `0.7`；本算例实测稳定诊断值 `0.004`）；`--modal-zeta` 生成 `modalMass`/`modalDamp`（默认 `0.03`）。
 - `--coupling-acceleration <constant|aitken|IQN-ILS|IQN-IMVJ>`：界面耦合加速器（默认不写 = 库内 `constant`）；本算例加速器发散，生产不使用。
 - `--fsi-disp-tolerance <d>`：顶层 `fsiDispTolerance`（OR 绝对位移判据，单位 m；默认不写 = 求解器默认 `0` 关闭）；本算例生产取 `1e-6`。
+- `--fsi-disp-consecutive-iters <n>`：顶层 `fsiDispConsecutiveIters`（位移判据需连续 `n` 轮冻结，整数 `>= 1`；默认不写 = 求解器默认 `1`；需同时给出 `--fsi-disp-tolerance > 0`）。

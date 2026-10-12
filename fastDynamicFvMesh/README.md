@@ -23,9 +23,13 @@ At each mesh `update()`:
   - integrated/implicit FSI outer-loop convergence should use
     `fsiResidual < fsiTolerance` (force criterion); displacement change can be
     retained as diagnostics only.
-  - the solver-side OR absolute-displacement criterion (`fsiDispTolerance`, see
-    `fsiCoupling/AGENTS.md`) can additionally terminate the loop when the mesh
-    displacement freezes; it is opt-in (default `0` = disabled).
+  - the solver-side OR absolute-displacement criterion (`fsiDispTolerance` plus
+    `fsiDispConsecutiveIters`, see `fsiCoupling/AGENTS.md`) sets `fsiConverged`
+    when the mesh displacement stays frozen for N consecutive outer iterations;
+    it is opt-in (default `0` = disabled, `fsiDispConsecutiveIters 1` = legacy
+    single-step). In partitioned coupling that flag terminates the loop; in
+    integrated/implicit coupling it only vetoes PIMPLE's residual-based early
+    stop and cannot end the loop on its own.
 - Restart support:
   - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`) for non-zero-time continuation/restart only,
   - startup modal mapping now uses current mesh points by default, and only uses `constant/polyMesh/points` when its point count matches the current mesh (prevents `latestTime`+AMR point-count mismatch on restart),
@@ -173,7 +177,8 @@ case, so this is a property of the added-mass problem, not of this implementatio
 
 For such cases keep `couplingAcceleration constant` with a small `couplingRelaxation`
 (SwingBeam uses `0.004`) and use the solver-side OR displacement criterion
-(`fsiDispTolerance`, see `fsiCoupling/AGENTS.md`).
+(`fsiDispTolerance`, optionally with `fsiDispConsecutiveIters > 1` to require
+consecutive quiet iterations, see `fsiCoupling/AGENTS.md`).
 
 ## 模态扩展 (modal extension)
 

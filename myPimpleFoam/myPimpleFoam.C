@@ -145,6 +145,7 @@ int main(int argc, char* argv[])
         {
             label fsiIter = 0;
             bool fsiConverged = false;
+            label dispStreak = 0;
             pointField points0 = mesh.points();
 
             while (fsiIter < fsiControls.maxIter && !fsiConverged)
@@ -173,9 +174,12 @@ int main(int argc, char* argv[])
                 );
                 const scalar fsiRes = readFsiResidual(mesh);
                 const bool forceOK = (fsiRes < fsiControls.tolerance);
-                const bool dispOK  = (fsiControls.dispTolerance > 0.0)
+                const bool dispOKRaw = (fsiControls.dispTolerance > 0.0)
                                   && fsiDisplacementChangeValid(mesh, points0)
                                   && (maxDiff < fsiControls.dispTolerance);
+                dispStreak = dispOKRaw ? dispStreak + 1 : 0;
+                const bool dispOK = dispOKRaw
+                                 && (dispStreak >= fsiControls.dispConsecutiveIters);
                 fsiConverged = forceOK || dispOK;
                 points0 = mesh.points();
 
@@ -189,6 +193,7 @@ int main(int argc, char* argv[])
             label fsiIter = 0;
             fsiPimpleControl pimple(mesh, fsiConverged);
 
+            label dispStreak = 0;
             pointField points0 = mesh.points();
 
             while (pimple.loop())
@@ -217,9 +222,12 @@ int main(int argc, char* argv[])
                 );
 
                 const bool forceOK = (fsiRes < fsiControls.tolerance);
-                const bool dispOK  = (fsiControls.dispTolerance > 0.0)
+                const bool dispOKRaw = (fsiControls.dispTolerance > 0.0)
                                   && fsiDisplacementChangeValid(mesh, points0)
                                   && (maxDiff < fsiControls.dispTolerance);
+                dispStreak = dispOKRaw ? dispStreak + 1 : 0;
+                const bool dispOK = dispOKRaw
+                                 && (dispStreak >= fsiControls.dispConsecutiveIters);
                 fsiConverged = forceOK || dispOK;
                 points0 = mesh.points();
             }

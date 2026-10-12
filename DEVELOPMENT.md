@@ -5,7 +5,7 @@
 ## 文件归类
 
 - 源码：`fastDynamicFvMesh/fastDynamicFvMesh/`、`myInterFoam/`、`myPimpleFoam/`、`myRhoPimpleFoam/` 下的 `.C/.H` 和 `Make/` 文件。
-- 文档：`fastDynamicFvMesh/README.md`、`fastDynamicFvMesh/Doc/快速动网格程序手册.md`、`Plan.md` 以及本文件。
+- 文档：`fastDynamicFvMesh/README.md`、`fastDynamicFvMesh/Doc/快速动网格程序手册.md` 以及本文件（`Plan.md` 等计划稿是本地草稿，已被 `.gitignore` 忽略）。
 - 图表源文件：`fastDynamicFvMesh/Doc/Figures/*.drawio` 可以作为文档源文件跟踪。
 - 图表导出文件：PNG/JPG 是否跟踪应按文档需要逐个决定；可再生成的临时 SVG/debug SVG 不应提交。
 - 本地工具配置：`.vscode/mcp.json`、工作区 `.codex`、Python 虚拟环境和缓存不应提交。
@@ -24,7 +24,7 @@
 - `/root/Workspace/case_damfailure.zip`
 - `/root/Workspace/case_transient.zip`
 
-建议使用 `scripts/smoke_fastDynamicFvMesh.sh` 建立临时运行目录并收集编译和运行日志。
+建议使用 `/root/Workspace/_Oldversion_/scripts/smoke_fastDynamicFvMesh.sh`（仓库外、未跟踪）建立临时运行目录并收集编译和运行日志。
 
 ## fastDynamicFvMesh 变更要求
 

@@ -47,6 +47,7 @@ struct fsiCouplingControls
     label maxIter;
     scalar tolerance;
     scalar dispTolerance;
+    label dispConsecutiveIters;
 };
 
 
@@ -77,6 +78,8 @@ inline fsiCouplingControls readFsiCouplingControls
         dynamicMeshDict.lookupOrDefault<scalar>("fsiTolerance", 1e-4);
     controls.dispTolerance =
         dynamicMeshDict.lookupOrDefault<scalar>("fsiDispTolerance", 0.0);
+    controls.dispConsecutiveIters =
+        dynamicMeshDict.lookupOrDefault<label>("fsiDispConsecutiveIters", 1);
 
     if
     (
@@ -90,6 +93,22 @@ inline fsiCouplingControls readFsiCouplingControls
             << "Unsupported fsiCoupling '" << controls.coupling
             << "'. Valid values are explicit, partitioned, integrated, "
             << "and implicit." << exit(FatalIOError);
+    }
+
+    if (controls.dispConsecutiveIters < 1)
+    {
+        Info << "Warning: fsiDispConsecutiveIters < 1; clamped to 1." << endl;
+        controls.dispConsecutiveIters = 1;
+    }
+
+    if
+    (
+        controls.dispTolerance > 0.0
+     && controls.dispConsecutiveIters > controls.maxIter
+    )
+    {
+        Info << "Warning: fsiDispConsecutiveIters > maxFsiIter; the "
+             << "displacement OR-gate can never trigger." << endl;
     }
 
     return controls;
