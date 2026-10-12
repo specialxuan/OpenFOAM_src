@@ -45,6 +45,12 @@ inline Foam::scalar Foam::pseudotimeControl::fsiTolerance() const
 }
 
 
+inline bool Foam::pseudotimeControl::fsiConverged() const
+{
+    return fsiConverged_;
+}
+
+
 inline bool Foam::pseudotimeControl::storeInitialResiduals() const
 {
     // Start from second outer iteration

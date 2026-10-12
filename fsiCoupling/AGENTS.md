@@ -2,7 +2,7 @@
 
 ## OVERVIEW
 
-Header-only solver-side FSI contract shared by the three main solver families.
+Header-only solver-side FSI contract shared by the three main solver families and myHisa.
 
 ## WHERE TO LOOK
 
@@ -12,7 +12,7 @@ Header-only solver-side FSI contract shared by the three main solver families.
 | PIMPLE stop criteria | `fsiPimpleControl` | ANDs `fsiConverged` into base `pimpleControl::criteriaSatisfied()` — an integrated-mode veto, see CONVENTIONS |
 | Coupling mode checks | `isPartitionedFsiCoupling()`, `isIntegratedFsiCoupling()` | `implicit` aliases integrated coupling |
 | Force residual read | `readFsiResidual()` | Looks up mesh object `fsiResidual`; fallback value is non-converged |
-| Absolute displacement criterion | `fsiCouplingControls.dispTolerance` / `dispConsecutiveIters`, top-level `fsiDispTolerance` / `fsiDispConsecutiveIters` | Opt-in OR gate: sets `fsiConverged` when `maxDiff < dispTolerance` for `dispConsecutiveIters` consecutive outer iterations; defaults `0` / `1` = disabled / legacy single-step |
+| Absolute displacement criterion | `fsiCouplingControls.dispTolerance` / `dispConsecutiveIters`, top-level `fsiDispTolerance` / `fsiDispConsecutiveIters` | Opt-in OR gate: sets `fsiConverged` when `maxDiff < dispTolerance` for `dispConsecutiveIters` consecutive outer iterations; defaults `0` / `1` = disabled / legacy single-step. Consumed by the three my*Foam mains (`fsiPimpleControl`) and by myHisa's `pseudotimeControl` |
 | Displacement logging | `fsiMaxDisplacementChange()`, `logFsiIteration()` | Per-outer-iteration global max `\|points-points0\|`; used by the OR gate and as diagnostics |
 
 ## CONVENTIONS
@@ -21,7 +21,7 @@ Header-only solver-side FSI contract shared by the three main solver families.
 - Supported `fsiCoupling` values are `explicit`, `partitioned`, `integrated`, and `implicit`.
 - Defaults: `fsiCoupling explicit`, `maxFsiIter 10`, `fsiTolerance 1e-4`, `fsiDispTolerance 0` (disabled), `fsiDispConsecutiveIters 1` (legacy single-step gate).
 - Convergence flag: `fsiConverged = forceOK || dispOK`, with `forceOK = fsiResidual < fsiTolerance` and `dispOK = (dispTolerance > 0) && fsiDisplacementChangeValid() && maxDiff < dispTolerance` sustained for `dispConsecutiveIters` consecutive outer iterations (`maxDiff` = per-outer-iteration global max `|points-points0|`; the counter resets on any non-satisfying or topology-change iteration).
-- How that flag stops the loop is mode-dependent. **Partitioned** runs `while (fsiIter < maxFsiIter && !fsiConverged)`, so `fsiConverged` (force OR displacement) terminates the loop directly. **Integrated/implicit** runs `while (pimple.loop())`, where `fsiPimpleControl::criteriaSatisfied()` is `pimpleControl::criteriaSatisfied() && fsiConverged_` — an AND veto: the flag can only *prevent* PIMPLE's residual-based early stop (forcing iterations until FSI converges), never terminate the loop by itself; with an unmet `residualControl` the loop still runs to `nOuterCorrectors`. In both modes a true `fsiConverged` suppresses the post-loop "FSI force residual did not converge" warning, which is the OR gate's purpose for near-zero modal-force (zero-crossing) spikes.
+- How that flag stops the loop is mode-dependent. **Partitioned** runs `while (fsiIter < maxFsiIter && !fsiConverged)`, so `fsiConverged` (force OR displacement) terminates the loop directly. **Integrated/implicit** runs `while (pimple.loop())`, where `fsiPimpleControl::criteriaSatisfied()` is `pimpleControl::criteriaSatisfied() && fsiConverged_` — an AND veto: the flag can only *prevent* PIMPLE's residual-based early stop (forcing iterations until FSI converges), never terminate the loop by itself; with an unmet `residualControl` the loop still runs to `nOuterCorrectors`. Conversely, because the flag is an OR, when the residual criterion *is* met the displacement gate lets the loop stop there instead of running on to force convergence — so enabling the gate can also *reduce* the integrated iteration count (observed on AGARD integrated: 170 → 80 pseudotime iterations over a 4-step window, warnings 4 → 0, end-of-run forces unchanged). In both modes a true `fsiConverged` suppresses the post-loop "FSI force residual did not converge" warning, which is the OR gate's purpose for near-zero modal-force (zero-crossing) spikes. myHisa implements the same integrated AND veto inside `pseudotimeControl::criteriaSatisfied()` instead of `fsiPimpleControl`; its displacement reference points and streak counter live in the control and are reset at `corr_ == 1` so the state survives across time steps.
 - `fsiDispConsecutiveIters 1` reproduces the legacy single-step gate bit-for-bit; `2` rejects one-step stagnation/plateau false positives, observable as an extra outer iteration in partitioned mode.
 - `fsiDispConsecutiveIters < 1` is clamped to `1` with a warning; values greater than `maxFsiIter` warn that the gate can never trigger.
 - Displacement-change checks must tolerate topology changes by comparing point counts before subtracting point fields.

@@ -73,6 +73,8 @@ void Foam::pseudotimeControl::read()
         readFsiCouplingControls(mesh_.time(), mesh_);
     fsiCoupling_ = fsiControls.coupling;
     fsiTolerance_ = fsiControls.tolerance;
+    fsiDispTolerance_ = fsiControls.dispTolerance;
+    fsiDispConsecutiveIters_ = fsiControls.dispConsecutiveIters;
 
     if (state_.found("initResiduals"))
     {
@@ -130,11 +132,16 @@ bool Foam::pseudotimeControl::criteriaSatisfied()
         (corr_ >= nCorrOuterMin_) && (absCheck || relCheck);
 
     // Integrated/implicit FSI coupling additionally requires the modal force
-    // residual published by the dynamicFvMesh (one-iteration lag, same as the
-    // myPimpleFoam integrated branch)
+    // residual published by the dynamicFvMesh OR the opt-in displacement gate
+    // (one-iteration lag, same as the myPimpleFoam integrated branch)
     if (!steadyState_ && isIntegratedFsiCoupling(fsiCoupling_))
     {
-        return baseConverged && (readFsiResidual(mesh_) < fsiTolerance_);
+        const bool forceOK = (readFsiResidual(mesh_) < fsiTolerance_);
+        const bool dispOK =
+            (fsiDispTolerance_ > 0.0)
+         && (dispStreak_ >= fsiDispConsecutiveIters_);
+        fsiConverged_ = forceOK || dispOK;
+        return baseConverged && fsiConverged_;
     }
 
     return baseConverged;
@@ -156,6 +163,10 @@ Foam::pseudotimeControl::pseudotimeControl(fvMesh& mesh, const bool steadyState,
     turbOnFinalIterOnly_(false),
     fsiCoupling_("explicit"),
     fsiTolerance_(1e-4),
+    fsiDispTolerance_(0.0),
+    fsiDispConsecutiveIters_(1),
+    dispStreak_(0),
+    fsiConverged_(false),
     converged_(false),
     firstIteration_(true),
     residualTols_(defaultTol),
@@ -234,6 +245,45 @@ bool Foam::pseudotimeControl::loop()
             #endif
         }
         return false;
+    }
+
+    // Integrated/implicit FSI displacement OR-gate bookkeeping. Uses the same
+    // one-iteration lag as the fsiResidual read in criteriaSatisfied(): at loop
+    // call k the mesh holds the state after move k-1, so the difference against
+    // the reference captured at call k-1 is exactly move k-1's displacement.
+    if (!steadyState_ && isIntegratedFsiCoupling(fsiCoupling_))
+    {
+        if (corr_ <= 1)
+        {
+            // solnControl persists across time steps (corr_ resets to 0 on
+            // completion): re-capture the reference and clear the gate state
+            fsiConverged_ = false;
+            dispStreak_ = 0;
+            if (fsiDispTolerance_ > 0.0)
+            {
+                fsiPoints0_ = mesh_.points();
+            }
+        }
+        else if (fsiDispTolerance_ > 0.0)
+        {
+            const scalar maxDiff = fsiMaxDisplacementChange
+            (
+                mesh_,
+                fsiPoints0_,
+                corr_,
+                "FSI/Pseudo Iteration"
+            );
+            const bool dispOKRaw =
+                fsiDisplacementChangeValid(mesh_, fsiPoints0_)
+             && (maxDiff < fsiDispTolerance_);
+            dispStreak_ = dispOKRaw ? dispStreak_ + 1 : 0;
+            fsiPoints0_ = mesh_.points();
+        }
+        else
+        {
+            // Gate toggled off at run time (the dict is re-read every loop)
+            dispStreak_ = 0;
+        }
     }
 
     bool completed = false;

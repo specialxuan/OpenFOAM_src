@@ -268,6 +268,7 @@ int main(int argc, char *argv[])
             // pseudotime iteration, requiring moveMeshOuterCorrectors 0)
             label fsiIter = 0;
             bool fsiConverged = false;
+            label dispStreak = 0;
             pointField points0 = mesh.points();
 
             while (fsiIter < fsiControls.maxIter && !fsiConverged)
@@ -308,7 +309,14 @@ int main(int argc, char *argv[])
                     "FSI Iteration"
                 );
                 const scalar fsiRes = readFsiResidual(mesh);
-                fsiConverged = (fsiRes < fsiControls.tolerance);
+                const bool forceOK = (fsiRes < fsiControls.tolerance);
+                const bool dispOKRaw = (fsiControls.dispTolerance > 0.0)
+                                  && fsiDisplacementChangeValid(mesh, points0)
+                                  && (maxDiff < fsiControls.dispTolerance);
+                dispStreak = dispOKRaw ? dispStreak + 1 : 0;
+                const bool dispOK = dispOKRaw
+                                 && (dispStreak >= fsiControls.dispConsecutiveIters);
+                fsiConverged = forceOK || dispOK;
                 points0 = mesh.points();
 
                 logFsiIteration("FSI Iteration", fsiIter, fsiRes, maxDiff);
@@ -385,14 +393,34 @@ int main(int argc, char *argv[])
             }
         }
 
-            if
-            (
-                integratedFsi
-             && readFsiResidual(mesh) >= fsiControls.tolerance
-            )
+            if (integratedFsi)
             {
-                Info<< "Warning: FSI force residual did not converge within "
-                    << "pseudotime iterations." << endl;
+                // Gate off: legacy force-only check (bit-identical to the
+                // pre-gate behaviour). Gate on: the combined flag evaluated by
+                // the pseudotime control, so a displacement-converged step
+                // suppresses the warning.
+                bool fsiNotConverged;
+                if
+                (
+                    fsiControls.dispTolerance > 0.0
+                 && isA<pseudotimeControl>(solver.solnControl())
+                )
+                {
+                    fsiNotConverged =
+                        !refCast<pseudotimeControl>
+                            (solver.solnControl()).fsiConverged();
+                }
+                else
+                {
+                    fsiNotConverged =
+                        readFsiResidual(mesh) >= fsiControls.tolerance;
+                }
+
+                if (fsiNotConverged)
+                {
+                    Info<< "Warning: FSI force residual did not converge within "
+                        << "pseudotime iterations." << endl;
+                }
             }
         }
         if (steadyState && !notFinished)

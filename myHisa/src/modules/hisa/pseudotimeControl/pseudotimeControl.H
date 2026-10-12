@@ -47,6 +47,7 @@ Authors
 #include "solutionControl.H"
 #endif
 #include "residualIO.H"
+#include "pointField.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -94,6 +95,26 @@ protected:
 
             //- FSI force-residual tolerance for integrated/implicit coupling
             scalar fsiTolerance_;
+
+            //- FSI displacement-change tolerance for the opt-in OR gate
+            //  (0 = disabled), read from constant/dynamicMeshDict
+            scalar fsiDispTolerance_;
+
+            //- Consecutive frozen iterations required by the OR gate
+            label fsiDispConsecutiveIters_;
+
+            //- Current run of consecutive iterations satisfying the
+            //  displacement gate (reset on violation, topology change, and
+            //  at the start of each time step)
+            label dispStreak_;
+
+            //- Reference points for the per-iteration displacement change
+            //  (captured at corr_ == 1, updated every loop call)
+            pointField fsiPoints0_;
+
+            //- Last evaluated combined FSI convergence flag
+            //  (forceOK || dispOK; integrated/implicit coupling only)
+            bool fsiConverged_;
 
             //- Converged flag
             bool converged_;
@@ -172,6 +193,9 @@ public:
 
             //- FSI force-residual tolerance
             inline scalar fsiTolerance() const;
+
+            //- Last evaluated combined FSI convergence flag (integrated)
+            inline bool fsiConverged() const;
 
 
         // Solution control
