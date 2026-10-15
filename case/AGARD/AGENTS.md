@@ -19,6 +19,7 @@ AGARD 445.6 half-span wing case: CalculiX modal calibration of orthotropic wing 
 - `case/AGARD/**/*.zip` is Git LFS (`.gitattributes`: `filter=lfs diff=lfs merge=lfs -text`); the decks are large and cannot be regenerated on this machine (ICEM/ACIS workflow retired).
 - Material constants come only from `CaseDescription.md`; CalculiX cards must use `*ELASTIC, TYPE=ENGINEERING CONSTANTS` with the single `*ORIENTATION` line `1,1,0, 0,0,1` — `TYPE=ORTHO` is forbidden (it interprets values as stiffness coefficients and yields wrong soft materials).
 - Generated CalculiX/FRD/DAT/CSV artifacts belong under `/root/Workspace`, never in this directory.
+- FDM cases carry the validated FSI convergence recipe, emitted by `FDM/assemble_fdm_case.py` by default: `fsiCoupling integrated; fsiTolerance 1e-3; fsiDispTolerance 1e-9; fsiDispConsecutiveIters 1;`. The modal-force residual is noise-dominated and never reaches a tight `fsiTolerance`, so the displacement OR-gate is the binding stop criterion (20 pseudo-iterations/step, reproduces the archive).
 - Detailed stage gates, invariants, and pipeline usage live in `Mode/AGENTS.md` and `Mode/README.md`; read those before touching `Mode/`.
 
 ## ANTI-PATTERNS

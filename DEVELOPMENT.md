@@ -19,12 +19,7 @@
 
 ## smoke test 基线
 
-所有新测试/分析默认从以下压缩包复制 case，不直接修改基线：
-
-- `/root/Workspace/case_damfailure.zip`
-- `/root/Workspace/case_transient.zip`
-
-建议使用 `/root/Workspace/_Oldversion_/scripts/smoke_fastDynamicFvMesh.sh`（仓库外、未跟踪）建立临时运行目录并收集编译和运行日志。
+烟囱测试（smoke）走**仓库内自洽**的流程：`case/Damfailure/FDM/run_pipeline.sh`。它自带网格生成与模态阶段，**不需要任何外部基线压缩包**；先 `--dry-run` 预检，再用 `--steps` 跑一个短子集，日志落在 run root 下。
 
 ## fastDynamicFvMesh 变更要求
 
@@ -36,4 +31,4 @@
 并记录：
 
 - `wmake libso fastDynamicFvMesh` 编译结果。
-- 至少一次短 smoke run 或明确说明未能运行的原因。
+- 至少一次短 smoke run（`case/Damfailure/FDM/run_pipeline.sh`，如 `--dry-run` + 短 `--steps`）或明确说明未能运行的原因。

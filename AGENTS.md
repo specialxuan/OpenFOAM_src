@@ -27,8 +27,8 @@ src/
 ```
 
 `scripts/` was untracked in `effbecd` (v3.3.9) and is gitignored; the live copy now
-exists only outside git at `/root/Workspace/_Oldversion_/scripts/` (smoke runner,
-mesh/modal converters, staged pipelines).
+exists only outside git at `/root/Workspace/_Oldversion_/scripts/` (mesh/modal
+converters, staged pipelines).
 
 Nearly every major directory carries its own small `AGENTS.md` (`fastDynamicFvMesh/`,
 `fsiCoupling/`, `myPimpleFoam/`, `myInterFoam/` plus `interMixingFoam/`, `myRhoPimpleFoam/`,
@@ -51,9 +51,8 @@ repo-wide rules.
 | AGARD modal workflow       | `case/AGARD/Mode/`                                                           | Detailed `AGENTS.md`; LFS mesh decks under `Mode/mesh/`        |
 | AGARD FDM case assembly    | `case/AGARD/FDM/assemble_fdm_case.py`                                        | Wires converted polyMesh + modal CSVs into a myRhoPimpleFoam + fastDynamicFvMesh case |
 | AGARD mesh converters      | `case/AGARD/Mesh/`                                                           | `inp_to_polymesh.py` (CalculiX/Abaqus deck → `constant/polyMesh`), build/smooth tools |
-| AGARD validation spec      | `AGARD445.6验证算例规范.md` (repo root, untracked)                            | Conditions/targets/plots for AMR + dynamic-mesh validation; core case Ma 0.96 |
 | SwingBeam case pipelines   | `case/SwingBeam/FDM/`, `case/SwingBeam/preCICE/`                             | Closed tank + clamped cantilever beam; six-stage Python stages |
-| Smoke validation           | `/root/Workspace/_Oldversion_/scripts/smoke_fastDynamicFvMesh.sh`            | External (untracked); currently blocked, see CONVENTIONS       |
+| Smoke / regression path    | `case/Damfailure/FDM/run_pipeline.sh`                                        | In-repo and self-contained (own mesh + modal stages); `--dry-run` then a short `--steps` run |
 | Mesh/modal/FSI pipeline    | `/root/Workspace/_Oldversion_/scripts/pipeline/`                             | External; staged automation with mesh/mode consistency guard   |
 | File policy                | `DEVELOPMENT.md`, `.gitignore`                                               | Source vs generated vs local-only rules                        |
 
@@ -94,12 +93,12 @@ FSI wiring.
 - OpenFOAM environment must already be loaded. Main targets install to `$FOAM_USER_LIBBIN`/`$FOAM_USER_APPBIN`; nested variants (`interMixingFoam`, `over*DyMFoam`, `SRFPimpleFoam`) install to `$FOAM_APPBIN` (system tree — intentional, know before you `wmake`).
 - Run `ccx` and OpenFOAM tools (`blockMesh`, `checkMesh`, solvers, etc.) only inside a case directory under `/root/Workspace/...` — never in the `src/` repository root. Running them in `src/` drops `.sta/.dat/.cvg` and other artifacts into the repo and pollutes it.
 - Scratch files, temporary extraction, tool output, and intermediate files must go under `/root/Workspace/tmp/` — never in the system `/tmp`.
-- Baseline smoke archives: the smoke script and `DEVELOPMENT.md` expect `/root/Workspace/case_damfailure.zip` and `case_transient.zip`. **Neither currently exists at `/root/Workspace/`** (only `case_transient.zip` survives under `_Oldversion_/other_zip/`), so the smoke script aborts at its archive check — even with `--dry-run` — until `case_damfailure.zip` is restored there. Never edit baseline archives directly; copy them to temp run dirs before testing.
+- Smoke/regression validation is **in-repo and self-contained**: `case/Damfailure/FDM/run_pipeline.sh` generates its own mesh and modal stages (no external baseline archive is required) — preview with `--dry-run`, then run a short `--steps` subset.
 - Pipeline drivers (`case/*/*/run_pipeline.sh`) support `--dry-run`, `--steps` for partial runs, and `--skip-if-fresh` (mtime gate on generation stages only; solver/post/video stages always run). Default case roots point under `/root/Workspace/...`, not in-tree.
 - Video export stages (`06_export_*_video.py`) drive ParaView (`paraview.simple` — needs `pvbatch`/ParaView Python); other pipeline stages are stdlib-only Python.
 - New dictionary keys need safe defaults (`readIfPresent`) preserving current behavior. Removing/renaming keys requires a deprecation warning path (canonical example: `refinementFaceMapTolerance` in `fastDynamicFvMeshIO.C`).
 - FSI convergence is force-residual based: `fsiResidual < fsiTolerance`; opt-in OR absolute-displacement gate `fsiDispTolerance > 0` (default off). When enabled, the gate must hold for `fsiDispConsecutiveIters` consecutive outer iterations (default `1` = legacy single-step) to reject one-step stagnation false positives. It terminates the partitioned loop directly; in integrated/implicit mode it acts only through the combined PIMPLE/pseudotime AND-veto (so it can stop the loop at the residual criterion—shorter than waiting for force convergence—but cannot terminate the loop on its own). Displacement change is otherwise diagnostic-only. The three `my*Foam` mains wire the gate through `fsiPimpleControl`; myHisa implements the same AND veto inside `pseudotimeControl::criteriaSatisfied()`.
-- Changes under `fastDynamicFvMesh/fastDynamicFvMesh/` must update both English and Chinese docs, build the library, and run a smoke path.
+- Changes under `fastDynamicFvMesh/fastDynamicFvMesh/` must update both English and Chinese docs, build the library, and run a smoke path (`case/Damfailure/FDM/run_pipeline.sh --dry-run`, then a short `--steps` FSI run) or document the exact blocker.
 - Runtime-control, file-format, or workflow changes must update example case configs and `dynamicMeshDict` guidance.
 - `case/AGARD/**/*.zip` is Git LFS (`.gitattributes`); never re-add those archives as plain blobs.
 
@@ -148,12 +147,12 @@ case/Damfailure/preCICE/run_pipeline.sh --dry-run
 case/AGARD/Mode/run_pipeline.sh --dry-run
 case/SwingBeam/FDM/run_pipeline.sh --dry-run
 case/SwingBeam/preCICE/run_pipeline.sh --dry-run
-/root/Workspace/_Oldversion_/scripts/smoke_fastDynamicFvMesh.sh --dry-run   # currently aborts: case_damfailure.zip missing (see CONVENTIONS)
+case/Damfailure/FDM/run_pipeline.sh --dry-run   # in-repo smoke/regression path (self-contained)
 ```
 
 ## NOTES
 
-- The external smoke script checks both baseline zips before doing anything (a missing zip aborts even `--dry-run`), builds the library, extracts the zips under `RUN_ROOT`, reads solver applications from `system/controlDict`, and logs under `RUN_ROOT/logs`.
+- The smoke/regression path is the in-repo `case/Damfailure/FDM/run_pipeline.sh`: it generates its own mesh and modal stages and then runs the FDM solver, so no external baseline archive is involved. Use `--dry-run` for preflight and `--steps` for a short subset; logs land under the run root.
 - For AMR/restart runs, prefer reconstructing in an isolated mirror case before syncing reconstructed times back into the main case.
 - The external `run_mesh_independence_automation.sh` (`_Oldversion_/scripts/pipeline/`) refuses FSI if `mode/FluidNodeCoor.csv` node count differs from mesh point count unless `--allow-stale-mode` is used for diagnostics.
 - No executable unit/regression test suite exists for the C++ code; validation is via builds, smoke cases, pipeline checks, and documented numerical comparisons. `case/AGARD/Mode/tests/`, `case/Damfailure/FDM/test_display_width.py`, and `case/SwingBeam/FDM/test_display_width.py` are Python-only unittest suites.

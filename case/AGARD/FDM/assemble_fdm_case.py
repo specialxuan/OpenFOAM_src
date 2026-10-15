@@ -218,14 +218,31 @@ def build_dynamic_mesh_dict(args, mapping_tolerance, modal_damp):
         modal_damp,
     )
 
+    # Solver-side FSI convergence contract (read by fsiCoupling.H / myHisa).
+    # The displacement OR-gate (fsiDispTolerance) is the binding stop criterion
+    # for this case: the modal-force residual is noise-dominated and does not
+    # reach fsiTolerance within the pseudo-iteration budget, so force alone
+    # would run every step to the nPseudoCorr cap. Validated recipe (AGARD
+    # 445.6 soft wing, Fluid8): fsiTolerance 1e-3, fsiDispTolerance 1e-9,
+    # fsiDispConsecutiveIters 1 -> 20 iters/step, reproduces the archive.
+    fsi_top = (
+        "fsiCoupling integrated;\n"
+        "maxFsiIter %d;\n"
+        "fsiTolerance %s;\n"
+        "fsiDispTolerance %s;\n"
+        "fsiDispConsecutiveIters %d;\n\n" % (
+            args.max_fsi_iter,
+            _fmt_num(args.fsi_tolerance),
+            _fmt_num(args.fsi_disp_tolerance),
+            args.fsi_disp_consecutive_iters,
+        )
+    )
+
     if not args.amr:
         body = (
             "dynamicFvMesh fastDynamicFvMesh;\n\n"
-            "fsiCoupling integrated;\n"
-            "maxFsiIter %d;\n"
-            "fsiTolerance %s;\n\n"
-            "fastDynamicFvMeshCoeffs\n{\n" % (
-                args.max_fsi_iter, _fmt_num(args.fsi_tolerance))
+            + fsi_top
+            + "fastDynamicFvMeshCoeffs\n{\n"
             + common
             + "}\n"
         )
@@ -270,11 +287,8 @@ def build_dynamic_mesh_dict(args, mapping_tolerance, modal_damp):
     )
     body = (
         "dynamicFvMesh fastDynamicFvMesh;\n\n"
-        "fsiCoupling integrated;\n"
-        "maxFsiIter %d;\n"
-        "fsiTolerance %s;\n\n"
-        "fastDynamicFvMeshCoeffs\n{\n" % (
-            args.max_fsi_iter, _fmt_num(args.fsi_tolerance))
+        + fsi_top
+        + "fastDynamicFvMeshCoeffs\n{\n"
         + common
         + amr_keys
         + "}\n\n"
@@ -874,8 +888,14 @@ def parse_args(argv):
     parser.add_argument("--coupling-relaxation", type=float, default=1.0,
                         help="fastDynamicFvMesh couplingRelaxation in (0,1] "
                              "(default 1.0)")
-    parser.add_argument("--fsi-tolerance", type=float, default=1e-4,
-                        help="fsiTolerance force-residual threshold (default 1e-4)")
+    parser.add_argument("--fsi-tolerance", type=float, default=1e-3,
+                        help="fsiTolerance force-residual threshold (default 1e-3)")
+    parser.add_argument("--fsi-disp-tolerance", type=float, default=1e-9,
+                        help="fsiDispTolerance OR absolute-displacement gate in m "
+                             "(default 1e-9; 0 disables)")
+    parser.add_argument("--fsi-disp-consecutive-iters", type=int, default=1,
+                        help="fsiDispConsecutiveIters consecutive frozen outer "
+                             "iterations the gate requires (default 1)")
     parser.add_argument("--max-fsi-iter", type=int, default=10,
                         help="maxFsiIter for partitioned coupling (default 10)")
     parser.add_argument("--n-outer-correctors", type=int, default=2,

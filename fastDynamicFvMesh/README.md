@@ -31,8 +31,9 @@ At each mesh `update()`:
     integrated/implicit coupling it only vetoes PIMPLE's residual-based early
     stop and cannot end the loop on its own.
 - Restart support:
-  - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`) for non-zero-time continuation/restart only,
-  - startup modal mapping now uses current mesh points by default, and only uses `constant/polyMesh/points` when its point count matches the current mesh (prevents `latestTime`+AMR point-count mismatch on restart),
+  - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`) for non-zero-time continuation/restart only. The store is written **globally** (case root) while a relative `IOobject` instance resolves against `time().path()` -- the **processor** directory in a parallel run -- so the read is performed **on the master** from `time().globalPath()` and the (nMode-sized) fields are then broadcast to every rank; the legacy time-directory fallback uses the same master-read/broadcast pattern. The store is hand-written and does not honour `writePrecision`, so it is now written at 16 significant digits,
+  - startup modal mapping matches the **level-0** points against the **undeformed** `constant/polyMesh/points` reference, including on a refined startup mesh where the point counts differ (`hexRef8` keeps the original points first, so base point `pI` corresponds to current level-0 point `pI`). The current mesh points have already been displaced by the modal motion (`<time>/polyMesh/points`) and can exceed `mappingTolerance` even for a short restart interval, which previously left level-0 points unmapped and aborted the run,
+  - the mode shapes of AMR-generated points are persisted with the mesh as `<time>/polyMesh/refinedPointModeShapes` (one file per processor, written at full precision) and restored verbatim on restart, so the rebuilt `modeShapes_` reproduce the checkpointed run exactly instead of being re-derived by a nearest-corner search. This is required because `mapPolyMesh::pointsFromPointsMap()` is empty for `hexRef8` refinement: the in-run mapping of refinement-added points is itself a 2/4/8 corner interpolation whose corner selection cannot be reproduced from the mesh alone. Points with no recorded value still fall back to that interpolation,
   - with `meshRefinementSupport=true`, startup mapping now synchronizes mapped modal values across shared points in parallel before refinement interpolation, preventing processor-boundary geometry mismatch on continuation runs,
   - writes global modal state files at output times.
 - Performance-oriented implementation:
@@ -119,6 +120,7 @@ At each mesh `update()`:
 - startup mapping supports refined meshes with strict topology interpolation:
   - when a refined startup mesh is detected (`pointLevel>0` exists), geometric CSV mapping is restricted to level-0 points only,
   - AMR-generated points must be recovered by topology rules only (no geometric nearest-neighbour fallback),
+  - recorded refined-point mode shapes (`<time>/polyMesh/refinedPointModeShapes`) are restored **first** and reproduce the checkpointed values exactly; the 2/4/8 corner rules below are the fallback for points with no recorded value,
   - edge midpoint from 2 endpoint corners (distance weighted),
   - face midpoint from 4 face corners (uniform corner weights),
   - cell midpoint from 8 cell corners (uniform corner weights),
@@ -401,7 +403,10 @@ In parallel runs, restart modal state files are written by master to:
 - `constant/fsiRestart/appliedModeForce`
 
 This keeps restart metadata out of root time directories and avoids AMR/unrefine
-`reconstructPar` readUpdate conflicts.
+`reconstructPar` readUpdate conflicts. On restart the master reads these files
+back from `time().globalPath()/constant/fsiRestart` and broadcasts the modal
+state to all ranks -- an `IOobject` read would resolve the relative instance
+against `time().path()` (= `processorN`) and always miss the store.
 
 For AMR cases, prefer reconstructing in an isolated mirror case directory first
 and only syncing reconstructed time directories back after successful completion.
