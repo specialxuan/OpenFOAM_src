@@ -208,6 +208,8 @@ bool fastDynamicFvMesh::init(const bool doInit)
     }
 
     readControls();
+    readRefinedPointModeShapes();
+    readFsiReferenceCache();
     readModeShapes();
 
     const bool restartStateRead = readRestartStateStore();

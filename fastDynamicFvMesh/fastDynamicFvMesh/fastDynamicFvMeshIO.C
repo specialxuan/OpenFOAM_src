@@ -23,10 +23,17 @@ Description
 #include "turbulentFluidThermoModel.H"
 #include "turbulentTransportModel.H"
 #include "Time.H"
+#include "IFstream.H"
+#include "IStringStream.H"
 #include "regIOobject.H"
 #include "volFields.H"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -111,6 +118,84 @@ bool parseCsvValues(const string& input, Values&... values)
     return ok;
 }
 
+// Read the list payload of a restart-store file.  Handles both the dedicated
+// store (a hand-written FoamFile banner followed by "<n>(...)") and a legacy
+// OpenFOAM IOField ("<n>" then "(" ... ")"): skip to the first line whose first
+// non-blank character is a digit and parse from there up to the closing divider.
+template<class T>
+bool readRestartList(const fileName& path, List<T>& result)
+{
+    if (!isFile(path))
+    {
+        return false;
+    }
+
+    std::ifstream is(path.c_str());
+
+    if (!is.good())
+    {
+        return false;
+    }
+
+    std::string line;
+    std::string payload;
+    bool started = false;
+
+    while (std::getline(is, line))
+    {
+        const std::string::size_type i = line.find_first_not_of(" \t\r");
+
+        if (!started)
+        {
+            if
+            (
+                i != std::string::npos
+             && std::isdigit(static_cast<unsigned char>(line[i]))
+            )
+            {
+                started = true;
+            }
+        }
+
+        if (started)
+        {
+            if (i != std::string::npos && line[i] == '/')
+            {
+                break;      // trailing "// ***" divider
+            }
+
+            payload += line;
+            payload += '\n';
+        }
+    }
+
+    if (payload.empty())
+    {
+        return false;
+    }
+
+    IStringStream ps(payload);
+    ps >> result;
+
+    return !result.empty();
+}
+
+
+// Broadcast a list that the master read from the global restart store.
+template<class T>
+void broadcastRestartList(List<T>& f)
+{
+    label n = f.size();
+    Pstream::broadcast(n);
+
+    if (!Pstream::master())
+    {
+        f.setSize(n);
+    }
+
+    Pstream::broadcast(f);
+}
+
 } // End anonymous namespace
 
 fileName fastDynamicFvMesh::restartStateInstance() const
@@ -128,92 +213,103 @@ bool fastDynamicFvMesh::readRestartStateStore()
         return false;
     }
 
-    const fileName restartInstance = restartStateInstance();
+    // The store is written by the master into the GLOBAL case directory
+    // (<case>/constant/fsiRestart) -- see writeRestartStateStore().  An IOobject
+    // resolves a relative instance against time().path(), which is the
+    // PROCESSOR directory in a parallel run, so an IOobject read would look in
+    // <case>/processorN/constant/fsiRestart and always miss the store.  Read it
+    // on the master from the global path instead and broadcast the (nMode-sized)
+    // modal state to every rank.
+    const fileName restartDir =
+        this->time().globalPath() / restartStateInstance();
+
     bool loadedAny = false;
 
-    auto readScalarFieldIfPresent = [&](const word& name,
-                                        IOField<scalar>& target) -> bool {
-        IOobject io(name, restartInstance, *this, IOobject::READ_IF_PRESENT,
-            IOobject::NO_WRITE, false);
-
-        if (!isFile(io.objectPath()))
-        {
-            return false;
-        }
-
-        IOField<scalar> fld(io);
-        target = fld;
-        return true;
-    };
-
-    auto readVectorFieldIfPresent = [&](const word& name,
-                                        IOField<vector>& target) -> bool {
-        IOobject io(name, restartInstance, *this, IOobject::READ_IF_PRESENT,
-            IOobject::NO_WRITE, false);
-
-        if (!isFile(io.objectPath()))
-        {
-            return false;
-        }
-
-        IOField<vector> fld(io);
-        target = fld;
-        return true;
-    };
-
-    loadedAny = readScalarFieldIfPresent("modeForce", modeForce_) || loadedAny;
-    loadedAny = readVectorFieldIfPresent("modeState", modeState_) || loadedAny;
-    loadedAny = readScalarFieldIfPresent("appliedModeDisp", appliedModeDisp_) ||
-        loadedAny;
-    loadedAny =
-        readScalarFieldIfPresent("appliedModeForce", appliedModeForce_) ||
-        loadedAny;
-
-    if (!loadedAny)
+    if (Pstream::master())
     {
-        const fileName legacyInstance = this->time().timeName();
+        // NOTE: every field must be read.  Do NOT chain these with '||' -- the
+        // read calls would short-circuit and silently skip the remaining
+        // fields (a successful modeForce read would leave modeState unread).
+        const bool gotModeForce =
+            readRestartList<scalar>(restartDir/"modeForce", modeForce_);
+        const bool gotModeState =
+            readRestartList<vector>(restartDir/"modeState", modeState_);
+        const bool gotAppliedModeDisp =
+            readRestartList<scalar>
+            (
+                restartDir/"appliedModeDisp",
+                appliedModeDisp_
+            );
+        const bool gotAppliedModeForce =
+            readRestartList<scalar>
+            (
+                restartDir/"appliedModeForce",
+                appliedModeForce_
+            );
 
-        auto readLegacyScalar = [&](const word& name,
-                                    IOField<scalar>& target) -> bool {
-            IOobject io(name, legacyInstance, *this, IOobject::READ_IF_PRESENT,
-                IOobject::NO_WRITE, false);
-
-            if (!isFile(io.objectPath()))
-            {
-                return false;
-            }
-
-            IOField<scalar> fld(io);
-            target = fld;
-            return true;
-        };
-
-        auto readLegacyVector = [&](const word& name,
-                                    IOField<vector>& target) -> bool {
-            IOobject io(name, legacyInstance, *this, IOobject::READ_IF_PRESENT,
-                IOobject::NO_WRITE, false);
-
-            if (!isFile(io.objectPath()))
-            {
-                return false;
-            }
-
-            IOField<vector> fld(io);
-            target = fld;
-            return true;
-        };
-
-        loadedAny = readLegacyScalar("modeForce", modeForce_) || loadedAny;
-        loadedAny = readLegacyVector("modeState", modeState_) || loadedAny;
         loadedAny =
-            readLegacyScalar("appliedModeDisp", appliedModeDisp_) || loadedAny;
-        loadedAny = readLegacyScalar("appliedModeForce", appliedModeForce_) ||
-            loadedAny;
+            gotModeForce || gotModeState
+         || gotAppliedModeDisp || gotAppliedModeForce;
+    }
 
-        if (loadedAny && Pstream::master())
+    label loadedAnyI = (loadedAny ? 1 : 0);
+    Pstream::broadcast(loadedAnyI);
+    loadedAny = (loadedAnyI != 0);
+
+    if (loadedAny)
+    {
+        broadcastRestartList(modeForce_);
+        broadcastRestartList(modeState_);
+        broadcastRestartList(appliedModeDisp_);
+        broadcastRestartList(appliedModeForce_);
+        return true;
+    }
+
+    // Legacy fallback: modal state written into the case-root time directory by
+    // older revisions (v1.4.0).  Same master-read/broadcast treatment.
+    const fileName legacyDir =
+        this->time().globalPath() / this->time().timeName();
+
+    if (Pstream::master())
+    {
+        // Same rule as above: read every field, no short-circuiting.
+        const bool gotModeForce =
+            readRestartList<scalar>(legacyDir/"modeForce", modeForce_);
+        const bool gotModeState =
+            readRestartList<vector>(legacyDir/"modeState", modeState_);
+        const bool gotAppliedModeDisp =
+            readRestartList<scalar>
+            (
+                legacyDir/"appliedModeDisp",
+                appliedModeDisp_
+            );
+        const bool gotAppliedModeForce =
+            readRestartList<scalar>
+            (
+                legacyDir/"appliedModeForce",
+                appliedModeForce_
+            );
+
+        loadedAny =
+            gotModeForce || gotModeState
+         || gotAppliedModeDisp || gotAppliedModeForce;
+    }
+
+    loadedAnyI = (loadedAny ? 1 : 0);
+    Pstream::broadcast(loadedAnyI);
+    loadedAny = (loadedAnyI != 0);
+
+    if (loadedAny)
+    {
+        broadcastRestartList(modeForce_);
+        broadcastRestartList(modeState_);
+        broadcastRestartList(appliedModeDisp_);
+        broadcastRestartList(appliedModeForce_);
+
+        if (Pstream::master())
         {
             Info << "Loaded legacy restart modal state from time directory "
-                 << legacyInstance << endl;
+                 << this->time().timeName() << endl;
         }
     }
 
@@ -229,6 +325,11 @@ void fastDynamicFvMesh::writeRestartStateStore() const
     auto writeGlobalField = [&](const word& name, const auto& field,
                                 const word& className) {
         OFstream os(restartDir / name);
+
+        // Full precision: the restart state is restored verbatim, so the
+        // default 6 significant digits silently lose accuracy at every
+        // checkpoint.
+        os.precision(16);
 
         os << "/*--------------------------------*- C++ "
               "-*----------------------------------*\\"
@@ -255,7 +356,8 @@ void fastDynamicFvMesh::writeRestartStateStore() const
         os << "    version     2.0;" << nl;
         os << "    format      ascii;" << nl;
         os << "    class       " << className << ";" << nl;
-        os << "    location    \"" << restartStateInstance() << "\";" << nl;
+        os << "    location    \""
+           << restartStateInstance().c_str() << "\";" << nl;
         os << "    object      " << name << ";" << nl;
         os << "}" << nl;
         os << "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * "
@@ -993,6 +1095,730 @@ void fastDynamicFvMesh::readModeFiles(const fileName& modeDir,
                 ++dataRow;
             }
         }
+    }
+}
+bool fastDynamicFvMesh::writeObject
+(
+    IOstreamOption streamOpt,
+    const bool writeOnProc
+) const
+{
+    bool ok = dynamicRefineFvMesh::writeObject(streamOpt, writeOnProc);
+
+    if (ok && writeOnProc && meshRefinementSupport_)
+    {
+        ok = writeRefinedPointModeShapes() && ok;
+        ok = writeFsiFaceReferenceMap() && ok;
+    }
+
+    return ok;
+}
+
+
+bool fastDynamicFvMesh::writeRefinedPointModeShapes() const
+{
+    if (!meshRefinementSupport_ || nMode_ <= 0)
+    {
+        return true;
+    }
+
+    const label nPoints = this->points().size();
+
+    if (modeShapes_.size() != nMode_)
+    {
+        return true;
+    }
+
+    forAll(modeShapes_, modeI)
+    {
+        if (modeShapes_[modeI].size() != nPoints)
+        {
+            return true;
+        }
+    }
+
+    const fileName timeDir = this->time().timeName();
+    const fileName dir = this->time().path()/timeDir/polyMesh::meshSubDir;
+
+    mkDir(dir);
+
+    const fileName shapesFile = dir/"refinedPointModeShapes";
+
+    const labelList& pointLevel = meshCutter_.pointLevel();
+
+    label nLevel = 0;
+    forAll(pointLevel, pI)
+    {
+        if (pointLevel[pI] > 0)
+        {
+            ++nLevel;
+        }
+    }
+
+    std::ofstream os(shapesFile.c_str());
+
+    if (!os.good())
+    {
+        return false;
+    }
+
+    // Full precision: these values are restored verbatim on restart.
+    os.precision(17);
+
+    os << "FoamFile" << std::endl;
+    os << "{" << std::endl;
+    os << "    version     2.0;" << std::endl;
+    os << "    format      ascii;" << std::endl;
+    os << "    class       pointModeShapes;" << std::endl;
+    os << "    location    \"" << (timeDir/"polyMesh").c_str() << "\";"
+       << std::endl;
+    os << "    object      refinedPointModeShapes;" << std::endl;
+    os << "}" << std::endl;
+    os << "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * "
+          "* * * * * * * //" << std::endl << std::endl;
+
+    // Body:
+    //   nBase    <number of level-0 points on this processor>
+    //   nTime    <write time>
+    //   nMode    <number of modes>
+    //   nRefined <number of recorded (pointLevel>0) points>
+    //   (
+    //     <pointIndex>
+    //     <mode0 x y z>
+    //     <mode1 x y z>
+    //     ...
+    //   )
+    os << "nBase " << (nPoints - nLevel) << std::endl;
+    os << "nTime " << timeDir << std::endl;
+    os << "nMode " << nMode_ << std::endl;
+    os << "nRefined " << nLevel << std::endl;
+    os << "(" << std::endl;
+
+    forAll(pointLevel, pI)
+    {
+        if (pointLevel[pI] <= 0)
+        {
+            continue;
+        }
+
+        os << pI << std::endl;
+
+        for (label modeI = 0; modeI < nMode_; ++modeI)
+        {
+            const vector& s = modeShapes_[modeI][pI];
+
+            os << s.x() << ' ' << s.y() << ' ' << s.z() << std::endl;
+        }
+    }
+
+    os << ")" << std::endl << std::endl;
+    os << "// ***************************************************************"
+          "********** //" << std::endl;
+
+    return os.good();
+}
+
+
+label fastDynamicFvMesh::readRefinedPointModeShapes()
+{
+    recordedRefinedPointIDs_.setSize(0);
+    recordedRefinedModeShapes_.setSize(0);
+    recordedRefinedNMode_ = 0;
+
+    // NOTE: nMode_ is not known yet -- it is read from the mode CSVs inside
+    // readModeShapes(), which runs after this.  The recorded mode count is
+    // therefore taken from the file and validated when the values are applied.
+    if (!meshRefinementSupport_)
+    {
+        return 0;
+    }
+
+    const fileName shapesFile =
+        this->time().path()/this->time().timeName()/polyMesh::meshSubDir
+      / "refinedPointModeShapes";
+
+    if (!exists(shapesFile))
+    {
+        return 0;
+    }
+
+    try
+    {
+        std::ifstream is(shapesFile.c_str());
+
+        if (!is.good())
+        {
+            return 0;
+        }
+
+        // Skip everything up to the end-of-header marker
+        std::string line;
+        while (std::getline(is, line))
+        {
+            if (line.find("* * * * * * * * * * * * *") != std::string::npos)
+            {
+                break;
+            }
+        }
+
+        std::vector<std::string> tok;
+
+        for (std::string t; is >> t; )
+        {
+            tok.push_back(t);
+        }
+
+        if
+        (
+            tok.size() < 8
+         || tok[0] != "nBase"
+         || tok[2] != "nTime"
+         || tok[4] != "nMode"
+         || tok[6] != "nRefined"
+        )
+        {
+            WarningInFunction
+                << "Malformed AMR refined-point mode-shape file " << shapesFile
+                << "; ignoring it and falling back to nearest-corner "
+                   "interpolation." << endl;
+
+            return 0;
+        }
+
+        const label nBaseLocal = std::stol(tok[1]);
+        const std::string fileTime = tok[3];
+        const label fileNMode = std::stol(tok[5]);
+        const label nRefined = std::stol(tok[7]);
+
+        if (fileTime != this->time().timeName())
+        {
+            WarningInFunction
+                << "AMR refined-point mode-shape file " << shapesFile
+                << " was written for time " << fileTime
+                << " but this run starts from " << this->time().timeName()
+                << "; ignoring it." << endl;
+
+            return 0;
+        }
+
+        if (fileNMode <= 0)
+        {
+            WarningInFunction
+                << "AMR refined-point mode-shape file " << shapesFile
+                << " holds no modes; ignoring it." << endl;
+
+            return 0;
+        }
+
+        recordedRefinedNMode_ = fileNMode;
+
+        const label nPoints = this->points().size();
+        const labelList& pointLevel = meshCutter_.pointLevel();
+
+        if (pointLevel.size() != nPoints)
+        {
+            WarningInFunction
+                << "pointLevel size (" << pointLevel.size()
+                << ") does not match the mesh point count (" << nPoints
+                << "); ignoring the recorded refined-point mode shapes." << endl;
+
+            return 0;
+        }
+
+        recordedRefinedPointIDs_.setSize(nRefined);
+        recordedRefinedModeShapes_.setSize(nRefined);
+
+        const std::size_t perPoint = 1 + std::size_t(3*fileNMode);
+
+        label nLoaded = 0;
+        std::size_t k = 8;
+
+        if (k < tok.size() && tok[k] == "(")
+        {
+            ++k;
+        }
+
+        for (label e = 0; e < nRefined; ++e)
+        {
+            if (k + perPoint > tok.size())
+            {
+                break;
+            }
+
+            const label pI = std::stol(tok[k++]);
+
+            vectorField shapes(fileNMode);
+
+            for (label modeI = 0; modeI < fileNMode; ++modeI)
+            {
+                const scalar vx = std::stod(tok[k++]);
+                const scalar vy = std::stod(tok[k++]);
+                const scalar vz = std::stod(tok[k++]);
+
+                shapes[modeI] = vector(vx, vy, vz);
+            }
+
+            recordedRefinedPointIDs_[nLoaded] = pI;
+            recordedRefinedModeShapes_[nLoaded] = shapes;
+            ++nLoaded;
+        }
+
+        recordedRefinedPointIDs_.setSize(nLoaded);
+        recordedRefinedModeShapes_.setSize(nLoaded);
+
+        label nLevel = 0;
+        forAll(pointLevel, pI)
+        {
+            if (pointLevel[pI] > 0)
+            {
+                ++nLevel;
+            }
+        }
+
+        const label globalLoaded = returnReduce(nLoaded, sumOp<label>());
+        const label globalLevel = returnReduce(nLevel, sumOp<label>());
+        const label globalBase = returnReduce(nBaseLocal, sumOp<label>());
+        const label globalPoints = returnReduce(nPoints, sumOp<label>());
+
+        if (Pstream::master())
+        {
+            Info << "Read AMR refined-point mode shapes from " << shapesFile
+                 << nl
+                 << "    recorded points : " << globalLoaded
+                 << "   refined points : " << globalLevel
+                 << "   base points : " << globalBase
+                 << "   mesh points : " << globalPoints << endl;
+        }
+
+        if (globalLoaded < globalLevel && Pstream::master())
+        {
+            WarningInFunction
+                << (globalLevel - globalLoaded)
+                << " refinement-added points were not recorded; they will be "
+                   "rebuilt by nearest-corner interpolation." << endl;
+        }
+
+        return nLoaded;
+    }
+    catch (const std::exception& e)
+    {
+        WarningInFunction
+            << "Failed to parse AMR refined-point mode-shape file "
+            << shapesFile << " (" << e.what() << "); ignoring it and falling "
+               "back to nearest-corner interpolation." << endl;
+
+        recordedRefinedPointIDs_.setSize(0);
+        recordedRefinedModeShapes_.setSize(0);
+
+        return 0;
+    }
+}
+
+bool fastDynamicFvMesh::writeFsiReferenceProjection() const
+{
+    if (!meshRefinementSupport_ || fsiPatches_.size() == 0 || nMode_ <= 0)
+    {
+        return true;
+    }
+
+    const fileName dir = this->time().path()/this->time().constant();
+
+    mkDir(dir);
+
+    const fileName projFile = dir/"fsiReferenceProjection";
+
+    std::ofstream os(projFile.c_str());
+
+    if (!os.good())
+    {
+        return false;
+    }
+
+    os.precision(17);
+
+    // The reference (pre-refine) faces and their mode projection are invariant
+    // for the whole computation, so this file is written once and never
+    // rewritten.  Per-processor (each rank owns part of the FSI patch).
+    os << "nPatches " << fsiPatches_.size() << std::endl;
+    os << "nMode " << nMode_ << std::endl;
+
+    forAll(fsiPatches_, i)
+    {
+        if
+        (
+            referenceFsiFaceAreas_.size() != fsiPatches_.size()
+         || referenceFaceModeProjection_.size() != fsiPatches_.size()
+        )
+        {
+            continue;
+        }
+
+        const scalarField& areas = referenceFsiFaceAreas_[i];
+        const label nRef = areas.size();
+
+        os << fsiPatches_[i] << ' ' << nRef << std::endl;
+
+        for (label refI = 0; refI < nRef; ++refI)
+        {
+            os << areas[refI] << ' ';
+        }
+        os << std::endl;
+
+        for (label modeI = 0; modeI < nMode_; ++modeI)
+        {
+            const vectorField& proj = referenceFaceModeProjection_[i][modeI];
+
+            for (label refI = 0; refI < nRef; ++refI)
+            {
+                const vector& v = proj[refI];
+                os << v.x() << ' ' << v.y() << ' ' << v.z() << ' ';
+            }
+            os << std::endl;
+        }
+    }
+
+    return os.good();
+}
+
+
+bool fastDynamicFvMesh::writeFsiFaceReferenceMap() const
+{
+    if (!meshRefinementSupport_ || fsiPatches_.size() == 0)
+    {
+        return true;
+    }
+
+    const fileName dir =
+        this->time().path()/this->time().timeName()/polyMesh::meshSubDir;
+
+    mkDir(dir);
+
+    const fileName mapFile = dir/"fsiFaceReferenceMap";
+
+    std::ofstream os(mapFile.c_str());
+
+    if (!os.good())
+    {
+        return false;
+    }
+
+    os.precision(17);
+
+    // Current (possibly split) FSI face -> reference face(s) + area weights.
+    // Unlike the projection this depends on the topology, so it is written with
+    // every checkpoint.  Per-processor.
+    os << "nPatches " << fsiPatches_.size() << std::endl;
+
+    forAll(fsiPatches_, i)
+    {
+        if
+        (
+            fsiFaceToReferenceFaces_.size() != fsiPatches_.size()
+         || fsiFaceToReferenceWeights_.size() != fsiPatches_.size()
+        )
+        {
+            continue;
+        }
+
+        const List<labelList>& refs = fsiFaceToReferenceFaces_[i];
+        const List<scalarField>& weights = fsiFaceToReferenceWeights_[i];
+
+        const label nFaces = refs.size();
+
+        os << fsiPatches_[i] << ' ' << nFaces << std::endl;
+
+        for (label faceI = 0; faceI < nFaces; ++faceI)
+        {
+            const labelList& refsFace = refs[faceI];
+
+            os << refsFace.size();
+
+            forAll(refsFace, refI)
+            {
+                os << ' ' << refsFace[refI];
+            }
+
+            if (faceI < weights.size())
+            {
+                const scalarField& w = weights[faceI];
+
+                forAll(w, refI)
+                {
+                    os << ' ' << w[refI];
+                }
+            }
+
+            os << std::endl;
+        }
+    }
+
+    return os.good();
+}
+
+
+bool fastDynamicFvMesh::readFsiReferenceCache()
+{
+    if (!meshRefinementSupport_ || fsiPatches_.size() == 0 || nMode_ <= 0)
+    {
+        return false;
+    }
+
+    try
+    {
+        // ---- 1) invariant reference projection (written once, constant/) ----
+        const fileName projFile =
+            this->time().path()/this->time().constant()/"fsiReferenceProjection";
+
+        if (!exists(projFile))
+        {
+            return false;
+        }
+
+        std::ifstream pis(projFile.c_str());
+
+        if (!pis.good())
+        {
+            return false;
+        }
+
+        {
+            std::string w;
+            label nPatches = -1;
+            label nMode = -1;
+
+            pis >> w >> nPatches >> w >> nMode;
+
+            if
+            (
+                !pis.good()
+             || nPatches != label(fsiPatches_.size())
+             || nMode != nMode_
+            )
+            {
+                WarningInFunction
+                    << "FSI reference projection " << projFile
+                    << " is inconsistent with this case (patches "
+                    << nPatches << " vs " << fsiPatches_.size()
+                    << ", modes " << nMode << " vs " << nMode_
+                    << "); ignoring it." << endl;
+
+                return false;
+            }
+        }
+
+        referenceFsiFaceAreas_.setSize(fsiPatches_.size());
+        referenceFaceModeProjection_.setSize(fsiPatches_.size());
+
+        forAll(fsiPatches_, i)
+        {
+            std::string name;
+            label nRef = 0;
+
+            pis >> name >> nRef;
+
+            if (name != std::string(fsiPatches_[i]) || nRef <= 0)
+            {
+                WarningInFunction
+                    << "Malformed FSI reference projection " << projFile
+                    << "; ignoring it." << endl;
+
+                referenceFsiFaceAreas_.setSize(0);
+                referenceFaceModeProjection_.setSize(0);
+
+                return false;
+            }
+
+            scalarField& areas = referenceFsiFaceAreas_[i];
+            areas.setSize(nRef);
+
+            for (label refI = 0; refI < nRef; ++refI)
+            {
+                pis >> areas[refI];
+            }
+
+            referenceFaceModeProjection_[i].setSize(nMode_);
+
+            for (label modeI = 0; modeI < nMode_; ++modeI)
+            {
+                vectorField& proj = referenceFaceModeProjection_[i][modeI];
+                proj.setSize(nRef);
+
+                for (label refI = 0; refI < nRef; ++refI)
+                {
+                    scalar x = 0, y = 0, z = 0;
+                    pis >> x >> y >> z;
+                    proj[refI] = vector(x, y, z);
+                }
+            }
+        }
+
+        // ---- 2) current-face -> reference-face map for THIS checkpoint ----
+        const fileName mapFile =
+            this->time().path()/this->time().timeName()/polyMesh::meshSubDir
+          / "fsiFaceReferenceMap";
+
+        if (!exists(mapFile))
+        {
+            referenceFsiFaceAreas_.setSize(0);
+            referenceFaceModeProjection_.setSize(0);
+
+            return false;
+        }
+
+        std::ifstream mis(mapFile.c_str());
+
+        if (!mis.good())
+        {
+            referenceFsiFaceAreas_.setSize(0);
+            referenceFaceModeProjection_.setSize(0);
+
+            return false;
+        }
+
+        {
+            std::string w;
+            label nPatches = -1;
+
+            mis >> w >> nPatches;
+
+            if (!mis.good() || nPatches != label(fsiPatches_.size()))
+            {
+                WarningInFunction
+                    << "FSI face reference map " << mapFile
+                    << " is inconsistent with this case; ignoring it." << endl;
+
+                referenceFsiFaceAreas_.setSize(0);
+                referenceFaceModeProjection_.setSize(0);
+
+                return false;
+            }
+        }
+
+        const polyBoundaryMesh& pbm = this->boundaryMesh();
+
+        fsiFaceToReferenceFaces_.setSize(fsiPatches_.size());
+        fsiFaceToReferenceWeights_.setSize(fsiPatches_.size());
+
+        forAll(fsiPatches_, i)
+        {
+            std::string name;
+            label nFaces = 0;
+
+            mis >> name >> nFaces;
+
+            const label patchID = pbm.findPatchID(fsiPatches_[i]);
+            const label nFacesNow =
+                (patchID >= 0 ? pbm[patchID].size() : -1);
+
+            if (name != std::string(fsiPatches_[i]) || nFaces != nFacesNow)
+            {
+                WarningInFunction
+                    << "FSI face reference map " << mapFile << " does not cover "
+                    << "patch '" << fsiPatches_[i] << "' of this mesh ("
+                    << nFaces << " vs " << nFacesNow
+                    << " faces); ignoring it." << endl;
+
+                referenceFsiFaceAreas_.setSize(0);
+                referenceFaceModeProjection_.setSize(0);
+                fsiFaceToReferenceFaces_.setSize(0);
+                fsiFaceToReferenceWeights_.setSize(0);
+
+                return false;
+            }
+
+            List<labelList>& refs = fsiFaceToReferenceFaces_[i];
+            List<scalarField>& weights = fsiFaceToReferenceWeights_[i];
+
+            refs.setSize(nFaces);
+            weights.setSize(nFaces);
+
+            label nOneToMany = 0;
+
+            for (label faceI = 0; faceI < nFaces; ++faceI)
+            {
+                label nRefs = 0;
+                mis >> nRefs;
+
+                if (nRefs <= 0)
+                {
+                    WarningInFunction
+                        << "Malformed FSI face reference map " << mapFile
+                        << "; ignoring it." << endl;
+
+                    referenceFsiFaceAreas_.setSize(0);
+                    referenceFaceModeProjection_.setSize(0);
+                    fsiFaceToReferenceFaces_.setSize(0);
+                    fsiFaceToReferenceWeights_.setSize(0);
+
+                    return false;
+                }
+
+                labelList& r = refs[faceI];
+                scalarField& w = weights[faceI];
+
+                r.setSize(nRefs);
+                w.setSize(nRefs);
+
+                for (label refI = 0; refI < nRefs; ++refI)
+                {
+                    mis >> r[refI];
+                }
+
+                for (label refI = 0; refI < nRefs; ++refI)
+                {
+                    mis >> w[refI];
+                }
+
+                if (nRefs > 1)
+                {
+                    ++nOneToMany;
+                }
+            }
+
+            const label globalOneToMany =
+                returnReduce(nOneToMany, sumOp<label>());
+
+            if (Pstream::master() && globalOneToMany > 0)
+            {
+                Info << "Restored FSI reference mapping on patch '"
+                     << fsiPatches_[i] << "': " << nFaces << " current faces, "
+                     << globalOneToMany << " one-to-many." << endl;
+            }
+        }
+
+        referenceFsiBuilt_ = true;
+
+        label localRefTotal = 0;
+        forAll(referenceFsiFaceAreas_, i)
+        {
+            localRefTotal += referenceFsiFaceAreas_[i].size();
+        }
+        const label nRefTotal = returnReduce(localRefTotal, sumOp<label>());
+
+        if (Pstream::master())
+        {
+            Info << "Restored FSI reference-face cache from " << projFile
+                 << " + " << mapFile << nl
+                 << "    reference faces : " << nRefTotal
+                 << "   (projection is invariant; the current-face mapping is "
+                    "from this checkpoint)" << endl;
+        }
+
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        WarningInFunction
+            << "Failed to parse the FSI reference-face cache ("
+            << e.what() << "); ignoring it and re-snapshotting from the "
+               "startup mesh." << endl;
+
+        referenceFsiFaceAreas_.setSize(0);
+        referenceFaceModeProjection_.setSize(0);
+        fsiFaceToReferenceFaces_.setSize(0);
+        fsiFaceToReferenceWeights_.setSize(0);
+
+        return false;
     }
 }
 

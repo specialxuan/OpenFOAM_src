@@ -96,6 +96,19 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //  modeShapes_[m][pI].x() gives x-displacement for mode m at point pI
     List<vectorField> modeShapes_;
 
+    //- Recorded mode-shape values for AMR-generated points, loaded from the
+    //  checkpoint written alongside the mesh
+    //  (<time>/polyMesh/refinedPointModeShapes, per processor).
+    //  recordedRefinedPointIDs_[i] is a mesh point label and
+    //  recordedRefinedModeShapes_[i] holds its nMode mode vectors.
+    //
+    //  A restart assigns these values directly instead of re-deriving them with
+    //  a nearest-corner search, so the rebuilt modeShapes_ reproduce the
+    //  checkpointed run exactly, for any number of refinement levels.
+    labelList recordedRefinedPointIDs_;
+    List<vectorField> recordedRefinedModeShapes_;
+    label recordedRefinedNMode_;
+
     //- Wilson-Theta parameter
     scalar theta_;
 
@@ -612,6 +625,29 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Write modal restart state into dedicated restart store
     void writeRestartStateStore() const;
 
+    //- Read <time>/polyMesh/refinedPointModeShapes (per processor).  Returns
+    //  the number of recorded points loaded on this processor (0 when absent).
+    label readRefinedPointModeShapes();
+
+    //- Write <time>/polyMesh/refinedPointModeShapes (per processor)
+    bool writeRefinedPointModeShapes() const;
+
+    //- Restore the recorded mode shapes of AMR-generated points.  Returns the
+    //  number of points resolved on this processor.
+    label applyRecordedRefinedModeShapes(boolList& mappedMask);
+
+    //- Read the persisted FSI reference-face cache: the invariant projection
+    //  (constant/fsiReferenceProjection) plus the per-checkpoint current-face ->
+    //  reference-face map (<time>/polyMesh/fsiFaceReferenceMap).  Adopts them and
+    //  sets referenceFsiBuilt_ when consistent.  Returns true on success.
+    bool readFsiReferenceCache();
+
+    //- Write the invariant reference projection (once, when first built)
+    bool writeFsiReferenceProjection() const;
+
+    //- Write the current-face -> reference-face map (once per checkpoint)
+    bool writeFsiFaceReferenceMap() const;
+
     //- Disallow default bitwise copy construct
     fastDynamicFvMesh(const fastDynamicFvMesh&);
 
@@ -640,6 +676,13 @@ public:
 
     //- Update custom caches/shapes after topology changes
     virtual void updateMesh(const mapPolyMesh& mpm);
+
+    //- Write the mesh and, for refined meshes, the AMR point-parent lineage
+    virtual bool writeObject
+    (
+        IOstreamOption streamOpt,
+        const bool writeOnProc
+    ) const;
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

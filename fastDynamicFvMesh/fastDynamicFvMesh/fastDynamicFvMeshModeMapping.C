@@ -187,11 +187,26 @@ void fastDynamicFvMesh::readModeShapes()
     {
     }
 
+    // Undeformed reference coordinates used for the geometric node matching.
+    // The mode CSVs hold UNDEFORMED node coordinates, so the match must be
+    // performed against undeformed mesh coordinates.  On a refined startup mesh
+    // the current points have already been displaced by the modal motion and
+    // can move past mappingTolerance even for a short restart interval, so the
+    // undeformed base mesh (constant/polyMesh/points) is the correct reference.
+    //
+    // hexRef8 keeps the original (level-0) points first and appends the points
+    // it creates, so entry pI of the base mesh corresponds to level-0 point pI
+    // of the current mesh.  Refinement-added points are never matched
+    // geometrically; they are rebuilt by topology interpolation from the
+    // level-0 values.
+    pointField mappingReference(mappingPoints);
+
     if (readOk)
     {
         if (basePoints.size() == mappingPoints.size())
         {
             mappingPoints = basePoints;
+            mappingReference = basePoints;
 
             if (Pstream::master())
             {
@@ -200,13 +215,24 @@ void fastDynamicFvMesh::readModeShapes()
                      << ioPoints.objectPath() << endl;
             }
         }
-        else if (Pstream::master())
+        else
         {
-            WarningInFunction
-                << "constant/polyMesh points count (" << basePoints.size()
-                << ") differs from current mesh points count ("
-                << mappingPoints.size() << ") on startup/restart. "
-                << "Using current mesh points for modal mapping." << endl;
+            // Refined startup mesh: match the level-0 points against the
+            // undeformed base coordinates instead of the displaced current
+            // coordinates.
+            mappingReference = basePoints;
+
+            if (Pstream::master())
+            {
+                Info << "  Read " << basePoints.size()
+                     << " undeformed base points for mapping from "
+                     << ioPoints.objectPath() << nl
+                     << "  Refined startup mesh: level-0 points are matched "
+                        "against the undeformed base coordinates (the current "
+                        "points have been displaced by the modal motion); "
+                        "refinement-added points are rebuilt by topology "
+                        "interpolation." << endl;
+            }
         }
     }
     else if (Pstream::master())
@@ -277,7 +303,13 @@ void fastDynamicFvMesh::readModeShapes()
                 continue;
             }
 
-            const point& p = mappingPoints[pI];
+            // Level-0 points use the undeformed reference where available (see
+            // mappingReference above); refinement-added points fall back to the
+            // current coordinates but are never accepted by the geometric pass
+            // (topologyOnlyForRefinedPoints).
+            const point& p = (pI < mappingReference.size()
+                                  ? mappingReference[pI]
+                                  : mappingPoints[pI]);
             scalar minDistSqr = GREAT;
             label nearestIdx = -1;
 
@@ -311,6 +343,42 @@ void fastDynamicFvMesh::readModeShapes()
     label totalMapped = returnReduce(mappedCount, sumOp<label>());
     const label totalPoints =
         returnReduce(label(mappingPoints.size()), sumOp<label>());
+
+    // AMR-generated points are restored from the mode shapes recorded with the
+    // checkpoint (<time>/polyMesh/refinedPointModeShapes), so the rebuilt
+    // modeShapes_ reproduce the checkpointed run exactly instead of re-deriving
+    // the values with a nearest-corner search.  Only points with no recorded
+    // value fall through to the 2/4/8 interpolation below.
+    if (meshRefinementSupport_)
+    {
+        const label globalRecorded = returnReduce
+        (
+            applyRecordedRefinedModeShapes(mappedMask),
+            sumOp<label>()
+        );
+
+        if (globalRecorded > 0)
+        {
+            syncMappedModeShapes(mappedMask);
+
+            label localKnown = 0;
+            forAll(mappedMask, pointI)
+            {
+                if (mappedMask[pointI])
+                {
+                    ++localKnown;
+                }
+            }
+            totalMapped = returnReduce(localKnown, sumOp<label>());
+
+            if (Pstream::master())
+            {
+                Info << "Restored " << globalRecorded
+                     << " AMR-generated points from the mode shapes recorded "
+                        "with the checkpoint." << endl;
+            }
+        }
+    }
 
     if (meshRefinementSupport_ && totalMapped > 0 && totalMapped < totalPoints)
     {
@@ -381,7 +449,10 @@ void fastDynamicFvMesh::readModeShapes()
                 << nl
                 << "No geometric fallback is allowed for AMR-generated points."
                 << nl << "Check refinement lineage consistency and "
-                << "refinementInterpTolerance." << exit(FatalError);
+                << "refinementInterpTolerance. Level-0 points are matched "
+                << "against the undeformed constant/polyMesh/points, so verify "
+                << "that those coordinates correspond index-for-index to the "
+                << "current mesh level-0 points." << exit(FatalError);
         }
         else if (totalKnown != totalPoints && Pstream::master())
         {
@@ -639,6 +710,24 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
 
         if (!mpmPtr)
         {
+            // Startup (no topology change yet): keep the restored current-face
+            // -> reference-face mapping when it covers this patch.  The
+            // per-face mode projection and the pressure scale above are already
+            // refreshed from the current mesh.
+            if (fsiFaceToReferenceFaces_[i].size() == nFaces)
+            {
+                aggregatedPressureRefs_[i].setSize
+                (
+                    referenceFsiFaceAreas_[i].size(), vector::zero
+                );
+                aggregatedShearRefs_[i].setSize
+                (
+                    referenceFsiFaceAreas_[i].size(), vector::zero
+                );
+
+                continue;
+            }
+
             FatalErrorInFunction << "Reference cache is already initialized, "
                                     "but mapPolyMesh was not provided "
                                  << "while rebuilding topology mappings."
@@ -832,6 +921,12 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
     if (meshRefinementSupport_ && !referenceFsiBuilt_)
     {
         referenceFsiBuilt_ = true;
+
+        // The reference geometry and its mode projection are invariant for the
+        // whole computation, so the projection is persisted once under
+        // constant/ rather than with every checkpoint.
+        writeFsiReferenceProjection();
+
         if (Pstream::master())
         {
             Info << "Initialized reference FSI face cache for "
@@ -1141,6 +1236,67 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(boolList& knownMask,
 
     return localInterpolated;
 }
+
+label fastDynamicFvMesh::applyRecordedRefinedModeShapes(boolList& mappedMask)
+{
+    if (recordedRefinedPointIDs_.size() == 0)
+    {
+        return 0;
+    }
+
+    if (modeShapes_.size() != nMode_)
+    {
+        return 0;
+    }
+
+    if (recordedRefinedNMode_ != nMode_)
+    {
+        WarningInFunction
+            << "Recorded AMR refined-point mode shapes hold "
+            << recordedRefinedNMode_ << " modes but this run uses " << nMode_
+            << "; they will be ignored and those points rebuilt by "
+               "nearest-corner interpolation." << endl;
+
+        return 0;
+    }
+
+    label localApplied = 0;
+
+    forAll(recordedRefinedPointIDs_, recordI)
+    {
+        const label pointI = recordedRefinedPointIDs_[recordI];
+
+        if (pointI < 0 || pointI >= mappedMask.size())
+        {
+            continue;
+        }
+
+        // Never overwrite a point that was already resolved (level-0 points
+        // come from the CSV match above).
+        if (mappedMask[pointI])
+        {
+            continue;
+        }
+
+        const vectorField& shapes = recordedRefinedModeShapes_[recordI];
+
+        if (shapes.size() != nMode_)
+        {
+            continue;
+        }
+
+        for (label modeI = 0; modeI < nMode_; ++modeI)
+        {
+            modeShapes_[modeI][pointI] = shapes[modeI];
+        }
+
+        mappedMask[pointI] = true;
+        ++localApplied;
+    }
+
+    return localApplied;
+}
+
 
 void fastDynamicFvMesh::logModeShapeMappingSummary(const label oldNPoints,
     const label newNPoints, const bool anyRefinement,
