@@ -61,6 +61,26 @@ void fastDynamicFvMesh::solveStructuralDynamics(scalar dt)
 
     for (label i = 0; i < nMode_; ++i)
     {
+        // ---- prescribed motion: q_i(t) = A_i sin(omega t + phi_i) ----------
+        // The modal ODE is bypassed; the force is still assembled by
+        // calcModalForces() so the generalized aerodynamic force can be
+        // extracted from modal_diagnostics.csv (forced-oscillation / GAF probe).
+        if (prescribedMotion_)
+        {
+            const scalar amp =
+                (i < prescribedAmplitude_.size()) ? prescribedAmplitude_[i] : 0.0;
+            const scalar phi =
+                (i < prescribedPhase_.size()) ? prescribedPhase_[i] : 0.0;
+            const scalar f =
+                (prescribedFrequency_ > 0) ? prescribedFrequency_ : modeFreq_[i];
+            const scalar w = 2.0*constant::mathematical::pi*f;
+            const scalar t = this->time().value();
+            const scalar s = amp*Foam::sin(w*t + phi);
+
+            modeState_[i] = vector(s, amp*w*Foam::cos(w*t + phi), -sqr(w)*s);
+            continue;
+        }
+
         scalar Mass = modeMass_[i];
         scalar Damp = modeDamp_[i];
 

@@ -80,6 +80,23 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
     //- Initial modal velocity
     scalarField initVelocity_;
 
+    //- Prescribed modal motion (forced-oscillation / GAF testing).
+    //  When prescribedMotion_ is true the modal ODE is not integrated; each
+    //  mode follows  q_i(t) = A_i sin(omega t + phi_i)  with
+    //  omega = 2*pi*prescribedFrequency_ (or the mode's own frequency when
+    //  prescribedFrequency_ <= 0).  The modal force is still assembled every
+    //  step, which is what makes this a generalized-aerodynamic-force probe.
+    bool prescribedMotion_;
+
+    //- Per-mode prescribed amplitudes (modal coordinate units)
+    scalarList prescribedAmplitude_;
+
+    //- Per-mode prescribed phases [rad]
+    scalarList prescribedPhase_;
+
+    //- Prescribed frequency [Hz] shared by all modes; <= 0 -> modeFreq_[i]
+    scalar prescribedFrequency_;
+
     //- Relaxed modal displacement actually imposed on the mesh
     //  Now an IOField for restart capability
     IOField<scalar> appliedModeDisp_;

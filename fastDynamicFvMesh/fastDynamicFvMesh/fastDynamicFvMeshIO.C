@@ -504,6 +504,22 @@ void fastDynamicFvMesh::readControls()
         fdmDict.lookup("modalDamp") >> modeDamp_;
     }
 
+    // Prescribed modal motion (forced-oscillation / GAF testing).  All keys
+    // are optional and default to "off", so existing cases are unaffected.
+    fdmDict.readIfPresent("prescribedMotion", prescribedMotion_);
+    fdmDict.readIfPresent("prescribedAmplitude", prescribedAmplitude_);
+    fdmDict.readIfPresent("prescribedPhase", prescribedPhase_);
+    fdmDict.readIfPresent("prescribedFrequency", prescribedFrequency_);
+
+    if (prescribedMotion_ && Pstream::master())
+    {
+        Info<< "fastDynamicFvMesh: prescribed modal motion ON"
+            << "  amplitude=" << prescribedAmplitude_
+            << "  phase=" << prescribedPhase_
+            << "  frequency=" << prescribedFrequency_ << " Hz"
+            << " (<=0 means each mode's own frequency)" << endl;
+    }
+
     if (couplingRelaxation_ <= 0 || couplingRelaxation_ > 1)
     {
         FatalIOErrorInFunction(dynamicMeshDict)

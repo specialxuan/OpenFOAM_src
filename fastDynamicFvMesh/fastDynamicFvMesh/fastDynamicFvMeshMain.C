@@ -105,7 +105,10 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       modeState_(
           IOobject("modeState", io.time().constant() / fileName("fsiRestart"),
               *this, IOobject::NO_READ, IOobject::NO_WRITE)),
-      initVelocity_(0), appliedModeDisp_(IOobject("appliedModeDisp",
+      initVelocity_(0),
+      prescribedMotion_(false), prescribedAmplitude_(0), prescribedPhase_(0),
+      prescribedFrequency_(-1.0),
+      appliedModeDisp_(IOobject("appliedModeDisp",
                             io.time().constant() / fileName("fsiRestart"),
                             *this, IOobject::NO_READ, IOobject::NO_WRITE)),
       appliedModeForce_(IOobject("appliedModeForce",

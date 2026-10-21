@@ -70,7 +70,20 @@
   Poisson `0.` for every layer; `E_max == factor*E_ref` (rel `1e-12`) and
   `span <= floor` are asserted.
 - Frequency deck: `*FREQUENCY` `10,0.334,1.E6` (no `STORAGE=`), `*NODE FILE U`,
-  `ROOT,1,3` plus the six `FIXED_*` at DOF 1-3.
+  `ROOT,1,3` (CalculiX range = DOFs 1-3, i.e. the wing root is fully clamped)
+  plus the six `FIXED_*` at DOF 1-3.
+- **Exported fluid modes must be symmetry-consistent before use.** The coupled
+  solve gives 77 rows per mode (the fluid FSI-interface nodes on the y=0
+  symmetry plane) a non-zero normal (y) displacement, because `FIXED_* = outer
+  minus FSI` leaves them unclamped and `*TIE` interpolates the wing's normal
+  motion onto them across the <=16.2 mm FSI-to-SIDE offset. Once FDM deforms the
+  mesh the `FRONT` `symmetryPlane` patch is no longer exactly planar, so restart
+  and reconstruction from any solver-written time directory abort at mesh
+  construction (`Symmetry plane 'FRONT' is not planar`). Continuous runs are
+  unaffected and the physical size is ~1e-10 m. Use the `_sym` sets
+  (`/root/Workspace/AGARD/Mode/Fluid8/mode_{soft,hard}_sym`, packed by
+  `make_sym_modes.py`), or the campaign subset `mode_soft_sym_4`; the M=0.96 case
+  builders now refuse a non-`_sym` mode dir unless `--allow-asymmetric-modes`.
 - Stress/strain export is opt-in on both sides: `02_generate_modal_case.py
   --export-stress` adds `*EL FILE` + `S, E` after `*NODE FILE U` in the
   frequency step, and `03_export_modes.py --export-stress` writes the matching

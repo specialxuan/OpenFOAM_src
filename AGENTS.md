@@ -8,6 +8,11 @@
 
 OpenFOAM v2412 user-code repository containing a modal-superposition dynamic mesh library, shared FSI controls, custom incompressible/VOF/compressible solver families, and tracked case-automation pipelines (Damfailure, AGARD 445.6, SwingBeam). Build with OpenFOAM `wmake`; there is no repository-wide `Allwmake`, `Allclean`, or CI workflow.
 
+## RESPONSE STYLE
+
+- Default to brief answers: give the conclusion plus the key action/paths only — no extended data dumps, citation lists, or tangents.
+- Switch to rich detail (data, references, alternatives, background) only when the user explicitly asks for a detailed answer.
+
 ## STRUCTURE
 
 ```text
@@ -93,6 +98,7 @@ FSI wiring.
 - OpenFOAM environment must already be loaded. Main targets install to `$FOAM_USER_LIBBIN`/`$FOAM_USER_APPBIN`; nested variants (`interMixingFoam`, `over*DyMFoam`, `SRFPimpleFoam`) install to `$FOAM_APPBIN` (system tree — intentional, know before you `wmake`).
 - Run `ccx` and OpenFOAM tools (`blockMesh`, `checkMesh`, solvers, etc.) only inside a case directory under `/root/Workspace/...` — never in the `src/` repository root. Running them in `src/` drops `.sta/.dat/.cvg` and other artifacts into the repo and pollutes it.
 - Scratch files, temporary extraction, tool output, and intermediate files must go under `/root/Workspace/tmp/` — never in the system `/tmp`.
+- Do not install new Python libraries into the system interpreter (no system-wide `pip install`, no `--user`, no distro packages). Install them into the repo-root venv `.venv_fdm/` instead (`.venv_fdm/bin/python -m pip install <package>`) and run Python scripts with `.venv_fdm/bin/python`.
 - Smoke/regression validation is **in-repo and self-contained**: `case/Damfailure/FDM/run_pipeline.sh` generates its own mesh and modal stages (no external baseline archive is required) — preview with `--dry-run`, then run a short `--steps` subset.
 - Pipeline drivers (`case/*/*/run_pipeline.sh`) support `--dry-run`, `--steps` for partial runs, and `--skip-if-fresh` (mtime gate on generation stages only; solver/post/video stages always run). Default case roots point under `/root/Workspace/...`, not in-tree.
 - Video export stages (`06_export_*_video.py`) drive ParaView (`paraview.simple` — needs `pvbatch`/ParaView Python); other pipeline stages are stdlib-only Python.
@@ -120,6 +126,22 @@ FSI wiring.
 - **Supervise long runs with a `sleep` poll loop**, not by returning early: poll about every 30 min, count only non-zombie processes (`ps -C <proc> -o stat= | grep -v '^Z'`), stop only on a terminal log state (`End`) or a fatal, and emit one compact status line per poll. Remote procedure: `.opencode/skills/remote-compute-polling/`.
 - Record hostname, host load, rank count, and solver version for every run; performance comparisons are valid only when both machines were idle.
 - `decomposePar` with `method scotch` is **non-reproducible in this environment** (re-running on identical input yields different partitions, hence different rounding). For bit-for-bit A/B comparisons, decompose once and reuse the same `processor*/`, or pin a deterministic decomposition method.
+
+## SUBAGENTS
+
+Project subagents are registered as Markdown files. New ones live in `.opencode/agents/`; the existing run monitor stays at the legacy `.opencode/agent/` path (V2 discovers both).
+
+| Agent | File | Delegate when | Required deliverable |
+| --- | --- | --- | --- |
+| `openfoam-code-change` | `.opencode/agents/openfoam-code-change.md` | One scoped patch with a known acceptance test | diff + `wmake` log + smoke evidence |
+| `openfoam-analysis` | `.opencode/agents/openfoam-analysis.md` | Write/run an analysis script on specified data | script path + numbers/table + input hash |
+| `openfoam-case-assembly` | `.opencode/agents/openfoam-case-assembly.md` | Assemble/verify a runnable case | case dir + dict snippets + `checkMesh` |
+| `openfoam-run-monitor` | `.opencode/agent/openfoam-run-monitor.md` | Any solver/build/pipeline run | terminal state + timing/residuals/exit code |
+
+- Delegate only mechanical work with explicit pass/fail acceptance criteria. Keep in the main conversation: criteria and trade-off decisions, cross-step causal reasoning, and risky operations (deleting remote originals, changing production data, overwriting the user's uncommitted work).
+- Subagents start blank. Every prompt must carry: (1) context — absolute paths, current hashes/IDs, known conclusions, prohibitions (no system Python installs; use `.venv_fdm/`); (2) acceptance criteria — concrete pass/fail, not "make it work"; (3) report format — files changed, commands run, results, what was not verified, no long prose.
+- Prefer one subagent per acceptance test: split "patch", "run", and "analyse" rather than asking one agent for all three.
+- The agent definitions enforce this too: if the prompt lacks context or acceptance criteria, the subagent must stop and ask instead of guessing.
 
 ## ANTI-PATTERNS (THIS PROJECT)
 

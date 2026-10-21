@@ -46,6 +46,19 @@ At each mesh `update()`:
   - `trackTiming` prints fluid-vs-mesh CPU timing at `writeTime()` (default `false`),
   - `trackAmrTiming` prints one runtime-AMR timing line for each
     `dynamicRefineFvMesh::updateTopology()` call (default `false`).
+- Optional prescribed modal motion (forced-oscillation / GAF probe):
+  - enable by `prescribedMotion true`; the modal ODE is then bypassed and each
+    mode follows `q_i(t) = A_i sin(omega t + phi_i)` with
+    `omega = 2*pi*prescribedFrequency` (or the mode's own `modeFreq_` when
+    `prescribedFrequency <= 0`, the default),
+  - `prescribedAmplitude` (list, modal-coordinate units) and `prescribedPhase`
+    (list, radians) default to all zeros, so a mode without an entry stays at
+    rest; entries beyond the list length are treated as zero,
+  - the modal force is still assembled every step, so the generalized
+    aerodynamic force of the prescribed motion can be read from
+    `modal_diagnostics.csv` (`Force_i` / `PressureForce_i` / `ShearForce_i`),
+  - useful for measuring the unsteady GAF at fixed reduced frequency,
+    independently of the structural model (frequencies, damping, mode count).
 - Optional structural forcing:
   - enable by `structuralForceEnabled true`,
   - reads `StructNodeCoor.csv` and `StructNodeDisp1..N.csv` for structure modes,
