@@ -96,7 +96,7 @@ FSI wiring.
 - Use `wmake` only. Main targets: `wmake libso fastDynamicFvMesh`, `wmake myPimpleFoam`, `wmake myInterFoam`, `wmake myRhoPimpleFoam`. myHisa builds via its own `myHisa/Allwmake` (src then applications), not a single top-level `wmake`.
 - Build nested variants from their own directories with `wmake`; each owns separate `Make/files` and `Make/options` and never inherits the parent's.
 - OpenFOAM environment must already be loaded. Main targets install to `$FOAM_USER_LIBBIN`/`$FOAM_USER_APPBIN`; nested variants (`interMixingFoam`, `over*DyMFoam`, `SRFPimpleFoam`) install to `$FOAM_APPBIN` (system tree — intentional, know before you `wmake`).
-- Run `ccx` and OpenFOAM tools (`blockMesh`, `checkMesh`, solvers, etc.) only inside a case directory under `/root/Workspace/...` — never in the `src/` repository root. Running them in `src/` drops `.sta/.dat/.cvg` and other artifacts into the repo and pollutes it.
+- On local, run `ccx` and OpenFOAM tools (`blockMesh`, `checkMesh`, solvers, etc.) only inside a case directory under `/root/Workspace/...` — never in the `src/` repository root. On remote hosts, run them only under `$HOME/Special/...`. Running them in `src/` drops `.sta/.dat/.cvg` and other artifacts into the repo and pollutes it.
 - Scratch files, temporary extraction, tool output, and intermediate files must go under `/root/Workspace/tmp/` — never in the system `/tmp`.
 - Do not install new Python libraries into the system interpreter (no system-wide `pip install`, no `--user`, no distro packages). Install them into the repo-root venv `.venv_fdm/` instead (`.venv_fdm/bin/python -m pip install <package>`) and run Python scripts with `.venv_fdm/bin/python`.
 - Smoke/regression validation is **in-repo and self-contained**: `case/Damfailure/FDM/run_pipeline.sh` generates its own mesh and modal stages (no external baseline archive is required) — preview with `--dry-run`, then run a short `--steps` subset.
@@ -110,21 +110,33 @@ FSI wiring.
 
 ## MACHINES & RUN PLACEMENT
 
-|                       | Local (dev container)                         | Remote `FSIDocker`                       |
-| --------------------- | --------------------------------------------- | ---------------------------------------- |
-| Form                  | WSL2 container                                | Docker container on WSL2                 |
-| CPU                   | i7-14700K (8P+12E); 20 logical cores visible  | 64 cores, no cgroup quota                |
-| RAM                   | 31 GB (~27 usable)                            | 251 GB                                   |
-| OpenFOAM              | v2412; hisa 1.12.7 + my*Foam built            | v2412; hisa + my*Foam built              |
-| Tools                 | full (taskset available)                      | no rsync/tmux/screen; git/unzip/python3  |
+|                       | Local (dev container)                         | `FSIDocker`                                      | `SuperComputer` (Slurm HPC)                          |
+| --------------------- | --------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------- |
+| Form                  | WSL2 container                                | Docker container on WSL2                         | rented Slurm cluster                                 |
+| Access                | local shell                                   | SSH alias `FSIDocker`                            | SSH alias `SuperComputer`                            |
+| User / HOME           | `root` / `/root`                              | `root` / `/root`                                 | `xuzili` / `/data/home/xuzili`                       |
+| CPU / RAM             | i7-14700K (8P+12E); 20 logical; 31 GB         | 64 cores; 251 GB                                 | `intel36` partition; 36 cores/node; ~93 GB/node      |
+| Scheduler             | none                                          | none                                             | Slurm                                                |
+| MPI                   | OpenMPI; `mpirun`                              | OpenMPI 4.1.6; `mpirun --allow-run-as-root`      | system OpenMPI 4.0.3; `srun --mpi=pmix_v3`           |
+| OpenFOAM              | v2412; hisa 1.12.7 + my*Foam built            | v2412; `myHisa`/`myPimpleFoam`/`myInterFoam`     | v2412 + FDM + `my*Foam` + `myHisa` + preCICE         |
+| Environment           | repo-local                                    | `source /usr/lib/openfoam/openfoam2412/etc/bashrc` | `source $HOME/opt/openfoam-precice.env`            |
+| Remote write scope    | local repo + `/root/Workspace`                | **only `$HOME/Special`**                         | **only `$HOME/Special`**                             |
+| Source (read-only)    | repo                                          | `/root/OpenFOAM/user-v2412/src`                  | `/data/home/xuzili/Special/FDM/src`                  |
+| Tools                 | full (taskset available)                      | no rsync/tmux/screen; git/unzip/python3          | Slurm, `srun`, `sbatch`, `sacct`; no rsync           |
 
 - Local parallel runs: **exactly 8 MPI ranks** (= the 8 P-cores). More ranks spill onto E-cores and run slower than 8. WSL2 does not expose P/E topology (`core_type` absent), so do not blind-pin with `taskset`; use `numberOfSubdomains 8;` and `export OMP_NUM_THREADS=1`, and run only one parallel case at a time.
 - Send to remote when ANY holds: > ~3M cells, estimated memory > 20 GB, estimated wall time > 12 h, or ranks > 8. The AGARD combined CalculiX modal decks (~37 GB peak RSS) are always remote-class.
 - When unsure: run 100–500 steps locally on a coarse mesh / short `endTime`, extrapolate `ExecutionTime`, then decide.
-- Remote workflow (run and monitored via the `openfoam-run-monitor` subagent; full procedure: `.opencode/skills/remote-compute-polling/`): resolve the SSH alias from `~/.ssh/config` into a variable — never bake hostnames/container ids into scripts or case files; transfer with `tar czf - -C dir . | ssh "$SSH_HOST" 'tar xzf - -C dest'` (no remote rsync) and verify `sha256sum` on both ends; launch with `setsid nohup ... > run.log 2>&1 < /dev/null &` wrapped in local `timeout` (ssh exit 124 is expected); verify in a separate ssh call; judge liveness with `ps -C <proc> -o stat= | grep -v '^Z'` — the remote PID 1 is `sleep`, so `<defunct>` launchers linger for days without meaning a job is alive; poll every 30 min, switching to 60 min once the run exceeds 5 h.
-- **Every case run must go through the `openfoam-run-monitor` subagent, launched in the background** — solvers, `mpirun`, `decomposePar`/`reconstructPar`, pipeline stages, smoke runs, and long builds: call `subagent(agent="openfoam-run-monitor", background=true)`. Do **not** run these in the foreground, and do **not** launch them as a bare `shell` background job: that shell is reaped when the session ends (observed: a 62-min HiSA run died mid-step at t=0.023 with no solver error). The subagent detaches with `setsid nohup` and keeps a run registry under `/root/Workspace/.openfoam-runs/`.
-- **Supervise long runs with a `sleep` poll loop**, not by returning early: poll about every 30 min (every 60 min after 5 h), count only non-zombie processes (`ps -C <proc> -o stat= | grep -v '^Z'`), stop only on a terminal log state (`End`) or a fatal, and emit one compact status line per poll. Remote procedure: `.opencode/skills/remote-compute-polling/`.
-- Record hostname, host load, rank count, and solver version for every run; performance comparisons are valid only when both machines were idle.
+- **Remote write scope is strictly `$HOME/Special`.** On `SuperComputer`, every other `$HOME` directory belongs to group members: do not create, overwrite, or delete there. On `FSIDocker`, treat `/root/Workspace` as legacy/read-only; new cases go under `/root/Special`. Existing source and environment trees outside `Special` are read-only.
+- **HPC launcher rule:** on `SuperComputer` use only `srun --mpi=pmix_v3` for MPI. **Never use `mpirun`, and never fall back to it if `srun` fails.** `srun --mpi=openmpi` and `srun --mpi=pmi2` fail on this host; `MpiDefault=none`. If `srun` fails, record the exact error and stop.
+- **FSIDocker launcher rule:** there is no Slurm/`srun`; use `mpirun --allow-run-as-root`. Do not copy HPC `srun` commands there.
+- **Short jobs (expected <= 10 min): do not poll.** Run synchronously and report the terminal result. HPC: `sbatch --wait` or a direct `srun` in an allocation. FSIDocker: foreground `mpirun` (optionally under `timeout`). If a short job exceeds 10 min, switch to long-job monitoring.
+- **Long jobs (> 10 min):** on HPC submit with `sbatch` and poll `squeue`/`sacct` every 30 min (60 min after 5 h); use scheduler state, not PID/zombie logic. On FSIDocker launch detached with `setsid nohup`, then poll every 30/60 min with zombie-aware `ps -C` and log checks. The generic procedure remains in `.opencode/skills/remote-compute-polling/`.
+- Transfer with `tar czf - -C dir . | ssh "$SSH_HOST" 'tar xzf - -C dest'` or `scp`; verify `sha256sum` on both ends. No remote `rsync`.
+- Reconstruct on a compute node (`srun -n 1 reconstructPar` or a short `sbatch`) for HPC; never on the login node. Pull only root time directories, not `processor*`. On FSIDocker, reconstruct directly in the case under `$HOME/Special`.
+- Clean up test cases/temp files only under `$HOME/Special`, and only after the pulled results are verified. On HPC, require `squeue -u xuzili` to be empty first. Never delete source, environment installs, build logs, or legacy `/root/Workspace` without explicit instruction.
+- **Every case run must go through the target-specific run subagent:** `openfoam-run-local`, `openfoam-run-fsidocker`, or `openfoam-run-supercomputer`. Short jobs may be run to completion without polling (foreground subagent is acceptable); long jobs must be launched in the background and polled. Do not run cases as a bare `shell` background job.
+- Record hostname, host load, rank count, solver version, and launcher for every run; performance comparisons are valid only when both machines were idle.
 - `decomposePar` with `method scotch` is **non-reproducible in this environment** (re-running on identical input yields different partitions, hence different rounding). For bit-for-bit A/B comparisons, decompose once and reuse the same `processor*/`, or pin a deterministic decomposition method.
 
 ## SUBAGENTS
@@ -136,8 +148,11 @@ Project subagents are registered as Markdown files under `.opencode/agents/` (V2
 | `openfoam-code-change` | `.opencode/agents/openfoam-code-change.md` | One scoped patch with a known acceptance test | diff + `wmake` log + smoke evidence |
 | `openfoam-analysis` | `.opencode/agents/openfoam-analysis.md` | Write/run an analysis script on specified data | script path + numbers/table + input hash |
 | `openfoam-case-assembly` | `.opencode/agents/openfoam-case-assembly.md` | Assemble/verify a runnable case | case dir + dict snippets + `checkMesh` |
-| `openfoam-run-monitor` | `.opencode/agents/openfoam-run-monitor.md` | Any solver/build/pipeline run | terminal state + timing/residuals/exit code |
+| `openfoam-run-local` | `.opencode/agents/openfoam-run-local.md` | Local WSL solver/build/pipeline run | terminal state + timing/residuals/exit code + launcher |
+| `openfoam-run-fsidocker` | `.opencode/agents/openfoam-run-fsidocker.md` | FSIDocker solver/build/pipeline run | terminal state + timing/residuals/exit code + launcher |
+| `openfoam-run-supercomputer` | `.opencode/agents/openfoam-run-supercomputer.md` | SuperComputer Slurm solver/build/pipeline run | job state + timing/residuals/exit code + launcher |
 
+- All three run agents load the shared rules in `.opencode/skills/openfoam-run-common/SKILL.md`.
 - Delegate only mechanical work with explicit pass/fail acceptance criteria. Keep in the main conversation: criteria and trade-off decisions, cross-step causal reasoning, and risky operations (deleting remote originals, changing production data, overwriting the user's uncommitted work).
 - Subagents start blank. Every prompt must carry: (1) context — absolute paths, current hashes/IDs, known conclusions, prohibitions (no system Python installs; use `.venv_fdm/`); (2) acceptance criteria — concrete pass/fail, not "make it work"; (3) report format — files changed, commands run, results, what was not verified, no long prose.
 - Prefer one subagent per acceptance test: split "patch", "run", and "analyse" rather than asking one agent for all three.
@@ -162,6 +177,10 @@ Project subagents are registered as Markdown files under `.opencode/agents/` (V2
 - Do not treat stale CalculiX outputs, stale mode files, or old FSI logs as production inputs.
 - Do not sync partial `reconstructPar` output into a main case after failure.
 - Do not assume `scripts/` exists in-tree; it is untracked. Use `/root/Workspace/_Oldversion_/scripts/` or restore deliberately.
+- Do not use `mpirun` on `SuperComputer`; do not use `srun` on `FSIDocker`.
+- Do not write outside `$HOME/Special` on remote shared hosts; other `$HOME` directories belong to group members.
+- Do not poll short jobs (expected <= 10 min); run them synchronously and report the terminal result.
+- Do not delete remote test data before the pulled results have been verified, and never delete source/environment/install trees as part of test cleanup.
 
 ## COMMANDS
 

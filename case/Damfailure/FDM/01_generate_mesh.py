@@ -1153,12 +1153,24 @@ def write_fluid_vtk_direct(path, counts, delta, max_exp=MAX_EXPANSION):
 # --------------------------------------------------------------------------- #
 
 def locate_bashrc():
-    exe = shutil.which("blockMesh")
-    if exe:
-        proj = os.path.dirname(os.path.dirname(os.path.dirname(exe)))
+    # Prefer the active OpenFOAM environment. This also handles user-built
+    # trees such as $HOME/OpenFOAM/OpenFOAM-v2412, where the binary lives in
+    # platforms/<opt>/bin and the bashrc is four levels above it.
+    proj = os.environ.get("WM_PROJECT_DIR")
+    if proj:
         rc = os.path.join(proj, "etc", "bashrc")
         if os.path.isfile(rc):
             return rc
+
+    exe = shutil.which("blockMesh")
+    if exe:
+        proj = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(exe)))
+        )
+        rc = os.path.join(proj, "etc", "bashrc")
+        if os.path.isfile(rc):
+            return rc
+
     if os.path.isfile(OPENFOAM_BASHRC_DEFAULT):
         return OPENFOAM_BASHRC_DEFAULT
     return None

@@ -45,6 +45,7 @@ import glob
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -104,12 +105,24 @@ def raw(msg=""):
 
 
 def locate_bashrc():
-    exe = shutil.which("blockMesh")
-    if exe:
-        proj = os.path.dirname(os.path.dirname(os.path.dirname(exe)))
+    # Prefer the active OpenFOAM environment. This also handles user-built
+    # trees such as $HOME/OpenFOAM/OpenFOAM-v2412, where the binary lives in
+    # platforms/<opt>/bin and the bashrc is four levels above it.
+    proj = os.environ.get("WM_PROJECT_DIR")
+    if proj:
         rc = os.path.join(proj, "etc", "bashrc")
         if os.path.isfile(rc):
             return rc
+
+    exe = shutil.which("blockMesh")
+    if exe:
+        proj = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(exe)))
+        )
+        rc = os.path.join(proj, "etc", "bashrc")
+        if os.path.isfile(rc):
+            return rc
+
     if os.path.isfile(OPENFOAM_BASHRC_DEFAULT):
         return OPENFOAM_BASHRC_DEFAULT
     return None
@@ -673,6 +686,46 @@ def lib_path(foam_env):
     return os.path.join(foam_env["FOAM_USER_LIBBIN"], "libfastDynamicFvMesh.so")
 
 
+def resolve_mpi_launcher():
+    """Resolve the MPI launcher without hard-coding a site-specific command.
+
+    FDM_MPI_LAUNCHER=auto (default) uses srun inside a Slurm allocation and
+    mpirun elsewhere.  The value may also be forced to "srun" or "mpirun".
+    Site-specific srun flags belong in FDM_SRUN_ARGS, for example:
+        export FDM_SRUN_ARGS="--mpi=pmix_v3"
+    """
+    requested = os.environ.get("FDM_MPI_LAUNCHER", "auto").strip().lower()
+    if requested not in ("auto", "srun", "mpirun"):
+        error("invalid FDM_MPI_LAUNCHER=%r (expected auto, srun, or mpirun)"
+              % requested)
+        requested = "mpirun"
+    if requested == "auto":
+        if os.environ.get("SLURM_JOB_ID") and shutil.which("srun"):
+            requested = "srun"
+        else:
+            requested = "mpirun"
+    if not shutil.which(requested):
+        error("%s not found on PATH (required for parallel runs)" % requested)
+    return requested
+
+
+def mpi_prefix(nprocs, root):
+    """Return the launcher prefix for nprocs MPI ranks."""
+    launcher = resolve_mpi_launcher()
+    if launcher == "srun":
+        parts = [shutil.which("srun") or "srun"]
+        extra = os.environ.get("FDM_SRUN_ARGS", "").strip()
+        if extra:
+            parts += shlex.split(extra)
+        parts += ["-n", str(nprocs)]
+    else:
+        parts = [shutil.which("mpirun") or "mpirun"]
+        if root:
+            parts.append("--allow-run-as-root")
+        parts += ["-np", str(nprocs)]
+    return parts
+
+
 def validate_tools(foam_env, mode, nprocs):
     appbin = foam_env["FOAM_APPBIN"]
     checks = [
@@ -683,9 +736,10 @@ def validate_tools(foam_env, mode, nprocs):
         checks.append(("checkMesh", os.path.join(appbin, "checkMesh"), "x"))
     if nprocs > 1:
         checks.append(("decomposePar", os.path.join(appbin, "decomposePar"), "x"))
-        if not shutil.which("mpirun"):
-            error("mpirun not found on PATH (required for parallel runs)")
+        launcher = resolve_mpi_launcher()
+        if not shutil.which(launcher):
             return False
+        log("OK: MPI launcher -> %s" % launcher)
 
     ok = True
     for name, path, kind in checks:
@@ -705,11 +759,7 @@ def build_solver_command(foam_env, nprocs, taskset, root):
     if nprocs <= 1:
         cmd = solver
     else:
-        mpirun = shutil.which("mpirun") or "mpirun"
-        parts = [mpirun]
-        if root:
-            parts.append("--allow-run-as-root")
-        parts.append("-np %d" % nprocs)
+        parts = mpi_prefix(nprocs, root)
         parts.append(solver)
         parts.append("-parallel")
         cmd = " ".join(parts)

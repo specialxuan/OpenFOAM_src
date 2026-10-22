@@ -822,7 +822,7 @@ transonic condition.
 source /usr/lib/openfoam/openfoam2412/etc/bashrc
 checkMesh -case <this case>
 myRhoPimpleFoam -case <this case>        # serial smoke
-# production: decomposePar -force && mpirun -np %d myRhoPimpleFoam -parallel
+# production: decomposePar -force && srun --mpi=pmix_v3 -n %d myRhoPimpleFoam -parallel
 ```
 """ % (
         len(freqs),
