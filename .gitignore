@@ -9,15 +9,7 @@ mcp.json
 *.sta
 .venv_fdm/
 .codex
-.omo/
 package.json
 package-lock.json
-mesh_accuracy_efficiency_comparison.md
-Plan_1-5_Finished.md
-Plan.md
-AGARD4456_M0499_FSI_steps.md
-AGARD4456_FSI_work_log.md
 scripts/
-damfailure_amr_fsi_goal_progress.md
 opencode.log
-.opencode/

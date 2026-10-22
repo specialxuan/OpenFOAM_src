@@ -27,7 +27,7 @@ src/
 |   |-- Damfailure/         # dam-break FSI: FDM and preCICE pipelines
 |   |-- AGARD/              # AGARD 445.6 wing: Mode/ (modal calibration), FDM/ (case assembly), Mesh/ (deck converters)
 |   `-- SwingBeam/          # closed-tank clamped cantilever beam FSI: FDM and preCICE pipelines
-|-- DEVELOPMENT.md          # source/generated/local file policy
+|-- README.md               # project overview, build/validation, file policy
 `-- AGENTS.md               # repository-wide rules
 ```
 
@@ -59,7 +59,7 @@ repo-wide rules.
 | SwingBeam case pipelines   | `case/SwingBeam/FDM/`, `case/SwingBeam/preCICE/`                             | Closed tank + clamped cantilever beam; six-stage Python stages |
 | Smoke / regression path    | `case/Damfailure/FDM/run_pipeline.sh`                                        | In-repo and self-contained (own mesh + modal stages); `--dry-run` then a short `--steps` run |
 | Mesh/modal/FSI pipeline    | `/root/Workspace/_Oldversion_/scripts/pipeline/`                             | External; staged automation with mesh/mode consistency guard   |
-| File policy                | `DEVELOPMENT.md`, `.gitignore`                                               | Source vs generated vs local-only rules                        |
+| File policy                | `AGENTS.md`, `.gitignore`                                                    | Source vs generated vs local-only rules                        |
 
 ## CODE MAP
 
@@ -121,33 +121,40 @@ FSI wiring.
 - Local parallel runs: **exactly 8 MPI ranks** (= the 8 P-cores). More ranks spill onto E-cores and run slower than 8. WSL2 does not expose P/E topology (`core_type` absent), so do not blind-pin with `taskset`; use `numberOfSubdomains 8;` and `export OMP_NUM_THREADS=1`, and run only one parallel case at a time.
 - Send to remote when ANY holds: > ~3M cells, estimated memory > 20 GB, estimated wall time > 12 h, or ranks > 8. The AGARD combined CalculiX modal decks (~37 GB peak RSS) are always remote-class.
 - When unsure: run 100–500 steps locally on a coarse mesh / short `endTime`, extrapolate `ExecutionTime`, then decide.
-- Remote workflow (run and monitored via the `openfoam-run-monitor` subagent; full procedure: `.opencode/skills/remote-compute-polling/`): resolve the SSH alias from `~/.ssh/config` into a variable — never bake hostnames/container ids into scripts or case files; transfer with `tar czf - -C dir . | ssh "$SSH_HOST" 'tar xzf - -C dest'` (no remote rsync) and verify `sha256sum` on both ends; launch with `setsid nohup ... > run.log 2>&1 < /dev/null &` wrapped in local `timeout` (ssh exit 124 is expected); verify in a separate ssh call; judge liveness with `ps -C <proc> -o stat= | grep -v '^Z'` — the remote PID 1 is `sleep`, so `<defunct>` launchers linger for days without meaning a job is alive; poll every 30 min on a fixed cadence.
-- **Every case run must go through the `openfoam-run-monitor` subagent, launched in the background** — solvers, `mpirun`, `decomposePar`/`reconstructPar`, pipeline stages, smoke runs, and long builds: call `subagent(agent="openfoam-run-monitor", background=true)`. Do **not** run these in the foreground, and do **not** launch them as a bare `shell` background job: that shell is reaped when the session ends (observed: a 62-min HiSA run died mid-step at t=0.023 with no solver error). The subagent detaches with `setsid nohup` and keeps a run registry under gitignored `.omo/openfoam-runs/`.
-- **Supervise long runs with a `sleep` poll loop**, not by returning early: poll about every 30 min, count only non-zombie processes (`ps -C <proc> -o stat= | grep -v '^Z'`), stop only on a terminal log state (`End`) or a fatal, and emit one compact status line per poll. Remote procedure: `.opencode/skills/remote-compute-polling/`.
+- Remote workflow (run and monitored via the `openfoam-run-monitor` subagent; full procedure: `.opencode/skills/remote-compute-polling/`): resolve the SSH alias from `~/.ssh/config` into a variable — never bake hostnames/container ids into scripts or case files; transfer with `tar czf - -C dir . | ssh "$SSH_HOST" 'tar xzf - -C dest'` (no remote rsync) and verify `sha256sum` on both ends; launch with `setsid nohup ... > run.log 2>&1 < /dev/null &` wrapped in local `timeout` (ssh exit 124 is expected); verify in a separate ssh call; judge liveness with `ps -C <proc> -o stat= | grep -v '^Z'` — the remote PID 1 is `sleep`, so `<defunct>` launchers linger for days without meaning a job is alive; poll every 30 min, switching to 60 min once the run exceeds 5 h.
+- **Every case run must go through the `openfoam-run-monitor` subagent, launched in the background** — solvers, `mpirun`, `decomposePar`/`reconstructPar`, pipeline stages, smoke runs, and long builds: call `subagent(agent="openfoam-run-monitor", background=true)`. Do **not** run these in the foreground, and do **not** launch them as a bare `shell` background job: that shell is reaped when the session ends (observed: a 62-min HiSA run died mid-step at t=0.023 with no solver error). The subagent detaches with `setsid nohup` and keeps a run registry under `/root/Workspace/.openfoam-runs/`.
+- **Supervise long runs with a `sleep` poll loop**, not by returning early: poll about every 30 min (every 60 min after 5 h), count only non-zombie processes (`ps -C <proc> -o stat= | grep -v '^Z'`), stop only on a terminal log state (`End`) or a fatal, and emit one compact status line per poll. Remote procedure: `.opencode/skills/remote-compute-polling/`.
 - Record hostname, host load, rank count, and solver version for every run; performance comparisons are valid only when both machines were idle.
 - `decomposePar` with `method scotch` is **non-reproducible in this environment** (re-running on identical input yields different partitions, hence different rounding). For bit-for-bit A/B comparisons, decompose once and reuse the same `processor*/`, or pin a deterministic decomposition method.
 
 ## SUBAGENTS
 
-Project subagents are registered as Markdown files. New ones live in `.opencode/agents/`; the existing run monitor stays at the legacy `.opencode/agent/` path (V2 discovers both).
+Project subagents are registered as Markdown files under `.opencode/agents/` (V2-native; the legacy `.opencode/agent/` path is still discovered but no longer used).
 
 | Agent | File | Delegate when | Required deliverable |
 | --- | --- | --- | --- |
 | `openfoam-code-change` | `.opencode/agents/openfoam-code-change.md` | One scoped patch with a known acceptance test | diff + `wmake` log + smoke evidence |
 | `openfoam-analysis` | `.opencode/agents/openfoam-analysis.md` | Write/run an analysis script on specified data | script path + numbers/table + input hash |
 | `openfoam-case-assembly` | `.opencode/agents/openfoam-case-assembly.md` | Assemble/verify a runnable case | case dir + dict snippets + `checkMesh` |
-| `openfoam-run-monitor` | `.opencode/agent/openfoam-run-monitor.md` | Any solver/build/pipeline run | terminal state + timing/residuals/exit code |
+| `openfoam-run-monitor` | `.opencode/agents/openfoam-run-monitor.md` | Any solver/build/pipeline run | terminal state + timing/residuals/exit code |
 
 - Delegate only mechanical work with explicit pass/fail acceptance criteria. Keep in the main conversation: criteria and trade-off decisions, cross-step causal reasoning, and risky operations (deleting remote originals, changing production data, overwriting the user's uncommitted work).
 - Subagents start blank. Every prompt must carry: (1) context — absolute paths, current hashes/IDs, known conclusions, prohibitions (no system Python installs; use `.venv_fdm/`); (2) acceptance criteria — concrete pass/fail, not "make it work"; (3) report format — files changed, commands run, results, what was not verified, no long prose.
 - Prefer one subagent per acceptance test: split "patch", "run", and "analyse" rather than asking one agent for all three.
 - The agent definitions enforce this too: if the prompt lacks context or acceptance criteria, the subagent must stop and ask instead of guessing.
 
+## FILE POLICY
+
+- Source: `.C/.H` and `Make/` under `fastDynamicFvMesh/fastDynamicFvMesh/`, `myInterFoam/`, `myPimpleFoam/`, `myRhoPimpleFoam/` (and `myHisa/` per its own `AGENTS.md`).
+- Tracked docs: `README.md`, `AGENTS.md`, `fastDynamicFvMesh/README.md`, `fastDynamicFvMesh/Doc/快速动网格程序手册.md`; `Plan.md`-style drafts are local and gitignored.
+- Never commit build products (`Make/linux64GccDPInt32Opt/`, `.cache/`, `lnInclude/`), local tool config (`.vscode/mcp.json`, `.venv_fdm/`, `__pycache__/`, `.codex`), or generated artifacts (`*.cvg`, `*.sta`, ...).
+- Python packages install only into `.venv_fdm/`; pipeline stages are stdlib-only except video export, which needs ParaView's `pvbatch`.
+
 ## ANTI-PATTERNS (THIS PROJECT)
 
 - Do not use cmake/make or create parallel build systems.
 - Do not edit baseline case archives directly.
-- Do not commit `*/lnInclude/`, `*/linux64GccDPInt32Opt/`, `*/.cache/`, `__pycache__/`, `.venv_fdm/`, `.codex`, `.omo/`, `.vscode/mcp.json`, `*.cvg`, or `*.sta`.
+- Do not commit `*/lnInclude/`, `*/linux64GccDPInt32Opt/`, `*/.cache/`, `__pycache__/`, `.venv_fdm/`, `.codex`, `.vscode/mcp.json`, `*.cvg`, or `*.sta`.
 - Do not rely on `refinementFaceMapTolerance` as live behavior; it is deprecated, warned, and ignored.
 - Do not use geometric fallback for AMR-generated points; topology lineage/mapping rules are mandatory (code-enforced `FatalError` in `fastDynamicFvMeshModeMapping.C`).
 - Do not reuse previous time-step mesh compression flux after topology changes.
@@ -178,4 +185,3 @@ case/Damfailure/FDM/run_pipeline.sh --dry-run   # in-repo smoke/regression path 
 - For AMR/restart runs, prefer reconstructing in an isolated mirror case before syncing reconstructed times back into the main case.
 - The external `run_mesh_independence_automation.sh` (`_Oldversion_/scripts/pipeline/`) refuses FSI if `mode/FluidNodeCoor.csv` node count differs from mesh point count unless `--allow-stale-mode` is used for diagnostics.
 - No executable unit/regression test suite exists for the C++ code; validation is via builds, smoke cases, pipeline checks, and documented numerical comparisons. `case/AGARD/Mode/tests/`, `case/Damfailure/FDM/test_display_width.py`, and `case/SwingBeam/FDM/test_display_width.py` are Python-only unittest suites.
-- Diagram workflow: edit `.drawio` sources first, keep final PNG/JPG only when needed, delete temporary SVG/debug exports.

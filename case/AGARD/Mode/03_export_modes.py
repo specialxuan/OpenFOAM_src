@@ -20,8 +20,8 @@ Gate order (NO CSV is written unless every gate passes)
    ``FluidPara.csv``.
 
 With ``--export-stress`` (default off) the exporter additionally writes the
-six-component structural blocks pinned by T0 (see
-``.omo/evidence/task-2-fdm-modal-extension.md``): ``-4  STRESS`` /
+six-component structural blocks pinned by T0 (see the stress/strain export note in
+``case/AGARD/Mode/AGENTS.md``): ``-4  STRESS`` /
 ``-4  TOSTRAIN`` hold node-keyed ``-1`` records with six packed 12-wide
 fields in the ``-5`` declaration order (SXX,SYY,SZZ,SXY,SYZ,SZX / EXX,...),
 so ``StructNodeStress{m}.csv``/``StructNodeStrain{m}.csv`` are emitted for

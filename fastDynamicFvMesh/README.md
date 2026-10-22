@@ -699,10 +699,9 @@ This section maps each repository commit to concrete code/document changes.
   - `fastDynamicFvMesh/Make/files`,
   - `fastDynamicFvMesh/compile_commands.json`,
   - `lnInclude` links for new implementation units.
-- Synced documentation with the split and added architecture flowchart source:
+- Synced documentation with the split:
   - `fastDynamicFvMesh/README.md`,
-  - `fastDynamicFvMesh/Doc/快速动网格程序手册.md`,
-  - `fastDynamicFvMesh/Doc/Figures/fastDynamicFvMesh_Flowchart.drawio`.
+  - `fastDynamicFvMesh/Doc/快速动网格程序手册.md`.
 - Follow-up maintainability refactor: decomposed `fastDynamicFvMesh::update()` into named internal stages in `fastDynamicFvMeshUpdate.C` while preserving the original call order and behavior.
 
 ### `09d86c5` - add modal extension (structural displacement/stress/strain recovery) (2026-10-08)
