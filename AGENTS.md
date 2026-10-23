@@ -124,6 +124,7 @@ FSI wiring.
 | Source (read-only)    | repo                                          | `/root/OpenFOAM/user-v2412/src`                  | `/data/home/xuzili/Special/FDM/src`                  |
 | Tools                 | full (taskset available)                      | no rsync/tmux/screen; git/unzip/python3          | Slurm, `srun`, `sbatch`, `sacct`; no rsync           |
 
+- **Cost model:** local and `FSIDocker` runs incur no core-hour charge (only electricity); `SuperComputer` is billed by **core-hours**. Estimate the core-hour cost before planning an HPC case, use local/`FSIDocker` for short, coarse, and preparatory runs, and reserve the HPC for production or genuinely remote-class cases. Avoid idle allocations and unnecessary test runs that consume billable core-hours.
 - Local parallel runs: **exactly 8 MPI ranks** (= the 8 P-cores). More ranks spill onto E-cores and run slower than 8. WSL2 does not expose P/E topology (`core_type` absent), so do not blind-pin with `taskset`; use `numberOfSubdomains 8;` and `export OMP_NUM_THREADS=1`, and run only one parallel case at a time.
 - Send to remote when ANY holds: > ~3M cells, estimated memory > 20 GB, estimated wall time > 12 h, or ranks > 8. The AGARD combined CalculiX modal decks (~37 GB peak RSS) are always remote-class.
 - When unsure: run 100–500 steps locally on a coarse mesh / short `endTime`, extrapolate `ExecutionTime`, then decide.
@@ -135,7 +136,8 @@ FSI wiring.
 - Transfer with `tar czf - -C dir . | ssh "$SSH_HOST" 'tar xzf - -C dest'` or `scp`; verify `sha256sum` on both ends. No remote `rsync`.
 - Reconstruct on a compute node (`srun -n 1 reconstructPar` or a short `sbatch`) for HPC; never on the login node. Pull only root time directories, not `processor*`. On FSIDocker, reconstruct directly in the case under `$HOME/Special`.
 - Clean up test cases/temp files only under `$HOME/Special`, and only after the pulled results are verified. On HPC, require `squeue -u xuzili` to be empty first. Never delete source, environment installs, build logs, or legacy `/root/Workspace` without explicit instruction.
-- **Every case run must go through the target-specific run subagent:** `openfoam-run-local`, `openfoam-run-fsidocker`, or `openfoam-run-supercomputer`. Short jobs may be run to completion without polling (foreground subagent is acceptable); long jobs must be launched in the background and polled. Do not run cases as a bare `shell` background job.
+- **Explicit approval gate:** never launch or submit a case run (solver, `sbatch`, `srun`, `mpirun`, `decomposePar`, `reconstructPar`, pipeline stage, or smoke run) from a plan alone. Get the user's explicit approval for the specific target, case, command, and resource request first. Read-only inspection and `--dry-run` are allowed without approval; compute work must wait.
+- **Every case run must go through the target-specific run subagent:** `openfoam-run-local`, `openfoam-run-fsidocker`, or `openfoam-run-supercomputer`, and only after the approval gate above. Short jobs may be run to completion without polling (foreground subagent is acceptable); long jobs must be launched in the background and polled. Do not run cases as a bare `shell` background job.
 - Record hostname, host load, rank count, solver version, and launcher for every run; performance comparisons are valid only when both machines were idle.
 - `decomposePar` with `method scotch` is **non-reproducible in this environment** (re-running on identical input yields different partitions, hence different rounding). For bit-for-bit A/B comparisons, decompose once and reuse the same `processor*/`, or pin a deterministic decomposition method.
 
@@ -180,6 +182,7 @@ Project subagents are registered as Markdown files under `.opencode/agents/` (V2
 - Do not use `mpirun` on `SuperComputer`; do not use `srun` on `FSIDocker`.
 - Do not write outside `$HOME/Special` on remote shared hosts; other `$HOME` directories belong to group members.
 - Do not poll short jobs (expected <= 10 min); run them synchronously and report the terminal result.
+- Do not launch or submit a case run from a plan alone; wait for the user's explicit approval for that specific run.
 - Do not delete remote test data before the pulled results have been verified, and never delete source/environment/install trees as part of test cleanup.
 
 ## COMMANDS
