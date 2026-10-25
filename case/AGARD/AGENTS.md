@@ -8,7 +8,7 @@ AGARD 445.6 half-span wing case: CalculiX modal calibration of orthotropic wing 
 
 | Path | Purpose |
 |---|---|
-| `CaseDescription.md` | Authoritative calibration doc: C3D10 mesh provenance, material axis mapping (`1,1,0, 0,0,1`), target frequencies, calibrated `hard_e1_0p75` / `soft_anchored` material cards, paste-ready CalculiX blocks |
+| `/root/Workspace/AGARD/Article/TransDip/Doc/CaseDescription.md` | Authoritative calibration doc: C3D10 mesh provenance, material axis mapping (`1,1,0, 0,0,1`), target frequencies, calibrated `hard_e1_0p75` / `soft_anchored` material cards, paste-ready CalculiX blocks |
 | `Mode/` | Three-stage modal pipeline (mesh merge → deck generation → gated mode export); has its own detailed AGENTS.md |
 | `Mode/mesh/` | Committed input mesh decks (`farfield_c3d8.zip`, `wing_c3d10.zip`, `fluid7/8_c3d8_c3d6.zip`) via Git LFS, with `PROVENANCE.md` |
 | `Mesh/` | Fluid-mesh tooling: `build_fluid_mesh.py`, `inp_to_polymesh.py`, `smooth_farfield_polymesh.py` |
@@ -17,7 +17,7 @@ AGARD 445.6 half-span wing case: CalculiX modal calibration of orthotropic wing 
 ## CONVENTIONS
 
 - `case/AGARD/**/*.zip` is Git LFS (`.gitattributes`: `filter=lfs diff=lfs merge=lfs -text`); the decks are large and cannot be regenerated on this machine (ICEM/ACIS workflow retired).
-- Material constants come only from `CaseDescription.md`; CalculiX cards must use `*ELASTIC, TYPE=ENGINEERING CONSTANTS` with the single `*ORIENTATION` line `1,1,0, 0,0,1` — `TYPE=ORTHO` is forbidden (it interprets values as stiffness coefficients and yields wrong soft materials).
+- Material constants come only from `/root/Workspace/AGARD/Article/TransDip/Doc/CaseDescription.md`; CalculiX cards must use `*ELASTIC, TYPE=ENGINEERING CONSTANTS` with the single `*ORIENTATION` line `1,1,0, 0,0,1` — `TYPE=ORTHO` is forbidden (it interprets values as stiffness coefficients and yields wrong soft materials).
 - Generated CalculiX/FRD/DAT/CSV artifacts belong under `/root/Workspace`, never in this directory.
 - FDM cases carry the validated FSI convergence recipe, emitted by `FDM/assemble_fdm_case.py` by default: `fsiCoupling integrated; fsiTolerance 1e-3; fsiDispTolerance 1e-9; fsiDispConsecutiveIters 1;`. The modal-force residual is noise-dominated and never reaches a tight `fsiTolerance`, so the displacement OR-gate is the binding stop criterion (20 pseudo-iterations/step, reproduces the archive).
 - Detailed stage gates, invariants, and pipeline usage live in `Mode/AGENTS.md` and `Mode/README.md`; read those before touching `Mode/`.

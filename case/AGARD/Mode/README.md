@@ -163,7 +163,7 @@ with `--run-ccx` it also solves it, and stage 3 then defaults `--pure-dat` /
 `--pure-frd` to those files.  That pure-wing 10-mode reference is what the
 stage-3 frequency and identity gates compare against.
 
-## Materials (`../CaseDescription.md` is authoritative)
+## Materials (`/root/Workspace/AGARD/Article/TransDip/Doc/CaseDescription.md` is authoritative)
 
 | Set | Use | E1 (Pa) | E2 | E3 | G12 | G13 | G23 | rho |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

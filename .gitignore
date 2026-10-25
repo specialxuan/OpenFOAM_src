@@ -13,3 +13,7 @@ package.json
 package-lock.json
 scripts/
 opencode.log
+
+# local editor / agent config (not shared)
+.vscode/
+.opencode/

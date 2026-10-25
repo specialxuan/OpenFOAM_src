@@ -63,7 +63,7 @@
   `S1=(1,2,3) S2=(1,4,2) S3=(2,4,3) S4=(3,4,1)`; C3D8 faces are the six quads.
 - Wing material: `*ELASTIC, TYPE=ENGINEERING CONSTANTS` with the single
   `*ORIENTATION` data line `1,1,0, 0,0,1`; values only from
-  `../CaseDescription.md` (`soft_anchored`/`hard_e1_0p75`).  `TYPE=ORTHO`,
+  `/root/Workspace/AGARD/Article/TransDip/Doc/CaseDescription.md` (`soft_anchored`/`hard_e1_0p75`).  `TYPE=ORTHO`,
   `SOLVER=`, and the isotropic `8.17e9/0.31` wing card are forbidden.
 - Far-field: bounded graded band `E(V)=clip(E_max*(V_min/V)^p, E_max/floor,
   E_max)` with `E_max = factor*E_ref` (default `1e-6*E1`), `*DENSITY 0.` and

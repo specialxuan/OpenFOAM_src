@@ -23,7 +23,7 @@ Element types
   ``S1=(1,2,3) S2=(1,4,2) S3=(2,4,3) S4=(3,4,1)``; the mid-edge nodes belong
   to the face implicitly.
 
-Wing material (values from ``../CaseDescription.md``)
+Wing material (values from ``/root/Workspace/AGARD/Article/TransDip/Doc/CaseDescription.md``)
 -----------------------------------------------------
 ``soft`` -> ``soft_anchored`` (Model No.3) / ``hard`` -> ``hard_e1_0p75``
 (Model No.1); ``*ELASTIC, TYPE=ENGINEERING CONSTANTS`` with the single
