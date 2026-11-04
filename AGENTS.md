@@ -54,7 +54,7 @@ repo-wide rules.
 | HiSA with FSI coupling     | `myHisa/`                                                                    | HiSA copy; FSI keys (incl. displacement OR gate) honored in the pseudotime loop; builds via its own `Allwmake` |
 | Damfailure case pipelines  | `case/Damfailure/FDM/`, `case/Damfailure/preCICE/`                           | Numbered Python stages driven by `run_pipeline.sh`             |
 | AGARD modal workflow       | `case/AGARD/Mode/`                                                           | Detailed `AGENTS.md`; LFS mesh decks under `Mode/mesh/`        |
-| AGARD FDM case assembly    | `case/AGARD/FDM/assemble_fdm_case.py`                                        | Wires converted polyMesh + modal CSVs into a myRhoPimpleFoam + fastDynamicFvMesh case |
+| AGARD FDM pipeline         | `case/AGARD/FDM/`                                                            | Self-contained 6-stage flutter pipeline (`run_pipeline.sh`, mesh/mode zips in `data/`); see `FDM/README.md` |
 | AGARD mesh converters      | `case/AGARD/Mesh/`                                                           | `inp_to_polymesh.py` (CalculiX/Abaqus deck → `constant/polyMesh`), build/smooth tools |
 | SwingBeam case pipelines   | `case/SwingBeam/FDM/`, `case/SwingBeam/preCICE/`                             | Closed tank + clamped cantilever beam; six-stage Python stages |
 | Smoke / regression path    | `case/Damfailure/FDM/run_pipeline.sh`                                        | In-repo and self-contained (own mesh + modal stages); `--dry-run` then a short `--steps` run |
@@ -102,6 +102,7 @@ FSI wiring.
 - Smoke/regression validation is **in-repo and self-contained**: `case/Damfailure/FDM/run_pipeline.sh` generates its own mesh and modal stages (no external baseline archive is required) — preview with `--dry-run`, then run a short `--steps` subset.
 - Pipeline drivers (`case/*/*/run_pipeline.sh`) support `--dry-run`, `--steps` for partial runs, and `--skip-if-fresh` (mtime gate on generation stages only; solver/post/video stages always run). Default case roots point under `/root/Workspace/...`, not in-tree.
 - Video export stages (`06_export_*_video.py`) drive ParaView (`paraview.simple` — needs `pvbatch`/ParaView Python); other pipeline stages are stdlib-only Python.
+- Case/result archiving (zip packaging, minimal runnable file sets, shared-mesh bundles, verification gates, delete-source rules) follows `.opencode/ARCHIVING.md`. Archiving is **user-initiated and executed step by step**: never decide on your own that "it is time to archive", and never delete originals without a separate confirmation plus the three-gate check (sha256, `unzip -t`, sample open).
 - New dictionary keys need safe defaults (`readIfPresent`) preserving current behavior. Removing/renaming keys requires a deprecation warning path (canonical example: `refinementFaceMapTolerance` in `fastDynamicFvMeshIO.C`).
 - FSI convergence is force-residual based: `fsiResidual < fsiTolerance`; opt-in OR absolute-displacement gate `fsiDispTolerance > 0` (default off). When enabled, the gate must hold for `fsiDispConsecutiveIters` consecutive outer iterations (default `1` = legacy single-step) to reject one-step stagnation false positives. It terminates the partitioned loop directly; in integrated/implicit mode it acts only through the combined PIMPLE/pseudotime AND-veto (so it can stop the loop at the residual criterion—shorter than waiting for force convergence—but cannot terminate the loop on its own). Displacement change is otherwise diagnostic-only. The three `my*Foam` mains wire the gate through `fsiPimpleControl`; myHisa implements the same AND veto inside `pseudotimeControl::criteriaSatisfied()`.
 - Changes under `fastDynamicFvMesh/fastDynamicFvMesh/` must update both English and Chinese docs, build the library, and run a smoke path (`case/Damfailure/FDM/run_pipeline.sh --dry-run`, then a short `--steps` FSI run) or document the exact blocker.
@@ -164,6 +165,7 @@ Project subagents are registered as Markdown files under `.opencode/agents/` (V2
 
 - Source: `.C/.H` and `Make/` under `fastDynamicFvMesh/fastDynamicFvMesh/`, `myInterFoam/`, `myPimpleFoam/`, `myRhoPimpleFoam/` (and `myHisa/` per its own `AGENTS.md`).
 - Tracked docs: `README.md`, `AGENTS.md`, `fastDynamicFvMesh/README.md`, `fastDynamicFvMesh/Doc/快速动网格程序手册.md`; `Plan.md`-style drafts are local and gitignored.
+- Local-only, **not** in git (`.opencode/` is gitignored): `.opencode/ARCHIVING.md` — case/result archiving rules, single-user reference.
 - Never commit build products (`Make/linux64GccDPInt32Opt/`, `.cache/`, `lnInclude/`), local tool config (`.vscode/mcp.json`, `.venv_fdm/`, `__pycache__/`, `.codex`), or generated artifacts (`*.cvg`, `*.sta`, ...).
 - Python packages install only into `.venv_fdm/`; pipeline stages are stdlib-only except video export, which needs ParaView's `pvbatch`.
 

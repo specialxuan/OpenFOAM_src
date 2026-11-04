@@ -12,7 +12,7 @@ AGARD 445.6 half-span wing case: CalculiX modal calibration of orthotropic wing 
 | `Mode/` | Three-stage modal pipeline (mesh merge → deck generation → gated mode export); has its own detailed AGENTS.md |
 | `Mode/mesh/` | Committed input mesh decks (`farfield_c3d8.zip`, `wing_c3d10.zip`, `fluid7/8_c3d8_c3d6.zip`) via Git LFS, with `PROVENANCE.md` |
 | `Mesh/` | Fluid-mesh tooling: `build_fluid_mesh.py`, `inp_to_polymesh.py`, `smooth_farfield_polymesh.py` |
-| `FDM/assemble_fdm_case.py` | Assembles the AGARD OpenFOAM FDM case |
+| `FDM/` | Self-contained flutter pipeline: `run_pipeline.sh` + stages `01..06` (mesh unpack → modes → steady IC → assembly → run → post), `data/` (LFS mesh + modal zips), `templates/` (zipped myHisa transient and steady dictionaries). See `FDM/README.md` |
 
 ## CONVENTIONS
 
