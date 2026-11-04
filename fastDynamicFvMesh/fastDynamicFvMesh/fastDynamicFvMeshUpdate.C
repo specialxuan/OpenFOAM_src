@@ -982,14 +982,24 @@ void fastDynamicFvMesh::writeUpdateOutputs(const label currentTimeIndex)
     // Persist restart modal states in a dedicated channel under
     // constant/fsiRestart to avoid mixing restart metadata with reconstructed
     // field time directories.
-    if (Pstream::master() && this->time().writeTime() &&
-        currentTimeIndex != lastGlobalWriteTimeIndex_)
+    if (!Pstream::master() || !this->time().writeTime())
+    {
+        return;
+    }
+
+    // update() is normally called once per PIMPLE/FSI outer iteration, and
+    // time().writeTime() stays true for the whole write time step.  Refresh
+    // the compact modal store on every call so the last call leaves the final
+    // state of the step.  Writing only on the first call would checkpoint the
+    // start-of-step state while the field directories contain end-of-step
+    // fields, which makes a restart numerically inconsistent.
+    writeRestartStateStore();
+
+    if (currentTimeIndex != lastGlobalWriteTimeIndex_)
     {
         lastGlobalWriteTimeIndex_ = currentTimeIndex;
 
         writeTimingReport();
-
-        writeRestartStateStore();
         Info << "Wrote restart modal state files to " << restartStateInstance()
              << " at t=" << this->time().timeName() << endl;
 

@@ -223,6 +223,51 @@ bool fastDynamicFvMesh::readRestartStateStore()
     const fileName restartDir =
         this->time().globalPath() / restartStateInstance();
 
+    // The mode count is part of the restart contract: a checkpoint written
+    // with K_old modes cannot be continued with a different K, because the
+    // mesh points already contain K_old modes of deformation.  Legacy stores
+    // (before nActiveModes existed) always had K_old = N available modes.
+    auto checkRestartActiveModes = [&](const fileName& dir, const char* source)
+    {
+        scalarField storedActive;
+        const bool gotStoredActive =
+            readRestartList<scalar>(dir/"nActiveModes", storedActive);
+
+        label storedK = nAvailableModes_;
+
+        if (gotStoredActive)
+        {
+            if (storedActive.size() != 1)
+            {
+                FatalErrorInFunction
+                    << "Malformed nActiveModes record in " << dir
+                    << " (" << source << "): expected one value, found "
+                    << storedActive.size() << exit(FatalError);
+            }
+
+            storedK = label(storedActive[0]);
+        }
+
+        if (storedK < 1 || storedK > nAvailableModes_)
+        {
+            FatalErrorInFunction
+                << "Invalid stored nActiveModes=" << storedK << " in " << dir
+                << " (" << source << "); the mode set provides "
+                << nAvailableModes_ << " available modes." << exit(FatalError);
+        }
+
+        if (storedK != nMode_)
+        {
+            FatalErrorInFunction
+                << "Cannot change nActiveModes across restart: checkpoint was "
+                << "written with " << storedK << " active modes, but this run "
+                << "requests " << nMode_ << " (available modes: "
+                << nAvailableModes_ << ")." << nl
+                << "Restart from t=0, or use a checkpoint with the same "
+                << "nActiveModes." << exit(FatalError);
+        }
+    };
+
     bool loadedAny = false;
 
     if (Pstream::master())
@@ -250,6 +295,11 @@ bool fastDynamicFvMesh::readRestartStateStore()
         loadedAny =
             gotModeForce || gotModeState
          || gotAppliedModeDisp || gotAppliedModeForce;
+
+        if (loadedAny)
+        {
+            checkRestartActiveModes(restartDir, "restart store");
+        }
     }
 
     label loadedAnyI = (loadedAny ? 1 : 0);
@@ -293,6 +343,11 @@ bool fastDynamicFvMesh::readRestartStateStore()
         loadedAny =
             gotModeForce || gotModeState
          || gotAppliedModeDisp || gotAppliedModeForce;
+
+        if (loadedAny)
+        {
+            checkRestartActiveModes(legacyDir, "legacy time-directory store");
+        }
     }
 
     loadedAnyI = (loadedAny ? 1 : 0);
@@ -377,6 +432,15 @@ void fastDynamicFvMesh::writeRestartStateStore() const
     writeGlobalField("modeForce", modeForce_, "scalarField");
     writeGlobalField("appliedModeDisp", appliedModeDisp_, "scalarField");
     writeGlobalField("appliedModeForce", appliedModeForce_, "scalarField");
+
+    // Record the active mode count so a restart cannot silently change K.
+    // Stored as a one-entry scalarField to reuse the restart list reader.
+    writeGlobalField
+    (
+        "nActiveModes",
+        scalarField(1, scalar(nMode_)),
+        "scalarField"
+    );
 }
 
 // * * * * * * * * * * * * * * * * Destructor  * * * * * * * * * * * * * * * //
@@ -503,6 +567,12 @@ void fastDynamicFvMesh::readControls()
     {
         fdmDict.lookup("modalDamp") >> modeDamp_;
     }
+
+    // Number of modes to superpose (first K of the N available modes).  The
+    // upper bound is validated in readModeFiles(), because N is only known
+    // after reading mode/FluidNodeCoor.csv.  -1 means "all available modes".
+    nActiveModes_ = -1;
+    fdmDict.readIfPresent("nActiveModes", nActiveModes_);
 
     // Prescribed modal motion (forced-oscillation / GAF testing).  All keys
     // are optional and default to "off", so existing cases are unaffected.
@@ -976,12 +1046,12 @@ void fastDynamicFvMesh::readModeFiles(const fileName& modeDir,
     }
     else
     {
-        scalar dummy, nNode, nMode;
+        scalar dummy, nNode, nModeHeader;
         string line;
         label lineNo = 0;
         if (!readNextCsvDataLine(file, line, lineNo) ||
-            !parseCsvValues(line, dummy, nNode, nMode) || nNode <= 0 ||
-            nMode <= 0)
+            !parseCsvValues(line, dummy, nNode, nModeHeader) || nNode <= 0 ||
+            nModeHeader <= 0)
         {
             FatalErrorInFunction
                 << "Invalid FluidNodeCoor.csv header in " << coorPath
@@ -991,10 +1061,51 @@ void fastDynamicFvMesh::readModeFiles(const fileName& modeDir,
         }
 
         nCsvNodes = label(nNode);
-        nMode_ = label(nMode);
+        nAvailableModes_ = label(nModeHeader);
 
-        Info << "  Found " << nCsvNodes << " nodes and " << nMode_
-             << " modes in CSV." << endl;
+        // Resolve the requested active mode count.  The header gives the
+        // number of available mode files (N); dynamicMeshDict may cap the
+        // superposition to the first K modes.  A missing/invalid request is
+        // handled here because nMode_ is not known in readControls().
+        if (nActiveModes_ < 0)
+        {
+            nActiveModes_ = nAvailableModes_;
+        }
+
+        if (nActiveModes_ < 1 || nActiveModes_ > nAvailableModes_)
+        {
+            FatalErrorInFunction
+                << "Entry 'nActiveModes' is " << nActiveModes_
+                << ", but " << coorPath << " provides "
+                << nAvailableModes_ << " available modes." << nl
+                << "Set 1 <= nActiveModes <= " << nAvailableModes_
+                << " (or omit it to superpose all available modes)."
+                << exit(FatalError);
+        }
+
+        nMode_ = nActiveModes_;
+
+        Info << "  Found " << nCsvNodes << " nodes and " << nAvailableModes_
+             << " available modes in CSV; superposing the first " << nMode_
+             << " mode(s)." << endl;
+
+        // Keep the FluidNodeCoor header authoritative: all N mode files must
+        // exist, even though only the first K are read below.
+        for (label m = 0; m < nAvailableModes_; ++m)
+        {
+            const fileName shapePath =
+                modeDir / ("FluidNodeDisp" + std::to_string(m + 1) + ".csv");
+
+            if (!isFile(shapePath))
+            {
+                FatalErrorInFunction
+                    << "Missing mode shape file " << shapePath << nl
+                    << "FluidNodeCoor.csv declares " << nAvailableModes_
+                    << " available modes, so FluidNodeDisp1.."
+                    << nAvailableModes_ << ".csv must all exist."
+                    << exit(FatalError);
+            }
+        }
 
         modeFreq_.setSize(nMode_); // Resize here on master
         csvPoints.setSize(nCsvNodes);
@@ -1058,15 +1169,19 @@ void fastDynamicFvMesh::readModeFiles(const fileName& modeDir,
 
             if ((ss >> fileNodeCount) && (ss >> fileModeCount))
             {
-                if (label(fileNodeCount) != nCsvNodes ||
-                    label(fileModeCount) != nMode_)
+                if
+                (
+                    label(fileNodeCount) != nCsvNodes
+                 || label(fileModeCount) < nMode_
+                )
                 {
                     FatalErrorInFunction
                         << "Mode file " << shapePath << " reports "
                         << label(fileNodeCount) << " nodes and "
                         << label(fileModeCount)
                         << " modes, but FluidNodeCoor.csv reports " << nCsvNodes
-                        << " nodes and " << nMode_ << " modes."
+                        << " nodes and " << nAvailableModes_
+                        << " available modes (nActiveModes=" << nMode_ << ")."
                         << exit(FatalError);
                 }
             }
@@ -1301,7 +1416,6 @@ label fastDynamicFvMesh::readRefinedPointModeShapes()
             return 0;
         }
 
-        const label nBaseLocal = std::stol(tok[1]);
         const std::string fileTime = tok[3];
         const label fileNMode = std::stol(tok[5]);
         const label nRefined = std::stol(tok[7]);
@@ -1382,36 +1496,15 @@ label fastDynamicFvMesh::readRefinedPointModeShapes()
         recordedRefinedPointIDs_.setSize(nLoaded);
         recordedRefinedModeShapes_.setSize(nLoaded);
 
-        label nLevel = 0;
-        forAll(pointLevel, pI)
-        {
-            if (pointLevel[pI] > 0)
-            {
-                ++nLevel;
-            }
-        }
-
-        const label globalLoaded = returnReduce(nLoaded, sumOp<label>());
-        const label globalLevel = returnReduce(nLevel, sumOp<label>());
-        const label globalBase = returnReduce(nBaseLocal, sumOp<label>());
-        const label globalPoints = returnReduce(nPoints, sumOp<label>());
-
+        // Do not reduce here: this reader may be absent on a rank whose
+        // per-processor checkpoint file is missing.  A stray collective would
+        // deadlock the ranks that did read a file.  The global restored count
+        // is reduced later in readModeShapes() after every rank has called
+        // applyRecordedRefinedModeShapes().
         if (Pstream::master())
         {
             Info << "Read AMR refined-point mode shapes from " << shapesFile
-                 << nl
-                 << "    recorded points : " << globalLoaded
-                 << "   refined points : " << globalLevel
-                 << "   base points : " << globalBase
-                 << "   mesh points : " << globalPoints << endl;
-        }
-
-        if (globalLoaded < globalLevel && Pstream::master())
-        {
-            WarningInFunction
-                << (globalLevel - globalLoaded)
-                << " refinement-added points were not recorded; they will be "
-                   "rebuilt by nearest-corner interpolation." << endl;
+                 << " (this rank: recorded " << nLoaded << " points)" << endl;
         }
 
         return nLoaded;
@@ -1611,6 +1704,18 @@ bool fastDynamicFvMesh::readFsiReferenceCache()
              || nMode != nMode_
             )
             {
+                if (this->time().value() > SMALL && nMode != nMode_)
+                {
+                    FatalErrorInFunction
+                        << "FSI reference projection " << projFile
+                        << " was written with " << nMode
+                        << " modes, but this restart requests " << nMode_
+                        << " active modes." << nl
+                        << "Changing nActiveModes across restart is not "
+                        << "supported; restart from t=0 or use a checkpoint "
+                        << "with the same mode count." << exit(FatalError);
+                }
+
                 WarningInFunction
                     << "FSI reference projection " << projFile
                     << " is inconsistent with this case (patches "
@@ -1632,7 +1737,9 @@ bool fastDynamicFvMesh::readFsiReferenceCache()
 
             pis >> name >> nRef;
 
-            if (name != std::string(fsiPatches_[i]) || nRef <= 0)
+            // nRef == 0 is valid on a rank that owns no faces of this patch.
+            // The current-face map below still validates the face count.
+            if (name != std::string(fsiPatches_[i]) || nRef < 0)
             {
                 WarningInFunction
                     << "Malformed FSI reference projection " << projFile
@@ -1791,31 +1898,43 @@ bool fastDynamicFvMesh::readFsiReferenceCache()
                 }
             }
 
-            const label globalOneToMany =
-                returnReduce(nOneToMany, sumOp<label>());
-
-            if (Pstream::master() && globalOneToMany > 0)
+            // No collective here: a rank may legitimately own zero faces and
+            // return/continue independently.  The global counts are not needed
+            // for the cache itself.
+            if (Pstream::master() && nOneToMany > 0)
             {
                 Info << "Restored FSI reference mapping on patch '"
                      << fsiPatches_[i] << "': " << nFaces << " current faces, "
-                     << globalOneToMany << " one-to-many." << endl;
+                     << nOneToMany << " one-to-many." << endl;
             }
         }
 
         referenceFsiBuilt_ = true;
 
+        // buildForceProjectionCaches() treats an empty aggregation buffer as
+        // an uninitialized reference set and would discard the restored cache.
+        // Size the reused buffers to the restored reference faces here.
+        aggregatedPressureRefs_.setSize(fsiPatches_.size());
+        aggregatedShearRefs_.setSize(fsiPatches_.size());
+
         label localRefTotal = 0;
         forAll(referenceFsiFaceAreas_, i)
         {
-            localRefTotal += referenceFsiFaceAreas_[i].size();
-        }
-        const label nRefTotal = returnReduce(localRefTotal, sumOp<label>());
+            const label nRef = referenceFsiFaceAreas_[i].size();
+            localRefTotal += nRef;
 
+            aggregatedPressureRefs_[i].setSize(nRef, vector::zero);
+            aggregatedShearRefs_[i].setSize(nRef, vector::zero);
+        }
+
+        // Master may own zero FSI faces; report the local count only to keep
+        // this per-rank reader free of collectives (missing/malformed files on
+        // one rank must not deadlock the others).
         if (Pstream::master())
         {
             Info << "Restored FSI reference-face cache from " << projFile
                  << " + " << mapFile << nl
-                 << "    reference faces : " << nRefTotal
+                 << "    local reference faces : " << localRefTotal
                  << "   (projection is invariant; the current-face mapping is "
                     "from this checkpoint)" << endl;
         }

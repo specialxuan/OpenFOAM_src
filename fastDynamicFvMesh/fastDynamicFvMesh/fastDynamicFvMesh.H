@@ -41,10 +41,16 @@ class fastDynamicFvMesh : public dynamicRefineFvMesh
 
     //- ===== Core fast-dynamic-mesh modal state and coupling controls =====
 
-    //- Number of modes
+    //- Number of modes actually superposed (active modes, K)
     label nMode_;
 
-    //- Modal frequencies
+    //- Number of mode files available in mode/ (FluidNodeCoor.csv, N)
+    label nAvailableModes_;
+
+    //- Requested active mode count from dynamicMeshDict; -1 means default (N)
+    label nActiveModes_;
+
+    //- Modal frequencies (active modes only)
     scalarField modeFreq_;
 
     //- Modal mass

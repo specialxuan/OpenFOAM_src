@@ -207,15 +207,18 @@ void readSixComponentStructuralModeFiles(
 
         if ((hLine >> fileNodeCount) && (hLine >> fileModeCount))
         {
-            if (label(fileNodeCount) != nStructNodes ||
-                label(fileModeCount) != nMode)
+            if
+            (
+                label(fileNodeCount) != nStructNodes
+             || label(fileModeCount) < nMode
+            )
             {
                 FatalErrorInFunction
                     << "Structural " << quantityName << " file "
                     << quantityPath << " reports " << label(fileNodeCount)
                     << " nodes and " << label(fileModeCount) << " modes, but "
                     << referenceFileName << " reports " << nStructNodes
-                    << " nodes and " << nMode << " modes."
+                    << " nodes and at least " << nMode << " modes are needed."
                     << exit(FatalError);
             }
         }
@@ -404,14 +407,20 @@ void fastDynamicFvMesh::readStructuralModeFiles(const fileName& modeDir,
     }
 
     nStructNodes = label(nNode);
-    nStructModes = label(nMode);
+    const label nAvailableStructModes = label(nMode);
 
-    if (nStructModes != nMode_)
+    if (nAvailableStructModes < nMode_)
     {
-        FatalErrorInFunction << "Structural mode count (" << nStructModes
-                             << ") does not match fluid mode count (" << nMode_
-                             << ")." << exit(FatalError);
+        FatalErrorInFunction
+            << "Structural files provide " << nAvailableStructModes
+            << " modes, but nActiveModes is " << nMode_ << "." << nl
+            << "The structural set must contain at least the first "
+            << nMode_ << " fluid modes." << exit(FatalError);
     }
+
+    // Only the active structural modes are loaded; extra available modes are
+    // ignored just like extra FluidNodeDisp files.
+    nStructModes = nMode_;
 
     structPoints.setSize(nStructNodes);
     for (label i = 0; i < nStructNodes; ++i)
@@ -476,16 +485,20 @@ void fastDynamicFvMesh::readStructuralModeFiles(const fileName& modeDir,
 
         if ((hShape >> fileNodeCount) && (hShape >> fileModeCount))
         {
-            if (label(fileNodeCount) != nStructNodes ||
-                label(fileModeCount) != nStructModes)
+            if
+            (
+                label(fileNodeCount) != nStructNodes
+             || label(fileModeCount) < nStructModes
+            )
             {
                 FatalErrorInFunction
                     << "Structural mode file " << shapePath << " reports "
                     << label(fileNodeCount) << " nodes and "
                     << label(fileModeCount) << " modes, but "
-                    << structNodeCoorFile_ << " reports " << nStructNodes
-                    << " nodes and " << nStructModes << " modes."
-                    << exit(FatalError);
+                    << structNodeCoorFile_ << " provides " << nStructNodes
+                    << " nodes and " << nAvailableStructModes
+                    << " available modes (nActiveModes=" << nStructModes
+                    << ")." << exit(FatalError);
             }
         }
 

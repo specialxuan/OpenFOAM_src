@@ -71,7 +71,9 @@ void fastDynamicFvMesh::readModeShapes()
 
     readModeFiles(modeDir, csvPoints, csvShapes, nCsvNodes);
 
-    // Broadcast sizes
+    // Broadcast sizes and the resolved active count
+    Pstream::broadcast(nAvailableModes_);
+    Pstream::broadcast(nActiveModes_);
     Pstream::broadcast(nMode_);
     Pstream::broadcast(nCsvNodes);
 
@@ -79,26 +81,33 @@ void fastDynamicFvMesh::readModeShapes()
     if (!Pstream::master())
         modeFreq_.setSize(nMode_); // Only slaves need resize now
 
+    // modalMass/modalDamp are defined for all AVAILABLE modes (N), even if
+    // only the first K are superposed.  This keeps old dictionaries valid and
+    // makes the inactive entries explicit.
     if (modeMass_.size() == 0)
     {
-        modeMass_.setSize(nMode_, 1.0);
+        modeMass_.setSize(nAvailableModes_, 1.0);
     }
-    else if (modeMass_.size() != nMode_)
+    else if (modeMass_.size() != nAvailableModes_)
     {
         FatalErrorInFunction << "modalMass size (" << modeMass_.size()
-                             << ") does not match number of modes (" << nMode_
-                             << ")" << exit(FatalError);
+                             << ") does not match the number of available modes "
+                             << "(" << nAvailableModes_ << "); it must list all "
+                             << "available modes, not just nActiveModes ("
+                             << nMode_ << ")." << exit(FatalError);
     }
 
     if (modeDamp_.size() == 0)
     {
-        modeDamp_.setSize(nMode_, 0.0);
+        modeDamp_.setSize(nAvailableModes_, 0.0);
     }
-    else if (modeDamp_.size() != nMode_)
+    else if (modeDamp_.size() != nAvailableModes_)
     {
         FatalErrorInFunction << "modalDamp size (" << modeDamp_.size()
-                             << ") does not match number of modes (" << nMode_
-                             << ")" << exit(FatalError);
+                             << ") does not match the number of available modes "
+                             << "(" << nAvailableModes_ << "); it must list all "
+                             << "available modes, not just nActiveModes ("
+                             << nMode_ << ")." << exit(FatalError);
     }
 
     if (nMode_ <= 0)
@@ -129,6 +138,12 @@ void fastDynamicFvMesh::readModeShapes()
     csvShapes.setSize(nMode_);
 
     forAll(csvShapes, m) Pstream::broadcast(csvShapes[m]);
+
+    // Load per-checkpoint AMR records and the FSI reference-face cache now
+    // that the active mode count is known.  Both readers need nMode_, so they
+    // must run after readModeFiles() and before mapping/buildForceProjectionCaches().
+    readRefinedPointModeShapes();
+    readFsiReferenceCache();
 
     // Map to local mesh points.
     // Default to current mesh points. This is required on latestTime restarts
@@ -904,17 +919,16 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
             }
         }
 
-        label globalMappedCurrentFaces = mappedCurrentFaces;
-        label globalOneToManyFaces = oneToManyFaces;
-        reduce(globalMappedCurrentFaces, sumOp<label>());
-        reduce(globalOneToManyFaces, sumOp<label>());
-
+        // Keep this diagnostic free of collectives: a rank can legitimately
+        // take the !mpmPtr / !referenceFsiBuilt_ branch and `continue` before
+        // reaching this point.  A reduce here would deadlock the ranks that
+        // did enter the topology-mapping branch.
         if (Pstream::master())
         {
             Info << "Topology reference mapping on patch '" << fsiPatches_[i]
-                 << "': mapped " << globalMappedCurrentFaces
-                 << " current faces, one-to-many faces=" << globalOneToManyFaces
-                 << "." << endl;
+                 << "': mapped " << mappedCurrentFaces
+                 << " current faces (this rank), one-to-many faces="
+                 << oneToManyFaces << "." << endl;
         }
     }
 
@@ -1251,6 +1265,17 @@ label fastDynamicFvMesh::applyRecordedRefinedModeShapes(boolList& mappedMask)
 
     if (recordedRefinedNMode_ != nMode_)
     {
+        if (this->time().value() > SMALL)
+        {
+            FatalErrorInFunction
+                << "Recorded AMR refined-point mode shapes hold "
+                << recordedRefinedNMode_ << " modes, but this restart requests "
+                << nMode_ << " active modes." << nl
+                << "Changing nActiveModes across restart is not supported; "
+                << "restart from t=0 or use a checkpoint with the same mode "
+                << "count." << exit(FatalError);
+        }
+
         WarningInFunction
             << "Recorded AMR refined-point mode shapes hold "
             << recordedRefinedNMode_ << " modes but this run uses " << nMode_

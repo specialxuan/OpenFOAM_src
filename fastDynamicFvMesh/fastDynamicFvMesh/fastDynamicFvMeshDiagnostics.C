@@ -61,6 +61,16 @@ void fastDynamicFvMesh::writeDiagnostics()
             diagStream_.clear();
             return;
         }
+
+        // Restart/continuation: an existing non-empty diagnostics file already
+        // has its header.  The header flag is in-memory only, so without this
+        // check every restart appends a second header row.
+        std::ifstream existing(diagnosticsPath.c_str(), std::ios::ate);
+
+        if (existing.good() && existing.tellg() > 0)
+        {
+            diagnosticsHeaderWritten_ = true;
+        }
     }
 
     std::ofstream& diagFile = *diagStream_;

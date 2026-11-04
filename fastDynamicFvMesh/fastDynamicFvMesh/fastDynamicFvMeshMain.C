@@ -97,6 +97,7 @@ namespace
 //    intentionally brute-force for correctness.
 fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
     : dynamicRefineFvMesh(io, eagerMeshInit(io)), nMode_(0),
+      nAvailableModes_(0), nActiveModes_(-1),
       // Initialize restart containers; dedicated restart I/O is handled
       // explicitly in readRestartStateStore()/writeRestartStateStore().
       modeForce_(
@@ -211,8 +212,8 @@ bool fastDynamicFvMesh::init(const bool doInit)
     }
 
     readControls();
-    readRefinedPointModeShapes();
-    readFsiReferenceCache();
+    // readModeShapes() reads the mode header/files first, resolves the active
+    // mode count, and only then loads the AMR records and FSI reference cache.
     readModeShapes();
 
     const bool restartStateRead = readRestartStateStore();

@@ -26,6 +26,7 @@ Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radiu
 | Task | Location | Notes |
 |---|---|---|
 | Runtime keys/defaults | `fastDynamicFvMeshIO.C`, `README.md` | Preserve old dictionaries |
+| Active vs available modes | `fastDynamicFvMeshIO.C` (`readModeFiles`), `fastDynamicFvMeshMain.C` | `nMode_` = active K; `nAvailableModes_` = `FluidNodeCoor.csv` N; `nActiveModes` key defaults to N; `modalMass/modalDamp` still N |
 | Startup/restart state | `fastDynamicFvMeshIO.C`, `constant/fsiRestart` docs | Fresh `t=0` must not load stale restart state |
 | AMR remapping | `fastDynamicFvMeshModeMapping.C`, `fastDynamicFvMeshAMR.C` | Topology lineage only; no geometric fallback for AMR points |
 | Force projection | `fastDynamicFvMeshForces.C`, `buildForceProjectionCaches()` | Reference-face aggregation matters under refine/unrefine |

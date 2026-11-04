@@ -15,6 +15,20 @@ At each mesh `update()`:
 
 ## Key runtime behavior
 
+- Mode superposition count:
+  - `mode/FluidNodeCoor.csv` still declares the number of **available** modes
+    `N` (its first data line is `dummy, nNodes, nMode`), and
+    `FluidNodeDisp1..N.csv` must all exist.
+  - `nActiveModes` (optional, default `N`) superposes only the first `K` modes.
+    It must satisfy `1 <= K <= N`; `K > N` aborts before any mode file is read.
+  - `modalMass` and `modalDamp` must still contain `N` entries; only the first
+    `K` are used. This keeps old dictionaries valid.
+  - All runtime arrays, diagnostics, `StructDisp/Stress/Strain.csv`,
+    `refinedPointModeShapes`, `fsiReferenceProjection` and the restart store are
+    sized to `K`.
+  - `K` is part of the restart contract: it is written to
+    `constant/fsiRestart/nActiveModes` and a restart with a different `K`
+    aborts. Legacy stores without that file are treated as `K = N`.
 - Force-based coupling in mesh update path:
   - the raw modal fluid force is turned into the applied force by the configured
     `couplingAcceleration` (`constant` default, or `aitken`/`IQN-ILS`/`IQN-IMVJ`),
@@ -31,11 +45,15 @@ At each mesh `update()`:
     integrated/implicit coupling it only vetoes PIMPLE's residual-based early
     stop and cannot end the loop on its own.
 - Restart support:
-  - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`) for non-zero-time continuation/restart only. The store is written **globally** (case root) while a relative `IOobject` instance resolves against `time().path()` -- the **processor** directory in a parallel run -- so the read is performed **on the master** from `time().globalPath()` and the (nMode-sized) fields are then broadcast to every rank; the legacy time-directory fallback uses the same master-read/broadcast pattern. The store is hand-written and does not honour `writePrecision`, so it is now written at 16 significant digits,
+  - reads persisted modal fields when present (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`) for non-zero-time continuation/restart only. The store is written **globally** (case root) while a relative `IOobject` instance resolves against `time().path()` -- the **processor** directory in a parallel run -- so the read is performed **on the master** from `time().globalPath()` and the (K-sized) fields are then broadcast to every rank; the legacy time-directory fallback uses the same master-read/broadcast pattern. The store is hand-written and does not honour `writePrecision`, so it is now written at 16 significant digits,
   - startup modal mapping matches the **level-0** points against the **undeformed** `constant/polyMesh/points` reference, including on a refined startup mesh where the point counts differ (`hexRef8` keeps the original points first, so base point `pI` corresponds to current level-0 point `pI`). The current mesh points have already been displaced by the modal motion (`<time>/polyMesh/points`) and can exceed `mappingTolerance` even for a short restart interval, which previously left level-0 points unmapped and aborted the run,
   - the mode shapes of AMR-generated points are persisted with the mesh as `<time>/polyMesh/refinedPointModeShapes` (one file per processor, written at full precision) and restored verbatim on restart, so the rebuilt `modeShapes_` reproduce the checkpointed run exactly instead of being re-derived by a nearest-corner search. This is required because `mapPolyMesh::pointsFromPointsMap()` is empty for `hexRef8` refinement: the in-run mapping of refinement-added points is itself a 2/4/8 corner interpolation whose corner selection cannot be reproduced from the mesh alone. Points with no recorded value still fall back to that interpolation,
   - with `meshRefinementSupport=true`, startup mapping now synchronizes mapped modal values across shared points in parallel before refinement interpolation, preventing processor-boundary geometry mismatch on continuation runs,
-  - writes global modal state files at output times.
+  - writes global modal state files at output times. At a write time the compact
+    store is refreshed on every `update()` call, so the final PIMPLE/FSI
+    iteration leaves the end-of-step modal state (the same state as the
+    written fields); timing and modal-extension snapshots are still emitted
+    once per write time.
 - Performance-oriented implementation:
   - precomputed face-mode projection cache,
   - cached FSI patch IDs/references,
@@ -293,6 +311,11 @@ dynamicFvMesh fastDynamicFvMesh;
 
 fastDynamicFvMeshCoeffs
 {
+    // Optional: superpose only the first K available modes (default: all N).
+    // Must be 1 <= nActiveModes <= N, where N is the third value in the
+    // FluidNodeCoor.csv header.  modalMass/modalDamp still list N entries.
+    // nActiveModes       10;
+
     theta              1.4;
     fsiPatches         ("FLUID_FLUID_STRUCTURE_INTERFACE");
 
@@ -378,8 +401,11 @@ dynamicRefineFvMeshCoeffs
 
 Required:
 
-- `FluidNodeCoor.csv`
-- `FluidNodeDisp1.csv ... FluidNodeDispN.csv`
+- `FluidNodeCoor.csv` — its first data line is `dummy, nNodes, nMode`; the third
+  value `N` is the number of **available** modes and all
+  `FluidNodeDisp1..N.csv` files must exist.
+- `FluidNodeDisp1.csv ... FluidNodeDispN.csv` — only the first
+  `nActiveModes` are read when the optional key is set.
 
 Optional:
 
@@ -389,6 +415,10 @@ Optional:
 - `StructNodeStress1.csv ... StructNodeStressN.csv` (required when `modalExtensionStressEnabled true`)
 - `StructNodeStrain1.csv ... StructNodeStrainN.csv` (required when `modalExtensionStrainEnabled true`)
 
+Structural mode/stress/strain files may provide only the first `K` modes or the
+full `N` modes; only the first `K` are read, and the available count must be at
+least `K`.
+
 CSV-style inputs accept commas or whitespace as separators. Structural force
 files may contain blank lines and `#` comments. Fatal parse errors include the
 file path and line number when available.
@@ -397,6 +427,10 @@ file path and line number when available.
 
 - `modal_diagnostics.csv` (only when `writeDiagnostics true`)
   - columns: `Time`, `Force_i`, `PressureForce_i`, `ShearForce_i`, `StructuralForce_i`, `Disp_i`, `Vel_i`, `Acc_i`, `AppliedDisp_i`, `StructuralScale_i`
+  - the `i` groups cover the active modes (`i = 1..nActiveModes`); with the
+    default (no `nActiveModes`) this is the full available set.
+  - on a restart/continuation the file is opened in append mode; if it is
+    already non-empty the header is not written again.
 - modal-extension snapshots written by master at each `writeTime()`, only when
   the matching switch is on (see the "模态扩展 (modal extension)" section):
   - `postProcessing/fastDynamicFvMesh/<time>/StructDisp.csv` (3 columns),
@@ -407,6 +441,7 @@ file path and line number when available.
   - `modeForce`
   - `appliedModeDisp`
   - `appliedModeForce`
+  - `nActiveModes` (active mode count; prevents changing `K` across restart)
 
 In parallel runs, restart modal state files are written by master to:
 
@@ -414,6 +449,12 @@ In parallel runs, restart modal state files are written by master to:
 - `constant/fsiRestart/modeForce`
 - `constant/fsiRestart/appliedModeDisp`
 - `constant/fsiRestart/appliedModeForce`
+- `constant/fsiRestart/nActiveModes`
+
+Legacy stores without `nActiveModes` are interpreted as having been written
+with all available modes active (`K = N`). A restart with a different `K` is
+rejected because the checkpoint mesh already contains the old modes'
+deformation.
 
 This keeps restart metadata out of root time directories and avoids AMR/unrefine
 `reconstructPar` readUpdate conflicts. On restart the master reads these files
@@ -502,6 +543,15 @@ this small case — the savings scale with FSI iteration count and patch size.
 
 ## Common failure checks
 
+- `Entry 'nActiveModes' is K, but ... provides N available modes`: set
+  `1 <= nActiveModes <= N`, or omit it to superpose all available modes.
+- `modalMass`/`modalDamp` size error: list **all N available modes**, even when
+  `nActiveModes < N`; only the first K entries are used.
+- `Cannot change nActiveModes across restart`: restart from `t=0`, or use a
+  checkpoint written with the same `nActiveModes`.
+- `Missing mode shape file ...`: `FluidNodeCoor.csv` declares N available
+  modes, so `FluidNodeDisp1..N.csv` must all exist even if only the first K are
+  superposed.
 - `Missing required entry 'fsiPatches'`: add `fsiPatches` in `fastDynamicFvMeshCoeffs`.
 - `couplingRelaxation` out of range: keep it in `(0, 1]`.
 - unknown `couplingAcceleration` token: use one of `constant | aitken | IQN-ILS | IQN-IMVJ`.
@@ -533,6 +583,28 @@ this small case — the savings scale with FSI iteration count and patch size.
 ## Commit-by-commit change log
 
 This section maps each repository commit to concrete code/document changes.
+
+### v6.7.0 — separate available and active mode counts (2026-11-03)
+
+- `FluidNodeCoor.csv` third value now explicitly means the number of available
+  modes `N`; all `FluidNodeDisp1..N.csv` files are still required.
+- Added `nActiveModes` in `fastDynamicFvMeshCoeffs` (default `N`, range
+  `1 <= K <= N`) to superpose only the first `K` modes.
+- Runtime arrays, diagnostics, modal-extension outputs, AMR refined-point
+  records, FSI reference projections and the restart store are now K-sized;
+  `modalMass`/`modalDamp` remain N-sized by contract.
+- Restart stores record `nActiveModes`; legacy stores without it are treated as
+  `K = N`. Changing K across restart is rejected.
+- `readRefinedPointModeShapes()` and `readFsiReferenceCache()` now run after the
+  active count is known, fixing the v6.6 reference-cache restore ordering bug.
+- AMR restart cache restore now handles ranks that own zero `fsiPatches` faces
+  (`nRef == 0` is valid), keeps the per-rank readers free of collectives, and
+  sizes the aggregation buffers so `buildForceProjectionCaches()` does not
+  discard and re-snapshot a restored reference set.
+- The restart store is refreshed on every `update()` during a write step, so
+  the checkpoint contains the end-of-step modal state rather than the
+  start-of-step state. `modal_diagnostics.csv` no longer appends a second
+  header when restarting into an existing non-empty file.
 
 ### `3524d57` — Alpha v1.0 (2026-03-16)
 
