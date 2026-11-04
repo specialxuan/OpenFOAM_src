@@ -70,11 +70,18 @@ At each mesh `update()`:
     `omega = 2*pi*prescribedFrequency` (or the mode's own `modeFreq_` when
     `prescribedFrequency <= 0`, the default),
   - `prescribedAmplitude` (list, modal-coordinate units) and `prescribedPhase`
-    (list, radians) default to all zeros, so a mode without an entry stays at
-    rest; entries beyond the list length are treated as zero,
-  - the modal force is still assembled every step, so the generalized
-    aerodynamic force of the prescribed motion can be read from
-    `modal_diagnostics.csv` (`Force_i` / `PressureForce_i` / `ShearForce_i`),
+    (list, radians) must have either `nActiveModes` (K) or
+    `nAvailableModes` (N) entries; an N-sized list is truncated to the first K,
+    and an omitted/empty list means zero. Any other length is fatal; entries
+    are no longer silently treated as zero,
+  - `maxDispChange` is ignored for prescribed motion: the mesh follows the
+    requested waveform exactly instead of clipping it,
+  - the first two `update()` calls are startup pseudo-steps (legacy
+    initialisation), so the prescribed motion starts on the third call,
+  - the modal force is still assembled every step. `Force_i` is the relaxed
+    applied force; use `PressureForce_i + ShearForce_i`, or the appended
+    `RawForce_i` column, for the unrelaxed fluid GAF. The structural
+    contribution remains separate in `StructuralForce_i`,
   - useful for measuring the unsteady GAF at fixed reduced frequency,
     independently of the structural model (frequencies, damping, mode count).
 - Optional structural forcing:
@@ -109,6 +116,12 @@ At each mesh `update()`:
   - if `dynamicRefineFvMeshCoeffs` exists while `meshRefinementSupport false`,
     a warning is printed because topology changes can invalidate modal-shape and
     FSI face caches,
+  - **v2412 `maxCells` caveat**: the base
+    `dynamicRefineFvMesh::selectRefineCells` can append all candidates when
+    their count reaches `(maxCells - N)/7`, bypassing the intended cap. Keep
+    the first refine event's candidate count below that budget (use
+    `amrLayerDiagnostics` / the indicator analysis tools); increasing
+    `maxCells` alone does not prevent a 7x blow-up,
   - `refinementMappingDiagnostics true` prints per-topology-change mode-shape
     mapping counts for AMR validation (default `false`),
   - optional gradient-based AMR indicator:
@@ -426,7 +439,9 @@ file path and line number when available.
 ## Outputs
 
 - `modal_diagnostics.csv` (only when `writeDiagnostics true`)
-  - columns: `Time`, `Force_i`, `PressureForce_i`, `ShearForce_i`, `StructuralForce_i`, `Disp_i`, `Vel_i`, `Acc_i`, `AppliedDisp_i`, `StructuralScale_i`
+  - columns: `Time`, `Force_i`, `PressureForce_i`, `ShearForce_i`, `StructuralForce_i`, `Disp_i`, `Vel_i`, `Acc_i`, `AppliedDisp_i`, `StructuralScale_i`, then the appended `RawForce_i`
+  - `Force_i` is the relaxed applied force; `RawForce_i = PressureForce_i + ShearForce_i` is the unrelaxed fluid force before structural loading. The appended column keeps all old column indices unchanged.
+  - on restart, an existing file with the same column layout is appended without a second header; an older/incompatible layout is renamed to `modal_diagnostics.csv.bak<time>` and a new file is started.
   - the `i` groups cover the active modes (`i = 1..nActiveModes`); with the
     default (no `nActiveModes`) this is the full available set.
   - on a restart/continuation the file is opened in append mode; if it is

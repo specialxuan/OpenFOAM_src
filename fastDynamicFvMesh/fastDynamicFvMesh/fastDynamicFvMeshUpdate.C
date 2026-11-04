@@ -929,8 +929,10 @@ void fastDynamicFvMesh::solveAndMoveMesh(const scalar dt)
         // Calculate increment
         scalar dDisp = targetDisp - appliedDisp0;
 
-        // Apply limiter
-        if (mag(dDisp) > maxDispChange_)
+        // Apply limiter.  Prescribed motion is a known, user-specified
+        // waveform; clipping it would silently change the amplitude that the
+        // GAF probe is supposed to impose, so the limiter is bypassed there.
+        if (!prescribedMotion_ && mag(dDisp) > maxDispChange_)
         {
             if (Pstream::master() && updateCount_ == 1 &&
                 m == 0) // Log once per step

@@ -55,6 +55,7 @@ Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radiu
 
 - Do not reintroduce a monolithic implementation file; the current split is intentional.
 - Do not use geometric nearest-neighbour fallback for AMR-generated points.
+- Do not treat AMR `maxCells` as a hard cap: v2412 base `selectRefineCells` can append all candidates at `(maxCells - N)/7`; check the first refine event's candidate budget.
 - Do not load restart state on fresh `t=0` starts.
 - Do not treat `refinementFaceMapTolerance` as active behavior.
 - Do not write modal restart files into root time directories for parallel runs.

@@ -12,6 +12,7 @@ Description
 
 #include "fastDynamicFvMesh.H"
 #include "Pstream.H"
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 
@@ -41,6 +42,10 @@ void fastDynamicFvMesh::writeDiagnostics()
         return;
     }
 
+    // Time + 10 groups per mode: Force, PressureForce, ShearForce,
+    // StructuralForce, Disp, Vel, Acc, AppliedDisp, StructuralScale, RawForce.
+    const label expectedColumns = 1 + 10*nMode_;
+
     if (!diagStream_.valid())
     {
         fileName diagnosticsPath = this->time().path() / "modal_diagnostics.csv";
@@ -49,6 +54,59 @@ void fastDynamicFvMesh::writeDiagnostics()
         {
             diagnosticsPath =
                 this->time().path().path() / "modal_diagnostics.csv";
+        }
+
+        // Restart/continuation: inspect the existing header.  A non-empty
+        // compatible file keeps its header; an old/incompatible layout is
+        // renamed so the new columns cannot be mixed into it.
+        bool hasExistingHeader = false;
+        label existingColumns = 0;
+
+        {
+            std::ifstream existing(diagnosticsPath.c_str());
+
+            if (existing.good())
+            {
+                std::string header;
+                if (std::getline(existing, header) && !header.empty())
+                {
+                    hasExistingHeader = true;
+                    existingColumns = 1;
+                    for (const char c : header)
+                    {
+                        if (c == ',')
+                        {
+                            ++existingColumns;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (hasExistingHeader && existingColumns != expectedColumns)
+        {
+            const fileName backup =
+                diagnosticsPath + ".bak" + this->time().timeName();
+
+            if (std::rename(diagnosticsPath.c_str(), backup.c_str()) != 0)
+            {
+                FatalErrorInFunction
+                    << "Cannot rename incompatible diagnostics file "
+                    << diagnosticsPath << " to " << backup << exit(FatalError);
+            }
+
+            if (Pstream::master())
+            {
+                WarningInFunction
+                    << "Existing " << diagnosticsPath << " has "
+                    << existingColumns << " columns, expected "
+                    << expectedColumns << "; renamed to " << backup
+                    << " and started a new file." << endl;
+            }
+        }
+        else if (hasExistingHeader)
+        {
+            diagnosticsHeaderWritten_ = true;
         }
 
         diagStream_.reset(new std::ofstream(diagnosticsPath.c_str(),
@@ -60,16 +118,6 @@ void fastDynamicFvMesh::writeDiagnostics()
                               << " for writing." << endl;
             diagStream_.clear();
             return;
-        }
-
-        // Restart/continuation: an existing non-empty diagnostics file already
-        // has its header.  The header flag is in-memory only, so without this
-        // check every restart appends a second header row.
-        std::ifstream existing(diagnosticsPath.c_str(), std::ios::ate);
-
-        if (existing.good() && existing.tellg() > 0)
-        {
-            diagnosticsHeaderWritten_ = true;
         }
     }
 
@@ -104,6 +152,14 @@ void fastDynamicFvMesh::writeDiagnostics()
             diagFile << ",Disp_" << (i + 1) << ",Vel_" << (i + 1) << ",Acc_"
                      << (i + 1) << ",AppliedDisp_" << (i + 1)
                      << ",StructuralScale_" << (i + 1);
+        }
+
+        // Appended at the end so existing fixed-column readers keep their
+        // original indices.  RawForce is the unrelaxed fluid load
+        // (pressure + shear), i.e. the correct signal for GAF post-processing.
+        for (label i = 0; i < nMode_; ++i)
+        {
+            diagFile << ",RawForce_" << (i + 1);
         }
 
         diagFile << "\n";
@@ -141,6 +197,11 @@ void fastDynamicFvMesh::writeDiagnostics()
         diagFile << "," << modeState_[i].x() << "," << modeState_[i].y() << ","
                  << modeState_[i].z() << "," << appliedModeDisp_[i] << ","
                  << structuralScale;
+    }
+
+    for (label i = 0; i < nMode_; ++i)
+    {
+        diagFile << "," << modePressureForce_[i] + modeShearForce_[i];
     }
 
     diagFile << "\n";

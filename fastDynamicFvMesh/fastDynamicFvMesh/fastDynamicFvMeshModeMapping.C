@@ -118,6 +118,59 @@ void fastDynamicFvMesh::readModeShapes()
             << "present and valid." << exit(FatalError);
     }
 
+    // Prescribed motion arrays follow the active mode count.  Accept either
+    // K entries (active) or N entries (available, truncated to the first K);
+    // an omitted/empty list means zero amplitude/phase.  Do this after K is
+    // known; readControls() runs before FluidNodeCoor.csv is read.
+    if (prescribedMotion_)
+    {
+        auto normalizePrescribed = [&](scalarList& values, const char* name)
+        {
+            if (values.size() == 0)
+            {
+                values.setSize(nMode_, 0.0);
+                return;
+            }
+
+            if (values.size() == nMode_)
+            {
+                return;
+            }
+
+            if (values.size() == nAvailableModes_)
+            {
+                values.setSize(nMode_);
+                return;
+            }
+
+            FatalErrorInFunction
+                << name << " size (" << values.size()
+                << ") must be nActiveModes (" << nMode_
+                << ") or nAvailableModes (" << nAvailableModes_ << ")."
+                << exit(FatalError);
+        };
+
+        normalizePrescribed(prescribedAmplitude_, "prescribedAmplitude");
+        normalizePrescribed(prescribedPhase_, "prescribedPhase");
+
+        if (Pstream::master())
+        {
+            Info << "Prescribed modal motion active (maxDispChange is ignored):"
+                 << endl;
+            for (label i = 0; i < nMode_; ++i)
+            {
+                const scalar f =
+                    (prescribedFrequency_ > 0)
+                  ? prescribedFrequency_
+                  : modeFreq_[i];
+                Info << "  mode " << i + 1
+                     << ": A=" << prescribedAmplitude_[i]
+                     << " phi=" << prescribedPhase_[i]
+                     << " f=" << f << " Hz" << endl;
+            }
+        }
+    }
+
     modeForce_.setSize(nMode_, 0.0);
     modePressureForce_.setSize(nMode_, 0.0);
     modeShearForce_.setSize(nMode_, 0.0);
