@@ -621,7 +621,7 @@ This section maps each repository commit to concrete code/document changes.
   start-of-step state. `modal_diagnostics.csv` no longer appends a second
   header when restarting into an existing non-empty file.
 
-### `3524d57` — Alpha v1.0 (2026-03-16)
+### `9fa1450` — Alpha v1.0 (2026-03-16)
 
 - Initial repository import.
 - Added core components:
@@ -629,7 +629,7 @@ This section maps each repository commit to concrete code/document changes.
   - `myPimpleFoam` and `myInterFoam` solver variants,
   - legacy reference code under `.oldcode/`.
 
-### `2743529` — Alpha v1.1 update myInterFoam myPimpleFoam (2026-03-16)
+### `603cc0d` — Alpha v1.1 update myInterFoam myPimpleFoam (2026-03-16)
 
 - Updated solver-side FSI loop wiring in:
   - `myInterFoam/myInterFoam.C`,
@@ -637,21 +637,21 @@ This section maps each repository commit to concrete code/document changes.
 - `myInterFoam` switched to dictionary default reads for `fsiCoupling`, `maxFsiIter`, `fsiTolerance`.
 - Integrated/implicit branch behavior was reshaped around explicit PIMPLE-loop control with forced mesh-motion path (`moveMeshOuterCorrectors` handling).
 
-### `1b67352` — v1.1.1 update documents (2026-03-16)
+### `77bca61` — v1.1.1 update documents (2026-03-16)
 
 - Documentation-only commit:
   - updated `fastDynamicFvMesh/README.md`,
   - updated `fastDynamicFvMesh/Doc/快速动网格程序手册.md`,
   - removed `fastDynamicFvMesh/SUMMARY.md`.
 
-### `ed79e23` — v1.2.0 add myRhoPimpleFoam (2026-03-17)
+### `e9776cd` — v1.2.0 add myRhoPimpleFoam (2026-03-17)
 
 - Added full `myRhoPimpleFoam` solver tree (compressible variant), including:
   - main solver (`myRhoPimpleFoam.C`),
   - equation/header set (`EEqn.H`, `UEqn.H`, `pEqn.H`, etc.),
   - build files and overset variant directory.
 
-### `dbe5395` — v1.2.1 update fastDynamicFvMesh (2026-03-19)
+### `9440388` — v1.2.1 update fastDynamicFvMesh (2026-03-19)
 
 - Major refactor in `fastDynamicFvMesh.C/.H`:
   - split file-reading flow by introducing `readModeFiles(...)`,
@@ -660,7 +660,7 @@ This section maps each repository commit to concrete code/document changes.
   - cleanup in `readControls`, `patchDensity`, `devRhoReff`, and force assembly path.
 - Goal of this commit was robustness/readability of mode-file loading and diagnostics control handling.
 
-### `f080be2` — v1.3.0 fix coupling relaxation bug (2026-03-25)
+### `60566fb` — v1.3.0 fix coupling relaxation bug (2026-03-25)
 
 - Updated `fastDynamicFvMesh` and `myPimpleFoam`:
   - added modal property handling in mesh library (`modalMass` support and consistency checks with mode count),
@@ -668,14 +668,14 @@ This section maps each repository commit to concrete code/document changes.
   - added per-time-step update counter behavior in mesh update flow,
   - integrated/implicit branch in `myPimpleFoam` gained explicit displacement-change convergence checks (`fsiTolerance`) and warning on non-convergence.
 
-### `ca7e7da` — v1.3.1 fix coupling relaxation bugs in myInterFoam and myRhoPimpleFoam (2026-03-25)
+### `700b34d` — v1.3.1 fix coupling relaxation bugs in myInterFoam and myRhoPimpleFoam (2026-03-25)
 
 - Ported the integrated/implicit convergence-loop fixes from `myPimpleFoam` into:
   - `myInterFoam/myInterFoam.C`,
   - `myRhoPimpleFoam/myRhoPimpleFoam.C`.
 - Added per-iteration displacement-change monitoring and non-convergence warnings in these solvers.
 
-### `fe4521c` — v1.3.2 relaxation logic changed to force-based (2026-03-26)
+### `cc592ae` — v1.3.2 relaxation logic changed to force-based (2026-03-26)
 
 - Core coupling change in `fastDynamicFvMesh`:
   - switched relaxation from displacement-side to force-side,
@@ -685,7 +685,7 @@ This section maps each repository commit to concrete code/document changes.
 - Solver updates (`myPimpleFoam`, `myInterFoam`, `myRhoPimpleFoam`):
   - integrated/implicit convergence check changed from displacement-difference threshold to `fsiResidual < fsiTolerance`.
 
-### `40fb9b3` — v1.4.0 add restart capability (2026-03-28)
+### `40c362b` — v1.4.0 add restart capability (2026-03-28)
 
 - Added restart persistence mechanics in `fastDynamicFvMesh`:
   - modal fields (`modeState`, `modeForce`, `appliedModeDisp`, `appliedModeForce`) migrated to `IOField` with `READ_IF_PRESENT/AUTO_WRITE`,
@@ -697,7 +697,7 @@ This section maps each repository commit to concrete code/document changes.
 - Added displacement-increment limiter and reduced noisy `Info` output.
 - Solver-side integrated/implicit control changed to a custom `fsiPimpleControl` (`criteriaSatisfied() = pimpleCriteria && fsiConverged`).
 
-### `0340bff` — v1.4.1 add time tracker (2026-03-28)
+### `13db5b4` — v1.4.1 add time tracker (2026-03-28)
 
 - Added optional runtime timing profiler in `fastDynamicFvMesh`:
   - new dictionary switch `trackTiming`,
@@ -705,7 +705,7 @@ This section maps each repository commit to concrete code/document changes.
   - `writeTimingReport()` output at write times:
     - `FSI timing [CPU s] at t=... step{...} cumulative{...}`.
 
-### `ee7826a` — v1.5.0 Efficiency improvement (2026-03-28)
+### `5ba737d` — v1.5.0 Efficiency improvement (2026-03-28)
 
 - Performance-focused refactor in `fastDynamicFvMesh.C/.H`:
   - added startup caches for force assembly:
@@ -720,14 +720,14 @@ This section maps each repository commit to concrete code/document changes.
   - `writeDiagnostics()` now uses in-memory header state (`diagnosticsHeaderWritten_`) instead of file existence check each call,
   - signature changed from `writeDiagnostics() const` to non-const for header-state update.
 
-### `b98cf9a` — v1.5.1 update documents (2026-03-28)
+### `7791d90` — v1.5.1 update documents (2026-03-28)
 
 - Documentation-focused refresh:
   - updated `fastDynamicFvMesh/README.md`,
   - updated `fastDynamicFvMesh/Doc/快速动网格程序手册.md`.
 - `.gitignore` was adjusted alongside the documentation update.
 
-### `e0b42f3` — v2.0.0 add structural force (2026-04-04)
+### `7435d73` — v2.0.0 add structural force (2026-04-04)
 
 - Added structural-force loading and projection path in `fastDynamicFvMesh`:
   - support for `StructForce*.csv` time-series inputs,
@@ -736,7 +736,7 @@ This section maps each repository commit to concrete code/document changes.
 - Added/extended runtime controls for structural forcing (`structuralForceEnabled`, `nStructuralForces`, `structuralForceFilePrefix`, `structuralTargetTolerance`, etc.).
 - Updated English/Chinese docs for new structural-force workflow and file format.
 
-### `3a5d974` — v3.0.0 add Adaptive Mesh Refinement (2026-04-08)
+### `f49e100` — v3.0.0 add Adaptive Mesh Refinement (2026-04-08)
 
 - Introduced runtime AMR integration in `fastDynamicFvMesh` on top of `dynamicRefineFvMesh`:
   - supports `dynamicRefineFvMeshCoeffs` driven refine/unrefine during `update()`,
@@ -744,7 +744,7 @@ This section maps each repository commit to concrete code/document changes.
 - Extended build wiring (`fastDynamicFvMesh/Make/options`) and updated docs/config guidance for AMR usage.
 - Updated `myInterFoam` integrated-coupling path to stay robust when topology updates change point count.
 
-### `8bf422a` — v3.1.0 refactor restart function & FSI convergence check (2026-04-08)
+### `586d987` — v3.1.0 refactor restart function & FSI convergence check (2026-04-08)
 
 - `fastDynamicFvMesh` restart persistence no longer writes modal state files into root time directories.
 - Restart state is written/read via `constant/fsiRestart/`, with legacy fallback to root-time files for compatibility.
@@ -752,14 +752,14 @@ This section maps each repository commit to concrete code/document changes.
   - `fsiConverged = (fsiResidual < fsiTolerance)`.
 - Displacement change is retained as diagnostic output only.
 
-### `0425961` — v3.1.1 fix AMR bugs (2026-04-10)
+### `37f1b60` — v3.1.1 fix AMR bugs (2026-04-10)
 
 - Fixed AMR robustness issues in `fastDynamicFvMesh`:
   - hardened refine/unrefine topology mapping for mode-shape continuity,
   - improved parallel AMR consistency in mapping/interpolation flow to avoid unstable behavior across ranks.
 - Updated English/Chinese docs to reflect AMR bug fixes and refined behavior notes.
 
-### `01b033a` — v3.1.2 add gradient-based refinement criteria and diagnostics (2026-04-15)
+### `4046676` — v3.1.2 add gradient-based refinement criteria and diagnostics (2026-04-15)
 
 - Added gradient-based AMR indicator controls:
   - `useGradIndicator`,
@@ -771,7 +771,7 @@ This section maps each repository commit to concrete code/document changes.
   - runtime reporting for size-floor candidate filtering.
 - Updated docs and compile database (`compile_commands.json`) with the new controls/workflow.
 
-### `9939057` — v3.2.0 split fastDynamicFvMesh (2026-04-15)
+### `a4ea880` — v3.2.0 split fastDynamicFvMesh (2026-04-15)
 
 - Refactored implementation layout by splitting the original monolithic source into:
   - `fastDynamicFvMeshMain.C`: construction, initialization, and the `update()` entry point,
@@ -791,7 +791,7 @@ This section maps each repository commit to concrete code/document changes.
   - `fastDynamicFvMesh/Doc/快速动网格程序手册.md`.
 - Follow-up maintainability refactor: decomposed `fastDynamicFvMesh::update()` into named internal stages in `fastDynamicFvMeshUpdate.C` while preserving the original call order and behavior.
 
-### `09d86c5` - add modal extension (structural displacement/stress/strain recovery) (2026-10-08)
+### `93d4df8` - add modal extension (structural displacement/stress/strain recovery) (2026-10-08)
 
 - Consolidated all structural code (force projection, mode/stress/strain
   readers, load-summary logging) into the new translation unit

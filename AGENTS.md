@@ -1,7 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-10-02 CST
-**Updated:** 2026-10-11 CST (HEAD `e4e729d`)
+**Updated:** 2026-10-11 CST (HEAD `60237d6`)
 **Branch:** master
 
 ## OVERVIEW
@@ -31,7 +31,7 @@ src/
 `-- AGENTS.md               # repository-wide rules
 ```
 
-`scripts/` was untracked in `effbecd` (v3.3.9) and is gitignored; the live copy now
+`scripts/` was untracked in `1308711` (v3.3.9) and is gitignored; the live copy now
 exists only outside git at `/root/Workspace/_Oldversion_/scripts/` (mesh/modal
 converters, staged pipelines).
 
