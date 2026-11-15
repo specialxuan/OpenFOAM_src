@@ -500,29 +500,6 @@ protected:
     //- Write modal restart state into dedicated restart store
     void writeRestartStateStore() const;
 
-    //- Read <time>/polyMesh/refinedPointModeShapes (per processor).  Returns
-    //  the number of recorded points loaded on this processor (0 when absent).
-    label readRefinedPointModeShapes();
-
-    //- Write <time>/polyMesh/refinedPointModeShapes (per processor)
-    bool writeRefinedPointModeShapes() const;
-
-    //- Restore the recorded mode shapes of AMR-generated points.  Returns the
-    //  number of points resolved on this processor.
-    label applyRecordedRefinedModeShapes(boolList& mappedMask);
-
-    //- Read the persisted FSI reference-face cache: the invariant projection
-    //  (constant/fsiReferenceProjection) plus the per-checkpoint current-face ->
-    //  reference-face map (<time>/polyMesh/fsiFaceReferenceMap).  Adopts them and
-    //  sets referenceFsiBuilt_ when consistent.  Returns true on success.
-    bool readFsiReferenceCache();
-
-    //- Write the invariant reference projection (once, when first built)
-    bool writeFsiReferenceProjection() const;
-
-    //- Write the current-face -> reference-face map (once per checkpoint)
-    bool writeFsiFaceReferenceMap() const;
-
     //- Disallow default bitwise copy construct
     FdmCore(const FdmCore&);
 
@@ -548,6 +525,18 @@ public:
 
     //- Per-point AMR refinement level (empty when no AMR engine is attached)
     virtual const labelList& amrPointLevel() const;
+
+    //- Hook: load optional AMR restart records before mode mapping
+    virtual void readAmrRestartRecords() {}
+
+    //- Hook: restore mode shapes recorded for AMR-generated points
+    virtual label applyRecordedAmrModeShapes(boolList& mappedMask)
+    {
+        return 0;
+    }
+
+    //- Hook: persist the invariant AMR reference-face projection
+    virtual void writeAmrReferenceProjection() {}
 
     //- Is this a new physical time step (AMR hook runs before it)?
     bool isNewTimeStep(const label currentTimeIndex) const;

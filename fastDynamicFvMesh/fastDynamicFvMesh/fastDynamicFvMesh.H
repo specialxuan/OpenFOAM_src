@@ -209,6 +209,38 @@ class fastDynamicFvMesh
     //- Hook override: AMR point levels from the OpenFOAM refinement engine
     virtual const labelList& amrPointLevel() const;
 
+    //- Hook override: load AMR restart side files
+    virtual void readAmrRestartRecords();
+
+    //- Hook override: restore recorded AMR point mode shapes
+    virtual label applyRecordedAmrModeShapes(boolList& mappedMask);
+
+    //- Hook override: write the invariant reference-face projection
+    virtual void writeAmrReferenceProjection();
+
+    //- Read <time>/polyMesh/refinedPointModeShapes (per processor).  Returns
+    //  the number of recorded points loaded on this processor (0 when absent).
+    label readRefinedPointModeShapes();
+
+    //- Write <time>/polyMesh/refinedPointModeShapes (per processor)
+    bool writeRefinedPointModeShapes() const;
+
+    //- Restore the recorded mode shapes of AMR-generated points.  Returns the
+    //  number of points resolved on this processor.
+    label applyRecordedRefinedModeShapes(boolList& mappedMask);
+
+    //- Read the persisted FSI reference-face cache: the invariant projection
+    //  (constant/fsiReferenceProjection) plus the per-checkpoint current-face ->
+    //  reference-face map (<time>/polyMesh/fsiFaceReferenceMap).  Adopts them and
+    //  sets referenceFsiBuilt_ when consistent.  Returns true on success.
+    bool readFsiReferenceCache();
+
+    //- Write the invariant reference projection (once, when first built)
+    bool writeFsiReferenceProjection() const;
+
+    //- Write the current-face -> reference-face map (once per checkpoint)
+    bool writeFsiFaceReferenceMap() const;
+
     //- Disallow default bitwise copy construct
     fastDynamicFvMesh(const fastDynamicFvMesh&);
 

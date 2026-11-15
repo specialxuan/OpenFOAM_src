@@ -195,8 +195,7 @@ void FdmCore::readModeShapes()
     // Load per-checkpoint AMR records and the FSI reference-face cache now
     // that the active mode count is known.  Both readers need nMode_, so they
     // must run after readModeFiles() and before mapping/buildForceProjectionCaches().
-    readRefinedPointModeShapes();
-    readFsiReferenceCache();
+    readAmrRestartRecords();
 
     // Map to local mesh points.
     // Default to current mesh points. This is required on latestTime restarts
@@ -421,7 +420,7 @@ void FdmCore::readModeShapes()
     {
         const label globalRecorded = returnReduce
         (
-            applyRecordedRefinedModeShapes(mappedMask),
+            applyRecordedAmrModeShapes(mappedMask),
             sumOp<label>()
         );
 
@@ -992,7 +991,7 @@ void FdmCore::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
         // The reference geometry and its mode projection are invariant for the
         // whole computation, so the projection is persisted once under
         // constant/ rather than with every checkpoint.
-        writeFsiReferenceProjection();
+        writeAmrReferenceProjection();
 
         if (Pstream::master())
         {
@@ -1303,77 +1302,5 @@ label FdmCore::interpolateModeShapesFromKnown(boolList& knownMask,
 
     return localInterpolated;
 }
-
-label FdmCore::applyRecordedRefinedModeShapes(boolList& mappedMask)
-{
-    if (recordedRefinedPointIDs_.size() == 0)
-    {
-        return 0;
-    }
-
-    if (modeShapes_.size() != nMode_)
-    {
-        return 0;
-    }
-
-    if (recordedRefinedNMode_ != nMode_)
-    {
-        if (fdmMesh_.time().value() > SMALL)
-        {
-            FatalErrorInFunction
-                << "Recorded AMR refined-point mode shapes hold "
-                << recordedRefinedNMode_ << " modes, but this restart requests "
-                << nMode_ << " active modes." << nl
-                << "Changing nActiveModes across restart is not supported; "
-                << "restart from t=0 or use a checkpoint with the same mode "
-                << "count." << exit(FatalError);
-        }
-
-        WarningInFunction
-            << "Recorded AMR refined-point mode shapes hold "
-            << recordedRefinedNMode_ << " modes but this run uses " << nMode_
-            << "; they will be ignored and those points rebuilt by "
-               "nearest-corner interpolation." << endl;
-
-        return 0;
-    }
-
-    label localApplied = 0;
-
-    forAll(recordedRefinedPointIDs_, recordI)
-    {
-        const label pointI = recordedRefinedPointIDs_[recordI];
-
-        if (pointI < 0 || pointI >= mappedMask.size())
-        {
-            continue;
-        }
-
-        // Never overwrite a point that was already resolved (level-0 points
-        // come from the CSV match above).
-        if (mappedMask[pointI])
-        {
-            continue;
-        }
-
-        const vectorField& shapes = recordedRefinedModeShapes_[recordI];
-
-        if (shapes.size() != nMode_)
-        {
-            continue;
-        }
-
-        for (label modeI = 0; modeI < nMode_; ++modeI)
-        {
-            modeShapes_[modeI][pointI] = shapes[modeI];
-        }
-
-        mappedMask[pointI] = true;
-        ++localApplied;
-    }
-
-    return localApplied;
-}
-
 
 } // End namespace Foam
