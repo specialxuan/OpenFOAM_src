@@ -325,7 +325,7 @@ void FdmCore::readModeShapes()
         if (pointLevel.size() != mappingPoints.size())
         {
             FatalErrorInFunction
-                << "meshCutter pointLevel size (" << pointLevel.size()
+                << "AMR pointLevel size (" << pointLevel.size()
                 << ") does not match mesh point count (" << mappingPoints.size()
                 << ")." << exit(FatalError);
         }

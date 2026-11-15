@@ -17,7 +17,7 @@ OpenFOAM v2412 user-code repository containing a modal-superposition dynamic mes
 
 ```text
 src/
-|-- fastDynamicFvMesh/      # dynamic mesh library, AMR/restart/force projection/modal extension, bilingual docs
+|-- fastDynamicFvMesh/      # FdmCore (no AMR) + fastDynamicFvMesh facade (AMR); two libs, bilingual docs
 |-- fsiCoupling/            # header-only FSI/PIMPLE convergence contract
 |-- myInterFoam/            # two-phase VOF FSI solver, overset variant, three-phase child
 |-- myPimpleFoam/           # incompressible FSI solver, overset and SRF variants
@@ -45,7 +45,7 @@ repo-wide rules.
 
 | Task                       | Location                                                                     | Notes                                                          |
 | -------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Dynamic mesh runtime       | `fastDynamicFvMesh/fastDynamicFvMesh/`                                       | `update()`, AMR, restart, force assembly, modal extension, diagnostics |
+| Dynamic mesh runtime       | `fastDynamicFvMesh/fastDynamicFvMesh/`                                       | `FdmCore` (no AMR) + `fastDynamicFvMesh` facade (AMR); restart, force assembly, modal extension, diagnostics |
 | Mesh library docs          | `fastDynamicFvMesh/README.md`, `fastDynamicFvMesh/Doc/快速动网格程序手册.md` | Must stay synced with library code                             |
 | Shared FSI controls        | `fsiCoupling/fsiCoupling.H`                                                  | `fsiCoupling`, `maxFsiIter`, `fsiTolerance`, `fsiDispTolerance`, `fsiDispConsecutiveIters`, `fsiResidual` |
 | Incompressible FSI solver  | `myPimpleFoam/`                                                              | Main solver plus overset and SRF variants                      |
@@ -70,11 +70,14 @@ Grep-verified central nodes:
 
 | Symbol/File                                             | Type     | Location                                                               | Role                                                           |
 | ------------------------------------------------------- | -------- | ---------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `fastDynamicFvMesh`                                     | class    | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMesh.H`              | `dynamicRefineFvMesh` subclass, modal state, AMR state, caches |
-| `fastDynamicFvMesh::update()`                           | method   | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshMain.C`          | Central polymorphic entry; invoked as `mesh.controlledUpdate()` from `pimpleLoopBody.H` (myPimpleFoam, myRhoPimpleFoam) and as `mesh.update()` from `myInterFoam/pimpleLoopBody.H` and `myHisa` `hisaModule.C` |
+| `FdmCore`                                               | class    | `fastDynamicFvMesh/fastDynamicFvMesh/fdmCore.H`                        | AMR-free FDM core: modal state, force projection, structural dynamics, restart; holds a mesh reference |
+| `fastDynamicFvMesh`                                     | class    | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMesh.H`              | FDM-AMR facade: inherits `FdmCore` + `dynamicRefineFvMesh`; keeps the historical runtime type name |
+| `fastDynamicFvMesh::update()`                           | method   | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshFacade.C`        | Central polymorphic entry: AMR topology hook then `FdmCore::updateFdm()`; invoked as `mesh.controlledUpdate()` from `pimpleLoopBody.H` (myPimpleFoam, myRhoPimpleFoam) and as `mesh.update()` from `myInterFoam/pimpleLoopBody.H` and `myHisa` `hisaModule.C` |
+| `FdmCore::updateFdm()`                                  | method   | `fastDynamicFvMesh/fastDynamicFvMesh/fdmCoreMain.C`                    | Modal force assembly, structural solve, mesh motion, outputs |
+| `libfdmCore` / `libfastDynamicFvMesh`                   | build    | `fastDynamicFvMesh/fastDynamicFvMesh/MakeCore/`, `Make/`               | Core must stay free of AMR symbols; facade links `-lfdmCore` |
 | `assembleAndRelaxModalForces()`                         | method   | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshUpdate.C`        | Force relaxation and FSI residual publication path             |
-| `readControls()`                                        | method   | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshIO.C`            | Runtime dictionary parsing and compatibility checks            |
-| `readModeShapes()` / `ensureModeShapesForCurrentMesh()` | methods  | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshModeMapping.C`   | Mode CSV mapping, AMR remap, shared-point sync                 |
+| `readControls()` / `readAmrControls()`                  | methods  | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshIO.C`, `fastDynamicFvMeshAMR.C` | Core dictionary parsing; AMR-only keys and warnings in the facade |
+| `readModeShapes()` / `ensureModeShapesForCurrentMesh()` | methods  | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshModeMapping.C`, `fastDynamicFvMeshAMR.C` | Core mode CSV mapping; AMR topology remap in the facade |
 | `calcModalForces()`                                     | method   | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshForces.C`        | Pressure/shear/structural force projection                     |
 | `solveStructuralDynamics()`                             | method   | `fastDynamicFvMesh/fastDynamicFvMesh/fastDynamicFvMeshSolver.C`        | Wilson-Theta modal dynamics                                    |
 | `fastDynamicFvMeshModalExtension.C`                     | source   | `fastDynamicFvMesh/fastDynamicFvMesh/`                                 | Modal extension: structural force projection plus displacement/stress/strain recovery snapshots; `modalExtensionEnabled`/`StressEnabled`/`StrainEnabled` all default off |
@@ -93,7 +96,7 @@ FSI wiring.
 
 ## CONVENTIONS
 
-- Use `wmake` only. Main targets: `wmake libso fastDynamicFvMesh`, `wmake myPimpleFoam`, `wmake myInterFoam`, `wmake myRhoPimpleFoam`. myHisa builds via its own `myHisa/Allwmake` (src then applications), not a single top-level `wmake`.
+- Use `wmake` only. Main targets: `(cd fastDynamicFvMesh && ./Allwmake)` (builds `libfdmCore` then `libfastDynamicFvMesh`), `wmake myPimpleFoam`, `wmake myInterFoam`, `wmake myRhoPimpleFoam`. myHisa builds via its own `myHisa/Allwmake` (src then applications), not a single top-level `wmake`.
 - Build nested variants from their own directories with `wmake`; each owns separate `Make/files` and `Make/options` and never inherits the parent's.
 - OpenFOAM environment must already be loaded. Main targets install to `$FOAM_USER_LIBBIN`/`$FOAM_USER_APPBIN`; nested variants (`interMixingFoam`, `over*DyMFoam`, `SRFPimpleFoam`) install to `$FOAM_APPBIN` (system tree — intentional, know before you `wmake`).
 - On local, run `ccx` and OpenFOAM tools (`blockMesh`, `checkMesh`, solvers, etc.) only inside a case directory under `/root/Workspace/...` — never in the `src/` repository root. On remote hosts, run them only under `$HOME/Special/...`. Running them in `src/` drops `.sta/.dat/.cvg` and other artifacts into the repo and pollutes it.
@@ -190,7 +193,7 @@ Project subagents are registered as Markdown files under `.opencode/agents/` (V2
 ## COMMANDS
 
 ```bash
-wmake libso fastDynamicFvMesh
+(cd fastDynamicFvMesh && ./Allwmake)   # libfdmCore then libfastDynamicFvMesh
 wmake myPimpleFoam
 wmake myInterFoam
 wmake myRhoPimpleFoam

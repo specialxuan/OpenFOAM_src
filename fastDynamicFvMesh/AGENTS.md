@@ -2,23 +2,30 @@
 
 ## OVERVIEW
 
-Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radius code in this repo.
+Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radius code in this repo. The AMR-free `FdmCore` and the FDM-AMR `fastDynamicFvMesh` facade are separate build units.
 
 ## STRUCTURE
 
+The library is split into an AMR-free FDM core and an FDM-AMR facade. The
+runtime OpenFOAM type name remains `fastDynamicFvMesh`.
+
 | Path | Purpose |
 |---|---|
-| `fastDynamicFvMesh/fastDynamicFvMesh.H` | Class declaration, state, controls, caches |
-| `fastDynamicFvMeshMain.C` | Runtime selection, constructor/init, top-level `update()` |
-| `fastDynamicFvMeshUpdate.C` | Update stages, FSI residual publication, timing/output |
-| `fastDynamicFvMeshIO.C` | Dictionary parsing, restart I/O, CSV/modal/structural-force reads |
-| `fastDynamicFvMeshModeMapping.C` | Mode mapping, AMR topology interpolation, reference-face mapping |
+| `fastDynamicFvMesh/fdmCore.H` | `FdmCore` declaration: modal/FSI state, force projection, structural dynamics, restart; holds a mesh reference, inherits no AMR class |
+| `fdmCoreMain.C` | `FdmCore` constructor, type-name helper, `initialiseCoreState()`, `updateFdm()` |
+| `fastDynamicFvMesh.H` | `fastDynamicFvMesh` facade: inherits `dynamicRefineFvMesh` (AMR) and `FdmCore`; keeps the historical type name |
+| `fastDynamicFvMeshFacade.C` | Runtime selection, facade constructor/`init()`, top-level `update()`, `writeObject()` |
+| `fastDynamicFvMeshUpdate.C` | Core update stages, FSI residual publication, timing/output |
+| `fastDynamicFvMeshIO.C` | Core dictionary parsing, modal restart I/O, CSV/modal/structural-force reads |
+| `fastDynamicFvMeshModeMapping.C` | Core mode mapping and topology interpolation helpers |
 | `fastDynamicFvMeshForces.C` | Pressure/shear/structural modal-force assembly |
 | `fastDynamicFvMeshModalExtension.C` | Modal extension: structural force projection plus displacement/stress/strain recovery and snapshot output |
 | `fastDynamicFvMeshSolver.C` | Wilson-Theta structural dynamics |
-| `fastDynamicFvMeshAMR.C` | AMR indicator cache, refine selection, topology hooks |
+| `fastDynamicFvMeshAMR.C` | Facade AMR: indicator cache, refine selection, topology hooks, AMR restart side files (`refinedPointModeShapes`, `fsiReference*`), AMR mode remap |
 | `fastDynamicFvMeshDiagnostics.C` | Diagnostics CSV and timing reports |
-| `Make/files`, `Make/options` | Library build wiring and OpenFOAM dependencies |
+| `fastDynamicFvMesh/MakeCore/files`, `MakeCore/options` | `libfdmCore` build (no AMR dependency) |
+| `Make/files`, `Make/options` | `libfastDynamicFvMesh` facade build; links `-lfdmCore` |
+| `Allwmake` | Builds core first, then facade |
 | `README.md`, `Doc/快速动网格程序手册.md` | Required synced docs |
 
 ## WHERE TO LOOK
@@ -26,9 +33,9 @@ Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radiu
 | Task | Location | Notes |
 |---|---|---|
 | Runtime keys/defaults | `fastDynamicFvMeshIO.C`, `README.md` | Preserve old dictionaries |
-| Active vs available modes | `fastDynamicFvMeshIO.C` (`readModeFiles`), `fastDynamicFvMeshMain.C` | `nMode_` = active K; `nAvailableModes_` = `FluidNodeCoor.csv` N; `nActiveModes` key defaults to N; `modalMass/modalDamp` still N |
-| Startup/restart state | `fastDynamicFvMeshIO.C`, `constant/fsiRestart` docs | Fresh `t=0` must not load stale restart state |
-| AMR remapping | `fastDynamicFvMeshModeMapping.C`, `fastDynamicFvMeshAMR.C` | Topology lineage only; no geometric fallback for AMR points |
+| Active vs available modes | `fastDynamicFvMeshIO.C` (`readModeFiles`), `fdmCoreMain.C` | `nMode_` = active K; `nAvailableModes_` = `FluidNodeCoor.csv` N; `nActiveModes` key defaults to N; `modalMass/modalDamp` still N |
+| Startup/restart state | `fdmCoreMain.C`, `fastDynamicFvMeshIO.C`, `fastDynamicFvMeshAMR.C`, `constant/fsiRestart` docs | Fresh `t=0` must not load stale restart state |
+| AMR remapping | `fastDynamicFvMeshAMR.C`, core interpolation in `fastDynamicFvMeshModeMapping.C` | Topology lineage only; no geometric fallback for AMR points |
 | Force projection | `fastDynamicFvMeshForces.C`, `buildForceProjectionCaches()` | Reference-face aggregation matters under refine/unrefine |
 | Modal-extension controls/outputs | `fastDynamicFvMeshIO.C`, `fastDynamicFvMeshModalExtension.C`, `README.md` | `modalExtensionEnabled`/`StressEnabled`/`StrainEnabled` (all default false); `StructNodeStress`/`Strain` inputs; `postProcessing/fastDynamicFvMesh/<time>/` snapshots; structural nodes only |
 | FSI convergence output | `fastDynamicFvMeshUpdate.C` | Publishes `fsiResidual` read by solvers |
@@ -36,8 +43,8 @@ Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radiu
 
 ## CONVENTIONS
 
-- Build from repo root with `wmake libso fastDynamicFvMesh`.
-- Keep `Make/files` aligned with every implementation translation unit.
+- Build with `(cd fastDynamicFvMesh && ./Allwmake)`; it builds `libfdmCore.so` first, then `libfastDynamicFvMesh.so`.
+- Keep `MakeCore/files` (core) and `Make/files` (facade) aligned with their translation units; core must not include AMR headers or reference `dynamicRefineFvMesh`/`hexRef8` symbols.
 - Add runtime controls with safe defaults; validate dictionary values at read time.
 - Keep deprecated keys readable with a warning path when external dictionaries may contain them.
 - `fsiResidual` is force-based. Displacement change is diagnostic, not the integrated/implicit FSI convergence criterion.
@@ -47,7 +54,8 @@ Modal-superposition dynamic mesh library for OpenFOAM v2412; highest-blast-radiu
 
 - Update `README.md` and `Doc/快速动网格程序手册.md` for any `fastDynamicFvMesh/fastDynamicFvMesh/` code change.
 - If controls/file formats/workflow changed, update example `dynamicMeshDict` guidance too.
-- Run `wmake libso fastDynamicFvMesh`.
+- Run `(cd fastDynamicFvMesh && ./Allwmake)`.
+- Check `nm -C $FOAM_USER_LIBBIN/libfdmCore.so | grep -E "dynamicRefineFvMesh|hexRef8|meshCutter"` stays empty.
 - Run the in-repo smoke path — `case/Damfailure/FDM/run_pipeline.sh --dry-run`, then a short `--steps` FSI run — or document the exact blocker.
 - For AMR/restart changes, run at least the pipeline `--stage check` and a short FSI path when feasible.
 

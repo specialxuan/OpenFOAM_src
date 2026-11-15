@@ -2,6 +2,8 @@
 
 `fastDynamicFvMesh` is a modal-superposition dynamic mesh library for OpenFOAM v2412, used for fluid-structure interaction (FSI) style mesh motion.
 
+The implementation is split into an AMR-free `FdmCore` and the FDM-AMR `fastDynamicFvMesh` facade; see [Core / facade split](#core--facade-split).
+
 ## What it does
 
 At each mesh `update()`:
@@ -294,19 +296,40 @@ Rows are ordered by the `StructNodeCoor.csv` row order.
 - Scope is the structural node set only. No stress or strain recovery is
   computed for the virtual-elastic fluid body.
 
+## Core / facade split
+
+- `FdmCore` is the AMR-free FDM core: modal state, force projection,
+  structural dynamics, FSI residual and modal restart. It holds a mesh
+  reference and does not inherit any OpenFOAM AMR class.
+- `fastDynamicFvMesh` is the FDM-AMR facade. It inherits `FdmCore` and the
+  OpenFOAM `dynamicRefineFvMesh` engine (the default AMR provider), and keeps
+  the historical runtime type name and all dictionary keys.
+- The build produces `libfdmCore.so` first, then `libfastDynamicFvMesh.so`
+  (which links `-lfdmCore`). The FDM core library contains no
+  `dynamicRefineFvMesh`/`hexRef8`/`meshCutter` symbols.
+
 ## Build
 
-From repository root:
-
-```bash
-wmake libso fastDynamicFvMesh
-```
-
-Or inside library directory:
+From the library directory:
 
 ```bash
 cd fastDynamicFvMesh
-wmake libso
+./Allwmake
+```
+
+`Allwmake` builds the AMR-free `libfdmCore.so` first (`wmake libso
+fastDynamicFvMesh MakeCore`), then the facade/AMR `libfastDynamicFvMesh.so`
+(`wmake libso`). Do not build only the facade from a clean tree; it needs
+`libfdmCore.so` in `$FOAM_USER_LIBBIN`.
+
+At runtime, cases keep loading `libfastDynamicFvMesh.so` as before; the loader
+pulls in `libfdmCore.so` from `$FOAM_USER_LIBBIN`.
+
+Optional boundary check:
+
+```bash
+nm -C "$FOAM_USER_LIBBIN/libfdmCore.so" | grep -E "dynamicRefineFvMesh|hexRef8|meshCutter"
+# expected: no output
 ```
 
 ## Enable in case
@@ -598,6 +621,30 @@ this small case — the savings scale with FSI iteration count and patch size.
 ## Commit-by-commit change log
 
 This section maps each repository commit to concrete code/document changes.
+
+### v8.0.0–v8.0.7 — FDM core / FDM-AMR facade split (2026-11-16)
+
+- Extracted the AMR-free `FdmCore`: modal state, force projection, structural
+  dynamics, FSI residual, mode mapping and modal restart. It holds a mesh
+  reference and inherits no OpenFOAM AMR class.
+- `fastDynamicFvMesh` is now the FDM-AMR facade: it inherits `FdmCore` and the
+  OpenFOAM `dynamicRefineFvMesh` engine, and keeps the historical runtime type
+  name and all dictionary keys.
+- Split the build into `libfdmCore.so` (no `dynamicRefineFvMesh`/`hexRef8`/
+  `meshCutter` symbols, does not link `libdynamicFvMesh`) and
+  `libfastDynamicFvMesh.so` (facade + AMR, links `-lfdmCore`). Build with
+  `(cd fastDynamicFvMesh && ./Allwmake)`.
+- Moved AMR restart side files (`refinedPointModeShapes`, `fsiReferenceProjection`,
+  `fsiFaceReferenceMap`) to the facade behind
+  `readAmrRestartRecords()`/`applyRecordedAmrModeShapes()`/
+  `writeAmrReferenceProjection()` hooks; the core restart store remains
+  modal-only.
+- Validation: FDM full 0.5 s at `res 115`, `dt 1e-3` (187,584 cells, `End`,
+  exit 0); FDM-AMR full 0.5 s at the stable production settings `res 75`,
+  `dt 5e-4` (977 refinements, 101,906 cells, `End`, exit 0); AMR restart
+  0.02 → 0.03 s restored 3,086 refined-point records and the FSI reference
+  cache. The `res 115` + `dt 1e-3` AMR combination is a fixed-step CFL
+  limitation, not a library failure; production AMR uses `res 75` + `dt 5e-4`.
 
 ### v6.7.0 — separate available and active mode counts (2026-11-03)
 

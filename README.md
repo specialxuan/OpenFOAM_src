@@ -4,7 +4,7 @@
 
 ## 组件
 
-- `fastDynamicFvMesh/`：FDM core（模态/FSI）、FDM-AMR 与 Aniso 加密模块
+- `fastDynamicFvMesh/`：`libfdmCore`（FDM core，无 AMR）+ `libfastDynamicFvMesh`（FDM-AMR facade）；Aniso provider 预留
 - `fsiCoupling/`：FSI/PIMPLE 收敛契约（header-only）
 - `myPimpleFoam/`：不可压 FSI 求解器（含 overset / SRF 变体）
 - `myInterFoam/`：两相 VOF FSI 求解器（含 overset 变体与三相子求解器）
@@ -17,7 +17,7 @@
 
 ## 架构
 
-FDM core 是完整的流固耦合框架：模态叠加、力投影、结构动力学、FSI 收敛和模态驱动网格运动。FDM-AMR 在 FDM core 之上，用模态信息给新点赋位置；网格拓扑由通用 AMR provider 提供。Aniso 是 provider 的一个 block 分区实现，只依赖 AMR provider 接口。
+FDM core（`FdmCore`）是完整的流固耦合框架：模态叠加、力投影、结构动力学、FSI 收敛和模态驱动网格运动；它不继承 OpenFOAM 的 AMR 类，只持有 mesh 引用。FDM-AMR（运行时类型仍为 `fastDynamicFvMesh`）继承 `FdmCore`，用模态信息给新点赋位置；网格拓扑由通用 AMR provider 提供，当前默认 provider 是 OpenFOAM `dynamicRefineFvMesh`/`hexRef8`。Aniso 是 provider 的一个 block 分区实现，只依赖 AMR provider 接口。
 
 三种使用方式：
 
@@ -27,7 +27,7 @@ FDM core 是完整的流固耦合框架：模态叠加、力投影、结构动�
 
 依赖规则：
 
-- FDM core 不依赖 FDM-AMR 或任何具体 AMR provider；
+- FDM core 不依赖 FDM-AMR、`dynamicRefineFvMesh`/`hexRef8` 或任何具体 AMR provider；
 - FDM-AMR 只依赖 `AMR provider` 接口，不直接依赖具体 provider；
 - Aniso 只依赖 `AMR provider` 接口，不依赖 FDM/FDM-AMR。
 
@@ -44,8 +44,8 @@ flowchart TB
 
     subgraph L3[3. FDM / FDM-AMR]
         direction LR
-        fdmAmr["fastDynamicFvMeshAMR<br/>FDM-AMR<br/>modal new-point motion"]
-        fdm["fastDynamicFvMesh<br/>FDM core"]
+        fdmAmr["fastDynamicFvMesh<br/>FDM-AMR facade<br/>modal new-point motion"]
+        fdm["FdmCore<br/>FDM core (no AMR)"]
         fdmAmr -->|"inherits from"| fdm
     end
 
@@ -54,7 +54,7 @@ flowchart TB
         dynamicFvMesh["dynamicFvMesh<br/>dynamic mesh base"]
         fvMesh["fvMesh<br/>OpenFOAM mesh"]
         amrProvider{{"AMR provider<br/>generic topology contract"}}
-        hexRef8["OpenFOAM hexRef8<br/>FDM-AMR default provider"]
+        hexRef8["dynamicRefineFvMesh<br/>OpenFOAM hexRef8 engine"]
         aniso["Aniso provider<br/>FDM-AMR-ANISO provider"]
 
         dynamicFvMesh -->|"inherits from"| fvMesh
@@ -68,7 +68,7 @@ flowchart TB
     fsiCoupling -.->|"reads fsiResidual from"| fdm
     fsiCoupling -.->|"reads fsiResidual from"| fdmAmr
 
-    fdm -->|"inherits from"| dynamicFvMesh
+    fdm -.->|"uses mesh API"| dynamicFvMesh
     fdmAmr -.->|"refine / unrefine"| amrProvider
 
     classDef clsOpenFoam stroke:#2563eb,stroke-width:2px;
@@ -79,6 +79,8 @@ flowchart TB
 ```
 
 边框颜色：**蓝色 = OpenFOAM 提供**；**橙色 = 本工作**。
+
+构建顺序：`(cd fastDynamicFvMesh && ./Allwmake)` 先构建无 AMR 依赖的 `libfdmCore.so`，再构建 facade + AMR 的 `libfastDynamicFvMesh.so`。
 
 
 ## 文档
