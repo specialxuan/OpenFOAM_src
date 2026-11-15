@@ -30,7 +30,7 @@ namespace Foam
 //  appliedModeDisp_.
 //  - Use high precision formatting to preserve numeric fidelity for
 //  post-processing comparisons.
-void fastDynamicFvMesh::writeDiagnostics()
+void FdmCore::writeDiagnostics()
 {
     if (!writeDiagnosticsEnabled_)
     {
@@ -208,7 +208,7 @@ void fastDynamicFvMesh::writeDiagnostics()
     diagFile.flush();
 }
 
-void fastDynamicFvMesh::writeTimingReport()
+void FdmCore::writeTimingReport()
 {
     if (!trackTimingEnabled_ || !Pstream::master())
     {

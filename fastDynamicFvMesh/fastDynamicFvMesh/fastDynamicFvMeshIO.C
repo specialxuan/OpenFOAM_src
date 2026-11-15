@@ -198,12 +198,12 @@ void broadcastRestartList(List<T>& f)
 
 } // End anonymous namespace
 
-fileName fastDynamicFvMesh::restartStateInstance() const
+fileName FdmCore::restartStateInstance() const
 {
     return this->time().constant() / fileName("fsiRestart");
 }
 
-bool fastDynamicFvMesh::readRestartStateStore()
+bool FdmCore::readRestartStateStore()
 {
     // Fresh starts at t=0 should not pick up stale restart state files.
     // Only non-zero-time starts (continuations/restarts) are allowed to read
@@ -371,7 +371,7 @@ bool fastDynamicFvMesh::readRestartStateStore()
     return loadedAny;
 }
 
-void fastDynamicFvMesh::writeRestartStateStore() const
+void FdmCore::writeRestartStateStore() const
 {
     const fileName restartDir =
         this->time().globalPath() / restartStateInstance();
@@ -448,23 +448,23 @@ void fastDynamicFvMesh::writeRestartStateStore() const
 // Destructor
 // Purpose: release any resources if required. Current implementation relies on
 // RAII and does not perform explicit cleanup.
-void fastDynamicFvMesh::readControls()
+void FdmCore::readControls()
 {
     // Read dictionary
     IOdictionary dynamicMeshDict(
         IOobject("dynamicMeshDict", this->time().constant(), *this,
             IOobject::MUST_READ_IF_MODIFIED, IOobject::NO_WRITE, false));
 
-    if (!dynamicMeshDict.found(typeName + "Coeffs"))
+    if (!dynamicMeshDict.found(fdmTypeName() + "Coeffs"))
     {
         FatalIOErrorInFunction(dynamicMeshDict)
-            << "Missing required sub-dictionary '" << typeName << "Coeffs' in "
+            << "Missing required sub-dictionary '" << fdmTypeName() << "Coeffs' in "
             << dynamicMeshDict.objectPath() << nl
-            << "Add constant/dynamicMeshDict entries for " << typeName << '.'
+            << "Add constant/dynamicMeshDict entries for " << fdmTypeName() << '.'
             << exit(FatalIOError);
     }
 
-    const dictionary& fdmDict = dynamicMeshDict.subDict(typeName + "Coeffs");
+    const dictionary& fdmDict = dynamicMeshDict.subDict(fdmTypeName() + "Coeffs");
 
     fdmDict.readIfPresent("theta", theta_);
 
@@ -472,7 +472,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Missing required entry 'fsiPatches' in sub-dictionary '"
-            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.objectPath()
             << exit(FatalIOError);
     }
 
@@ -499,7 +499,6 @@ void fastDynamicFvMesh::readControls()
     fdmDict.readIfPresent("maxDispChange", maxDispChange_);
     fdmDict.readIfPresent("writeDiagnostics", writeDiagnosticsEnabled_);
     fdmDict.readIfPresent("trackTiming", trackTimingEnabled_);
-    fdmDict.readIfPresent("trackAmrTiming", trackAmrTimingEnabled_);
     fdmDict.readIfPresent("structuralForceEnabled", structuralForceEnabled_);
     fdmDict.readIfPresent("nStructuralForces", nStructuralForces_);
     fdmDict.readIfPresent(
@@ -518,45 +517,8 @@ void fastDynamicFvMesh::readControls()
     fdmDict.readIfPresent("meshRefinementSupport", meshRefinementSupport_);
     fdmDict.readIfPresent(
         "refinementInterpTolerance", refinementInterpTolerance_);
-    fdmDict.readIfPresent(
-        "refinementMappingDiagnostics", refinementMappingDiagnostics_);
-    scalar refinementFaceMapTolerance = 0.0;
-    const bool foundRefinementFaceMapTolerance = fdmDict.readIfPresent(
-        "refinementFaceMapTolerance", refinementFaceMapTolerance);
-    fdmDict.readIfPresent("refinementMinCellVolume", refinementMinCellVolume_);
-    fdmDict.readIfPresent("refinementMinEdgeLength", refinementMinEdgeLength_);
-    fdmDict.readIfPresent("amrLayerDiagnostics", amrLayerDiagnosticsEnabled_);
-    fdmDict.readIfPresent("amrLayerDiagnosticsZ", amrLayerDiagnosticsZ_);
-    fdmDict.readIfPresent(
-        "amrLayerDiagnosticsThickness", amrLayerDiagnosticsThickness_);
-    fdmDict.readIfPresent(
-        "amrLayerDiagnosticsNeighborDepth", amrLayerDiagnosticsNeighborDepth_);
-    fdmDict.readIfPresent(
-        "amrLayerDiagnosticsMaxRows", amrLayerDiagnosticsMaxRows_);
-    fdmDict.readIfPresent(
-        "amrLayerDiagnosticsFilePrefix", amrLayerDiagnosticsFilePrefix_);
 
-    if (dynamicMeshDict.found("dynamicRefineFvMeshCoeffs"))
-    {
-        const dictionary& refineDict =
-            dynamicMeshDict.subDict("dynamicRefineFvMeshCoeffs");
-        refineDict.readIfPresent(
-            "useGradIndicator", refinementUseGradIndicator_);
-        refineDict.readIfPresent(
-            "gradIndicatorField", refinementGradIndicatorField_);
-        refineDict.readIfPresent("gradIndicatorMagnitudeField",
-            refinementGradIndicatorMagnitudeField_);
-    }
-
-    if (runtimeRefinementEnabled_ && !meshRefinementSupport_ && Pstream::master())
-    {
-        WarningInFunction
-            << "dynamicRefineFvMeshCoeffs is present, but "
-            << "'meshRefinementSupport' is false in " << typeName
-            << "Coeffs. Runtime topology changes can invalidate modal "
-            << "shape and FSI face caches; set meshRefinementSupport true "
-            << "for AMR-coupled fastDynamicFvMesh cases." << endl;
-    }
+    readAmrControls(fdmDict, dynamicMeshDict);
 
     if (fdmDict.found("modalMass"))
     {
@@ -594,7 +556,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'couplingRelaxation' must be in the range (0, 1] in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
     }
 
@@ -608,7 +570,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'couplingAcceleration' must be one of constant, aitken, "
-            << "IQN-ILS or IQN-IMVJ in sub-dictionary '" << typeName
+            << "IQN-ILS or IQN-IMVJ in sub-dictionary '" << fdmTypeName()
             << "Coeffs' of " << dynamicMeshDict.objectPath()
             << exit(FatalIOError);
     }
@@ -617,7 +579,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'iqnMaxHistory' must be >= 1 in sub-dictionary '"
-            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.objectPath()
             << exit(FatalIOError);
     }
 
@@ -625,7 +587,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'imvjReuse' must be >= 0 in sub-dictionary '"
-            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.objectPath()
             << exit(FatalIOError);
     }
 
@@ -633,7 +595,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'iqnFilterLimit' must be > 0 in sub-dictionary '"
-            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.objectPath()
             << exit(FatalIOError);
     }
 
@@ -646,7 +608,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'iqnFilter' must be one of none, QR2 or exponential in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
     }
 
@@ -654,7 +616,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'iqnFilterLimit' must be < 1 when 'iqnFilter' is "
-            << "exponential in sub-dictionary '" << typeName << "Coeffs' of "
+            << "exponential in sub-dictionary '" << fdmTypeName() << "Coeffs' of "
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
     }
 
@@ -668,7 +630,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'theta' must be >= 1 for Wilson-Theta integration in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
     }
 
@@ -676,7 +638,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'mappingTolerance' must be positive in sub-dictionary '"
-            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.objectPath()
             << exit(FatalIOError);
     }
 
@@ -684,7 +646,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'maxDispChange' must be positive in sub-dictionary '"
-            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.objectPath()
             << exit(FatalIOError);
     }
 
@@ -713,7 +675,7 @@ void fastDynamicFvMesh::readControls()
     if (foundRhoRef && rhoRef_ <= 0)
     {
         FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entry 'rhoRef' must be positive in sub-dictionary '" << typeName
+            << "Entry 'rhoRef' must be positive in sub-dictionary '" << fdmTypeName()
             << "Coeffs' of " << dynamicMeshDict.objectPath()
             << exit(FatalIOError);
     }
@@ -722,7 +684,7 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'structuralTargetTolerance' must be positive in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
     }
 
@@ -730,16 +692,147 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'refinementInterpTolerance' must be positive in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
             << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (structuralForceEnabled_)
+    {
+        if (nStructuralForces_ <= 0)
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'nStructuralForces' must be > 0 in "
+                << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+                << dynamicMeshDict.objectPath() << exit(FatalIOError);
+        }
+
+        if (structuralForceFilePrefix_.empty())
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'structuralForceFilePrefix' cannot be empty in "
+                << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+                << dynamicMeshDict.objectPath() << exit(FatalIOError);
+        }
+    }
+    else if
+    (
+        Pstream::master()
+     && (
+            fdmDict.found("nStructuralForces")
+         || fdmDict.found("structuralForceFilePrefix")
+         || fdmDict.found("structuralTargetTolerance")
+        )
+    )
+    {
+        WarningInFunction
+            << "Structural-force entries are present, but "
+            << "'structuralForceEnabled' is false; structural force files "
+            << "will not be read." << endl;
+    }
+
+    if
+    (
+        (modalExtensionStressEnabled_ || modalExtensionStrainEnabled_)
+     && !modalExtensionEnabled_
+    )
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entries 'modalExtensionStressEnabled' and/or "
+            << "'modalExtensionStrainEnabled' require 'modalExtensionEnabled' "
+            << "to be true in sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+    }
+
+    if (modalExtensionEnabled_)
+    {
+        if (structNodeStressPrefix_.empty())
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'structNodeStressPrefix' cannot be empty when "
+                << "'modalExtensionEnabled' is true in sub-dictionary '"
+                << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.objectPath()
+                << exit(FatalIOError);
+        }
+
+        if (structNodeStrainPrefix_.empty())
+        {
+            FatalIOErrorInFunction(dynamicMeshDict)
+                << "Entry 'structNodeStrainPrefix' cannot be empty when "
+                << "'modalExtensionEnabled' is true in sub-dictionary '"
+                << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.objectPath()
+                << exit(FatalIOError);
+        }
+    }
+    else if
+    (
+        Pstream::master()
+     && (
+            fdmDict.found("modalExtensionEnabled")
+         || fdmDict.found("modalExtensionStressEnabled")
+         || fdmDict.found("modalExtensionStrainEnabled")
+         || fdmDict.found("structNodeStressPrefix")
+         || fdmDict.found("structNodeStrainPrefix")
+        )
+    )
+    {
+        WarningInFunction
+            << "Modal-extension entries are present, but "
+            << "'modalExtensionEnabled' is false; structural displacement, "
+            << "stress and strain recovery will not be performed." << endl;
+    }
+}
+
+void fastDynamicFvMesh::readAmrControls(
+    const dictionary& fdmDict,
+    const dictionary& dynamicMeshDict)
+{
+    fdmDict.readIfPresent("trackAmrTiming", trackAmrTimingEnabled_);
+    fdmDict.readIfPresent(
+        "refinementMappingDiagnostics", refinementMappingDiagnostics_);
+    scalar refinementFaceMapTolerance = 0.0;
+    const bool foundRefinementFaceMapTolerance = fdmDict.readIfPresent(
+        "refinementFaceMapTolerance", refinementFaceMapTolerance);
+    fdmDict.readIfPresent("refinementMinCellVolume", refinementMinCellVolume_);
+    fdmDict.readIfPresent("refinementMinEdgeLength", refinementMinEdgeLength_);
+    fdmDict.readIfPresent("amrLayerDiagnostics", amrLayerDiagnosticsEnabled_);
+    fdmDict.readIfPresent("amrLayerDiagnosticsZ", amrLayerDiagnosticsZ_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsThickness", amrLayerDiagnosticsThickness_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsNeighborDepth", amrLayerDiagnosticsNeighborDepth_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsMaxRows", amrLayerDiagnosticsMaxRows_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsFilePrefix", amrLayerDiagnosticsFilePrefix_);
+
+    if (dynamicMeshDict.found("dynamicRefineFvMeshCoeffs"))
+    {
+        const dictionary& refineDict =
+            dynamicMeshDict.subDict("dynamicRefineFvMeshCoeffs");
+        refineDict.readIfPresent(
+            "useGradIndicator", refinementUseGradIndicator_);
+        refineDict.readIfPresent(
+            "gradIndicatorField", refinementGradIndicatorField_);
+        refineDict.readIfPresent("gradIndicatorMagnitudeField",
+            refinementGradIndicatorMagnitudeField_);
+    }
+
+    if (runtimeRefinementEnabled_ && !meshRefinementSupport_ && Pstream::master())
+    {
+        WarningInFunction
+            << "dynamicRefineFvMeshCoeffs is present, but "
+            << "'meshRefinementSupport' is false in " << fdmTypeName()
+            << "Coeffs. Runtime topology changes can invalidate modal "
+            << "shape and FSI face caches; set meshRefinementSupport true "
+            << "for AMR-coupled fastDynamicFvMesh cases." << endl;
     }
 
     if (refinementFaceMapTolerance < 0)
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'refinementFaceMapTolerance' must be >= 0 in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
-            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
     }
     else if (foundRefinementFaceMapTolerance && Pstream::master())
     {
@@ -753,40 +846,40 @@ void fastDynamicFvMesh::readControls()
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'refinementMinCellVolume' must be >= 0 in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
-            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
     }
 
     if (refinementMinEdgeLength_ < 0)
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'refinementMinEdgeLength' must be >= 0 in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
-            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
     }
 
     if (amrLayerDiagnosticsThickness_ < 0)
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'amrLayerDiagnosticsThickness' must be >= 0 in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
-            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
     }
 
     if (amrLayerDiagnosticsNeighborDepth_ < 0)
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'amrLayerDiagnosticsNeighborDepth' must be >= 0 in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
-            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
     }
 
     if (amrLayerDiagnosticsMaxRows_ < 0)
     {
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'amrLayerDiagnosticsMaxRows' must be >= 0 in "
-            << "sub-dictionary '" << typeName << "Coeffs' of "
-            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
     }
 
     if (amrLayerDiagnosticsEnabled_ && amrLayerDiagnosticsFilePrefix_.empty())
@@ -794,7 +887,7 @@ void fastDynamicFvMesh::readControls()
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'amrLayerDiagnosticsFilePrefix' cannot be empty when "
             << "'amrLayerDiagnostics' is enabled in sub-dictionary '"
-            << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
+            << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.name()
             << exit(FatalIOError);
     }
 
@@ -803,7 +896,7 @@ void fastDynamicFvMesh::readControls()
         FatalIOErrorInFunction(dynamicMeshDict)
             << "Entry 'gradIndicatorField' cannot be empty when "
             << "'useGradIndicator' is enabled in dynamicRefineFvMeshCoeffs of "
-            << dynamicMeshDict.objectPath() << exit(FatalIOError);
+            << dynamicMeshDict.name() << exit(FatalIOError);
     }
 
     if (Pstream::master() && runtimeRefinementEnabled_ &&
@@ -833,91 +926,6 @@ void fastDynamicFvMesh::readControls()
              << amrLayerDiagnosticsMaxRows_ << ", filePrefix='"
              << amrLayerDiagnosticsFilePrefix_ << "'." << endl;
     }
-
-    if (structuralForceEnabled_)
-    {
-        if (nStructuralForces_ <= 0)
-        {
-            FatalIOErrorInFunction(dynamicMeshDict)
-                << "Entry 'nStructuralForces' must be > 0 in "
-                << "sub-dictionary '" << typeName << "Coeffs' of "
-                << dynamicMeshDict.objectPath() << exit(FatalIOError);
-        }
-
-        if (structuralForceFilePrefix_.empty())
-        {
-            FatalIOErrorInFunction(dynamicMeshDict)
-                << "Entry 'structuralForceFilePrefix' cannot be empty in "
-                << "sub-dictionary '" << typeName << "Coeffs' of "
-                << dynamicMeshDict.objectPath() << exit(FatalIOError);
-        }
-    }
-    else if
-    (
-        Pstream::master()
-     && (
-            fdmDict.found("nStructuralForces")
-         || fdmDict.found("structuralForceFilePrefix")
-         || fdmDict.found("structuralTargetTolerance")
-        )
-    )
-    {
-        WarningInFunction
-            << "Structural-force entries are present, but "
-            << "'structuralForceEnabled' is false; structural force files "
-            << "will not be read." << endl;
-    }
-
-    if
-    (
-        (modalExtensionStressEnabled_ || modalExtensionStrainEnabled_)
-     && !modalExtensionEnabled_
-    )
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entries 'modalExtensionStressEnabled' and/or "
-            << "'modalExtensionStrainEnabled' require 'modalExtensionEnabled' "
-            << "to be true in sub-dictionary '" << typeName << "Coeffs' of "
-            << dynamicMeshDict.objectPath() << exit(FatalIOError);
-    }
-
-    if (modalExtensionEnabled_)
-    {
-        if (structNodeStressPrefix_.empty())
-        {
-            FatalIOErrorInFunction(dynamicMeshDict)
-                << "Entry 'structNodeStressPrefix' cannot be empty when "
-                << "'modalExtensionEnabled' is true in sub-dictionary '"
-                << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
-                << exit(FatalIOError);
-        }
-
-        if (structNodeStrainPrefix_.empty())
-        {
-            FatalIOErrorInFunction(dynamicMeshDict)
-                << "Entry 'structNodeStrainPrefix' cannot be empty when "
-                << "'modalExtensionEnabled' is true in sub-dictionary '"
-                << typeName << "Coeffs' of " << dynamicMeshDict.objectPath()
-                << exit(FatalIOError);
-        }
-    }
-    else if
-    (
-        Pstream::master()
-     && (
-            fdmDict.found("modalExtensionEnabled")
-         || fdmDict.found("modalExtensionStressEnabled")
-         || fdmDict.found("modalExtensionStrainEnabled")
-         || fdmDict.found("structNodeStressPrefix")
-         || fdmDict.found("structNodeStrainPrefix")
-        )
-    )
-    {
-        WarningInFunction
-            << "Modal-extension entries are present, but "
-            << "'modalExtensionEnabled' is false; structural displacement, "
-            << "stress and strain recovery will not be performed." << endl;
-    }
 }
 
 // readLegacyParameters(modeDir)
@@ -931,7 +939,7 @@ void fastDynamicFvMesh::readControls()
 //  then reads an initial velocity per mode if present.
 //  - If the file or expected entries are missing, the function warns and leaves
 //  initVelocity_ at zero.
-void fastDynamicFvMesh::readLegacyParameters(const fileName& modeDir)
+void FdmCore::readLegacyParameters(const fileName& modeDir)
 {
     if (!Pstream::master())
     {
@@ -1023,7 +1031,7 @@ void fastDynamicFvMesh::readLegacyParameters(const fileName& modeDir)
 //  over asymptotic performance; mapping is done once at startup.
 //  - Mode frequency values read from files are stored in modeFreq_ and expected
 //  to be in Hz (omega computed later as 2*pi*freq).
-void fastDynamicFvMesh::readModeFiles(const fileName& modeDir,
+void FdmCore::readModeFiles(const fileName& modeDir,
     List<point>& csvPoints, List<List<vector>>& csvShapes, label& nCsvNodes)
 {
     if (!Pstream::master())
@@ -1228,7 +1236,7 @@ void fastDynamicFvMesh::readModeFiles(const fileName& modeDir,
         }
     }
 }
-bool fastDynamicFvMesh::writeObject
+bool FdmCore::writeObject
 (
     IOstreamOption streamOpt,
     const bool writeOnProc
@@ -1246,7 +1254,7 @@ bool fastDynamicFvMesh::writeObject
 }
 
 
-bool fastDynamicFvMesh::writeRefinedPointModeShapes() const
+bool FdmCore::writeRefinedPointModeShapes() const
 {
     if (!meshRefinementSupport_ || nMode_ <= 0)
     {
@@ -1350,7 +1358,7 @@ bool fastDynamicFvMesh::writeRefinedPointModeShapes() const
 }
 
 
-label fastDynamicFvMesh::readRefinedPointModeShapes()
+label FdmCore::readRefinedPointModeShapes()
 {
     recordedRefinedPointIDs_.setSize(0);
     recordedRefinedModeShapes_.setSize(0);
@@ -1523,7 +1531,7 @@ label fastDynamicFvMesh::readRefinedPointModeShapes()
     }
 }
 
-bool fastDynamicFvMesh::writeFsiReferenceProjection() const
+bool FdmCore::writeFsiReferenceProjection() const
 {
     if (!meshRefinementSupport_ || fsiPatches_.size() == 0 || nMode_ <= 0)
     {
@@ -1590,7 +1598,7 @@ bool fastDynamicFvMesh::writeFsiReferenceProjection() const
 }
 
 
-bool fastDynamicFvMesh::writeFsiFaceReferenceMap() const
+bool FdmCore::writeFsiFaceReferenceMap() const
 {
     if (!meshRefinementSupport_ || fsiPatches_.size() == 0)
     {
@@ -1665,7 +1673,7 @@ bool fastDynamicFvMesh::writeFsiFaceReferenceMap() const
 }
 
 
-bool fastDynamicFvMesh::readFsiReferenceCache()
+bool FdmCore::readFsiReferenceCache()
 {
     if (!meshRefinementSupport_ || fsiPatches_.size() == 0 || nMode_ <= 0)
     {

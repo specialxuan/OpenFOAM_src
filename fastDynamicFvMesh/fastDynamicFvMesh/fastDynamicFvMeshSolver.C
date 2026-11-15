@@ -54,7 +54,7 @@ namespace Foam
 //      * Solve for displacement at theta (disTheta) and recover acc, vel, dis
 //      for the current time step.
 //  - Results are stored in modeState_[i] as (disp, vel, acc).
-void fastDynamicFvMesh::solveStructuralDynamics(scalar dt)
+void FdmCore::solveStructuralDynamics(scalar dt)
 {
     // const scalar Mass = 1.0;
     // const scalar Damp = 0.0;

@@ -56,7 +56,7 @@ namespace Foam
 //  over asymptotic performance; mapping is done once at startup.
 //  - Mode frequency values read from files are stored in modeFreq_ and expected
 //  to be in Hz (omega computed later as 2*pi*freq).
-void fastDynamicFvMesh::readModeShapes()
+void FdmCore::readModeShapes()
 {
     // 1. Read files on master
     List<point> csvPoints;
@@ -624,7 +624,7 @@ void fastDynamicFvMesh::readModeShapes()
     }
 }
 
-void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
+void FdmCore::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
 {
     const polyBoundaryMesh& pbm = this->boundaryMesh();
 
@@ -1003,7 +1003,7 @@ void fastDynamicFvMesh::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
     }
 }
 
-void fastDynamicFvMesh::syncMappedModeShapes(boolList& mappedMask)
+void FdmCore::syncMappedModeShapes(boolList& mappedMask)
 {
     if (!meshRefinementSupport_ || !Pstream::parRun() || nMode_ <= 0)
     {
@@ -1050,7 +1050,7 @@ void fastDynamicFvMesh::syncMappedModeShapes(boolList& mappedMask)
     }
 }
 
-void fastDynamicFvMesh::syncSharedPointPositions(pointField& pointValues) const
+void FdmCore::syncSharedPointPositions(pointField& pointValues) const
 {
     if (!Pstream::parRun())
     {
@@ -1084,7 +1084,7 @@ void fastDynamicFvMesh::syncSharedPointPositions(pointField& pointValues) const
     pointValues.transfer(ownedValues);
 }
 
-label fastDynamicFvMesh::interpolateModeShapesFromKnown(boolList& knownMask,
+label FdmCore::interpolateModeShapesFromKnown(boolList& knownMask,
     const boolList& sourceKnownMask, const label cornerCount,
     const bool distanceWeighted, const word& context)
 {
@@ -1304,7 +1304,7 @@ label fastDynamicFvMesh::interpolateModeShapesFromKnown(boolList& knownMask,
     return localInterpolated;
 }
 
-label fastDynamicFvMesh::applyRecordedRefinedModeShapes(boolList& mappedMask)
+label FdmCore::applyRecordedRefinedModeShapes(boolList& mappedMask)
 {
     if (recordedRefinedPointIDs_.size() == 0)
     {

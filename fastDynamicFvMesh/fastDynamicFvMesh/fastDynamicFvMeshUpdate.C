@@ -269,7 +269,7 @@ namespace
     }
 }
 
-void fastDynamicFvMesh::accountFluidCpuAtUpdateStart(
+void FdmCore::accountFluidCpuAtUpdateStart(
     const scalar updateStartCpuTime)
 {
     if (trackTimingEnabled_)
@@ -290,49 +290,13 @@ void fastDynamicFvMesh::accountFluidCpuAtUpdateStart(
     }
 }
 
-bool fastDynamicFvMesh::beginUpdateStep(const label currentTimeIndex)
+bool FdmCore::beginUpdateStep(const label currentTimeIndex)
 {
     const bool firstIter = (currentTimeIndex != lastUpdateTimeIndex_);
 
-    if (runtimeRefinementEnabled_ && firstIter)
+    if (firstIter)
     {
-        if (!trackAmrTimingEnabled_)
-        {
-            dynamicRefineFvMesh::updateTopology();
-            writeAmrLayerDiagnosticsSummary();
-        }
-        else
-        {
-            const label nCellsBefore =
-                returnReduce(this->nCells(), sumOp<label>());
-            const label nPointsBefore =
-                returnReduce(this->nPoints(), sumOp<label>());
-            const scalar amrStartCpuTime = this->time().elapsedCpuTime();
-            const scalar amrStartClockTime = this->time().elapsedClockTime();
-
-            dynamicRefineFvMesh::updateTopology();
-            writeAmrLayerDiagnosticsSummary();
-
-            const scalar localCpu =
-                this->time().elapsedCpuTime() - amrStartCpuTime;
-            const scalar localClock =
-                this->time().elapsedClockTime() - amrStartClockTime;
-            const scalar maxCpu = returnReduce(localCpu, maxOp<scalar>());
-            const scalar maxClock = returnReduce(localClock, maxOp<scalar>());
-            const label nCellsAfter =
-                returnReduce(this->nCells(), sumOp<label>());
-            const label nPointsAfter =
-                returnReduce(this->nPoints(), sumOp<label>());
-
-            if (Pstream::master())
-            {
-                Info << "Runtime AMR timing at t=" << this->time().timeName()
-                     << " [max over ranks]: CPU=" << maxCpu
-                     << " s, Clock=" << maxClock << " s, cells "
-                     << nCellsBefore << " -> " << nCellsAfter << ", points "
-                     << nPointsBefore << " -> " << nPointsAfter << endl;
-            }
-        }
+        updateRefinementTopology();
     }
 
     lastUpdateTimeIndex_ = currentTimeIndex;
@@ -350,7 +314,7 @@ bool fastDynamicFvMesh::beginUpdateStep(const label currentTimeIndex)
     return firstIter;
 }
 
-void fastDynamicFvMesh::assembleAndRelaxModalForces(const bool firstIter)
+void FdmCore::assembleAndRelaxModalForces(const bool firstIter)
 {
     calcModalForces();
     calcStructuralModalForces();
@@ -389,7 +353,7 @@ void fastDynamicFvMesh::assembleAndRelaxModalForces(const bool firstIter)
     publishFsiResidual();
 }
 
-scalarField fastDynamicFvMesh::applyCouplingAcceleration
+scalarField FdmCore::applyCouplingAcceleration
 (
     const scalarField& rawFluidForce,
     const bool firstIter
@@ -748,7 +712,7 @@ scalarField fastDynamicFvMesh::applyCouplingAcceleration
     return next;
 }
 
-void fastDynamicFvMesh::resetCouplingAccelerationState(const bool newWindow)
+void FdmCore::resetCouplingAccelerationState(const bool newWindow)
 {
     // Per-window state is dropped at the first update() of each time step.
     // IQN-IMVJ first commits the finished window's (Wtilde, Z) chunk, computed
@@ -840,7 +804,7 @@ void fastDynamicFvMesh::resetCouplingAccelerationState(const bool newWindow)
     accelIterationStarted_ = false;
 }
 
-void fastDynamicFvMesh::publishFsiResidual()
+void FdmCore::publishFsiResidual()
 {
     if (this->foundObject<uniformDimensionedScalarField>("fsiResidual"))
     {
@@ -859,7 +823,7 @@ void fastDynamicFvMesh::publishFsiResidual()
     }
 }
 
-bool fastDynamicFvMesh::initializeStartupStateIfNeeded()
+bool FdmCore::initializeStartupStateIfNeeded()
 {
     if (startupStepCount_ < 2)
     {
@@ -907,7 +871,7 @@ bool fastDynamicFvMesh::initializeStartupStateIfNeeded()
     return false;
 }
 
-void fastDynamicFvMesh::solveAndMoveMesh(const scalar dt)
+void FdmCore::solveAndMoveMesh(const scalar dt)
 {
     if (nMode_ > 0)
     {
@@ -964,7 +928,7 @@ void fastDynamicFvMesh::solveAndMoveMesh(const scalar dt)
     writeDiagnostics();
 }
 
-void fastDynamicFvMesh::accountMeshCpuAtUpdateEnd(
+void FdmCore::accountMeshCpuAtUpdateEnd(
     const scalar updateStartCpuTime)
 {
     if (trackTimingEnabled_)
@@ -979,7 +943,7 @@ void fastDynamicFvMesh::accountMeshCpuAtUpdateEnd(
     }
 }
 
-void fastDynamicFvMesh::writeUpdateOutputs(const label currentTimeIndex)
+void FdmCore::writeUpdateOutputs(const label currentTimeIndex)
 {
     // Persist restart modal states in a dedicated channel under
     // constant/fsiRestart to avoid mixing restart metadata with reconstructed
@@ -1009,9 +973,61 @@ void fastDynamicFvMesh::writeUpdateOutputs(const label currentTimeIndex)
     }
 }
 
-bool fastDynamicFvMesh::updateReturnState()
+bool FdmCore::updateReturnState()
 {
-    return runtimeRefinementEnabled_ || this->moving() || this->topoChanging();
+    return refinementTopologyActive() || this->moving()
+        || this->topoChanging();
+}
+
+// * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
+
+void fastDynamicFvMesh::updateRefinementTopology()
+{
+    if (runtimeRefinementEnabled_)
+    {
+        if (!trackAmrTimingEnabled_)
+        {
+            dynamicRefineFvMesh::updateTopology();
+            writeAmrLayerDiagnosticsSummary();
+        }
+        else
+        {
+            const label nCellsBefore =
+                returnReduce(this->nCells(), sumOp<label>());
+            const label nPointsBefore =
+                returnReduce(this->nPoints(), sumOp<label>());
+            const scalar amrStartCpuTime = this->time().elapsedCpuTime();
+            const scalar amrStartClockTime = this->time().elapsedClockTime();
+
+            dynamicRefineFvMesh::updateTopology();
+            writeAmrLayerDiagnosticsSummary();
+
+            const scalar localCpu =
+                this->time().elapsedCpuTime() - amrStartCpuTime;
+            const scalar localClock =
+                this->time().elapsedClockTime() - amrStartClockTime;
+            const scalar maxCpu = returnReduce(localCpu, maxOp<scalar>());
+            const scalar maxClock = returnReduce(localClock, maxOp<scalar>());
+            const label nCellsAfter =
+                returnReduce(this->nCells(), sumOp<label>());
+            const label nPointsAfter =
+                returnReduce(this->nPoints(), sumOp<label>());
+
+            if (Pstream::master())
+            {
+                Info << "Runtime AMR timing at t=" << this->time().timeName()
+                     << " [max over ranks]: CPU=" << maxCpu
+                     << " s, Clock=" << maxClock << " s, cells "
+                     << nCellsBefore << " -> " << nCellsAfter << ", points "
+                     << nPointsBefore << " -> " << nPointsAfter << endl;
+            }
+        }
+    }
+}
+
+bool fastDynamicFvMesh::refinementTopologyActive() const
+{
+    return runtimeRefinementEnabled_;
 }
 
 } // End namespace Foam

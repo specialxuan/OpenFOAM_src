@@ -35,7 +35,7 @@ Description
 
 namespace Foam
 {
-void fastDynamicFvMesh::cacheModelPointers()
+void FdmCore::cacheModelPointers()
 {
     if (modelPointersCached_)
     {
@@ -82,7 +82,7 @@ void fastDynamicFvMesh::cacheModelPointers()
 //  equal to the number of faces in the patch.
 // Rationale: kinematic pressure fields (p/rho) require a density to convert
 // back to dimensional pressure for force computations.
-tmp<scalarField> fastDynamicFvMesh::patchDensity(
+tmp<scalarField> FdmCore::patchDensity(
     const label patchi, const scalar defaultRho) const
 {
     if (this->foundObject<volScalarField>("rho"))
@@ -107,7 +107,7 @@ tmp<scalarField> fastDynamicFvMesh::patchDensity(
 //  i.e., the deviatoric viscous stress contribution per face.
 //  - This helper centralizes model queries so calcModalForces can obtain shear
 //  contributions regardless of solver setup.
-tmp<symmTensorField> fastDynamicFvMesh::devRhoReff(const tensorField& gradUp,
+tmp<symmTensorField> FdmCore::devRhoReff(const tensorField& gradUp,
     const label patchi, const scalar defaultRho) const
 {
     if (icoTurbPtr_)
@@ -179,7 +179,7 @@ tmp<symmTensorField> fastDynamicFvMesh::devRhoReff(const tensorField& gradUp,
 //      * Optionally write per-face diagnostics lines for the requested mode.
 //  - Perform parallel reductions to combine per-processor modal accumulators
 //  and (on master) print debug ranges.
-void fastDynamicFvMesh::calcModalForces()
+void FdmCore::calcModalForces()
 {
     cacheModelPointers();
 
@@ -193,7 +193,7 @@ void fastDynamicFvMesh::calcModalForces()
         FatalErrorInFunction
             << "Required pressure field '" << pressureFieldName_
             << "' was not found. Configure 'pressureField' in dynamicMeshDict "
-            << "or supply the field before fastDynamicFvMesh::update()."
+            << "or supply the field before FdmCore::update()."
             << exit(FatalError);
     }
 

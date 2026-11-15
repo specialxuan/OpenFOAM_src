@@ -95,7 +95,7 @@ namespace
 //  case 'mode' directory and builds the mapping
 //    between CSV node coordinates and local mesh points. This mapping is
 //    intentionally brute-force for correctness.
-fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
+FdmCore::FdmCore(const IOobject& io)
     : dynamicRefineFvMesh(io, eagerMeshInit(io)), nMode_(0),
       nAvailableModes_(0), nActiveModes_(-1),
       // Initialize restart containers; dedicated restart I/O is handled
@@ -127,8 +127,7 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       imvjChunkCols_(0),
       startupStepCount_(0), lastUpdateTimeIndex_(-1), updateCount_(0),
       writeDiagnosticsEnabled_(false), trackTimingEnabled_(false),
-      trackAmrTimingEnabled_(false), timingLastUpdateCpuTime_(0.0),
-      timingHasLastUpdate_(false),
+      timingLastUpdateCpuTime_(0.0), timingHasLastUpdate_(false),
       timingFluidCpuAccum_(0.0), timingMeshCpuAccum_(0.0),
       timingFluidCpuAtLastWrite_(0.0), timingMeshCpuAtLastWrite_(0.0),
       lastGlobalWriteTimeIndex_(-1), fsiPatchIDs_(0), fsiPolyPatches_(0),
@@ -146,13 +145,21 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       structuralForceTimes_(0), structuralForceValues_(0),
       structuralModeForce_(0), structuralForceSignal_(0.0),
       structuralForceTimeIndex_(-1),
-      meshRefinementSupport_(false), runtimeRefinementEnabled_(false),
-      refinementInterpTolerance_(1e-8), refinementMappingDiagnostics_(false),
-      refinementMinCellVolume_(0.0), refinementMinEdgeLength_(0.0),
-      refinementUseGradIndicator_(false),
+      meshRefinementSupport_(false), refinementInterpTolerance_(1e-8),
+      referenceFsiBuilt_(false), referenceFaceModeProjection_(0),
+      fsiFaceToReferenceFaces_(0), fsiFaceToReferenceWeights_(0),
+      referenceFsiFaceAreas_(0), aggregatedPressureRefs_(0),
+      aggregatedShearRefs_(0)
+{}
+
+fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
+    : FdmCore(io), runtimeRefinementEnabled_(false),
+      refinementMappingDiagnostics_(false), refinementMinCellVolume_(0.0),
+      refinementMinEdgeLength_(0.0), refinementUseGradIndicator_(false),
       refinementGradIndicatorField_("alpha.water"),
       refinementGradIndicatorMagnitudeField_(word::null),
-      refinementGradIndicatorCellCache_(0), refinementGradIndicatorPointCache_(0),
+      refinementGradIndicatorCellCache_(0),
+      refinementGradIndicatorPointCache_(0),
       refinementGradIndicatorCacheTimeIndex_(-1),
       refinementGradIndicatorCacheNCells_(-1),
       refinementGradIndicatorCacheNPoints_(-1),
@@ -175,42 +182,25 @@ fastDynamicFvMesh::fastDynamicFvMesh(const IOobject& io)
       amrLayerDiagnosticsRejectedSizeFloor_(0),
       amrLayerDiagnosticsRejectedBase_(0),
       amrLayerDiagnosticsUnrefinePoints_(0),
-      amrLayerDiagnosticsPendingSummary_(false), referenceFsiBuilt_(false),
-      referenceFaceModeProjection_(0), fsiFaceToReferenceFaces_(0),
-      fsiFaceToReferenceWeights_(0), referenceFsiFaceAreas_(0),
-      aggregatedPressureRefs_(0), aggregatedShearRefs_(0)
+      amrLayerDiagnosticsPendingSummary_(false), trackAmrTimingEnabled_(false)
 {
     init(true);
 }
 
-bool fastDynamicFvMesh::init(const bool doInit)
+const word& FdmCore::fdmTypeName()
 {
-    IOdictionary dynamicMeshDict(
-        IOobject("dynamicMeshDict", this->time().constant(), *this,
-            IOobject::MUST_READ, IOobject::NO_WRITE, IOobject::NO_REGISTER));
+    static const word name("fastDynamicFvMesh");
+    return name;
+}
 
-    runtimeRefinementEnabled_ =
-        dynamicMeshDict.found("dynamicRefineFvMeshCoeffs");
+bool FdmCore::init(const bool doInit)
+{
+    initialiseCoreState();
+    return true;
+}
 
-    if (runtimeRefinementEnabled_)
-    {
-        // refineInterval 0 is dynamicRefineFvMesh's own "no refinement"
-        // setting (updateTopology returns immediately); honour it here so
-        // such dictionaries do not take the runtime-AMR path.
-        runtimeRefinementEnabled_ =
-            dynamicMeshDict.subDict("dynamicRefineFvMeshCoeffs")
-                .getOrDefault<label>("refineInterval", 1) != 0;
-    }
-
-    if (runtimeRefinementEnabled_)
-    {
-        dynamicRefineFvMesh::init(doInit);
-    }
-    else
-    {
-        dynamicFvMesh::init(doInit);
-    }
-
+void FdmCore::initialiseCoreState()
+{
     readControls();
     // readModeShapes() reads the mode header/files first, resolves the active
     // mode count, and only then loads the AMR records and FSI reference cache.
@@ -285,9 +275,40 @@ bool fastDynamicFvMesh::init(const bool doInit)
 
         startupStepCount_ = 0;
     }
-
-    return true;
 }
+
+bool fastDynamicFvMesh::init(const bool doInit)
+{
+    IOdictionary dynamicMeshDict(
+        IOobject("dynamicMeshDict", this->time().constant(), *this,
+            IOobject::MUST_READ, IOobject::NO_WRITE, IOobject::NO_REGISTER));
+
+    runtimeRefinementEnabled_ =
+        dynamicMeshDict.found("dynamicRefineFvMeshCoeffs");
+
+    if (runtimeRefinementEnabled_)
+    {
+        // refineInterval 0 is dynamicRefineFvMesh's own "no refinement"
+        // setting (updateTopology returns immediately); honour it here so
+        // such dictionaries do not take the runtime-AMR path.
+        runtimeRefinementEnabled_ =
+            dynamicMeshDict.subDict("dynamicRefineFvMeshCoeffs")
+                .getOrDefault<label>("refineInterval", 1) != 0;
+    }
+
+    if (runtimeRefinementEnabled_)
+    {
+        dynamicRefineFvMesh::init(doInit);
+    }
+    else
+    {
+        dynamicFvMesh::init(doInit);
+    }
+
+    return FdmCore::init(doInit);
+}
+
+FdmCore::~FdmCore() {}
 
 fastDynamicFvMesh::~fastDynamicFvMesh() {}
 
@@ -327,7 +348,7 @@ fastDynamicFvMesh::~fastDynamicFvMesh() {}
 //  coupling; alpha in (0,1] reduces added-mass instability.
 //  - The function writes debug info on the master to help trace
 //  divergence/stability issues.
-bool fastDynamicFvMesh::update()
+bool FdmCore::update()
 {
     const scalar updateStartCpuTime = this->time().elapsedCpuTime();
     accountFluidCpuAtUpdateStart(updateStartCpuTime);

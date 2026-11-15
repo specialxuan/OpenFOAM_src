@@ -265,7 +265,7 @@ void readSixComponentStructuralModeFiles(
 
 } // End anonymous namespace
 
-vector fastDynamicFvMesh::interpolateStructuralForce(
+vector FdmCore::interpolateStructuralForce(
     const scalarField& times, const vectorField& values, const scalar t) const
 {
     if (times.size() == 1)
@@ -304,7 +304,7 @@ vector fastDynamicFvMesh::interpolateStructuralForce(
     return values.last();
 }
 
-void fastDynamicFvMesh::calcStructuralModalForces()
+void FdmCore::calcStructuralModalForces()
 {
     if (!structuralForceEnabled_ || structuralForceNodeIDs_.size() == 0)
     {
@@ -363,7 +363,7 @@ void fastDynamicFvMesh::calcStructuralModalForces()
     structuralForceTimeIndex_ = timeIndex;
 }
 
-void fastDynamicFvMesh::readStructuralModeFiles(const fileName& modeDir,
+void FdmCore::readStructuralModeFiles(const fileName& modeDir,
     pointField& structPoints, List<vectorField>& structShapes,
     label& nStructNodes, label& nStructModes)
 {
@@ -542,7 +542,7 @@ void fastDynamicFvMesh::readStructuralModeFiles(const fileName& modeDir,
     }
 }
 
-void fastDynamicFvMesh::readStructuralStressStrainFiles(const fileName& modeDir)
+void FdmCore::readStructuralStressStrainFiles(const fileName& modeDir)
 {
     structModeStress_.clear();
     structModeStrain_.clear();
@@ -584,7 +584,7 @@ void fastDynamicFvMesh::readStructuralStressStrainFiles(const fileName& modeDir)
     Pstream::broadcast(structModeStrain_);
 }
 
-void fastDynamicFvMesh::readStructuralForceFiles(const fileName& modeDir)
+void FdmCore::readStructuralForceFiles(const fileName& modeDir)
 {
     if (!structuralForceEnabled_)
     {
@@ -766,7 +766,7 @@ void fastDynamicFvMesh::readStructuralForceFiles(const fileName& modeDir)
     Pstream::broadcast(structuralForceValues_);
 }
 
-void fastDynamicFvMesh::logStructuralLoadSummary()
+void FdmCore::logStructuralLoadSummary()
 {
     if (Pstream::master() && structuralForceEnabled_ && updateCount_ == 1 &&
         nMode_ > 0)
@@ -777,7 +777,7 @@ void fastDynamicFvMesh::logStructuralLoadSummary()
     }
 }
 
-void fastDynamicFvMesh::writeModalExtensionOutputs()
+void FdmCore::writeModalExtensionOutputs()
 {
     if (!modalExtensionEnabled_ || !Pstream::master())
     {
