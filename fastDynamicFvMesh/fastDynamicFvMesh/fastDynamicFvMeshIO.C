@@ -200,7 +200,7 @@ void broadcastRestartList(List<T>& f)
 
 fileName FdmCore::restartStateInstance() const
 {
-    return this->time().constant() / fileName("fsiRestart");
+    return fdmMesh_.time().constant() / fileName("fsiRestart");
 }
 
 bool FdmCore::readRestartStateStore()
@@ -208,7 +208,7 @@ bool FdmCore::readRestartStateStore()
     // Fresh starts at t=0 should not pick up stale restart state files.
     // Only non-zero-time starts (continuations/restarts) are allowed to read
     // dedicated or legacy restart modal state.
-    if (this->time().value() <= SMALL)
+    if (fdmMesh_.time().value() <= SMALL)
     {
         return false;
     }
@@ -221,7 +221,7 @@ bool FdmCore::readRestartStateStore()
     // on the master from the global path instead and broadcast the (nMode-sized)
     // modal state to every rank.
     const fileName restartDir =
-        this->time().globalPath() / restartStateInstance();
+        fdmMesh_.time().globalPath() / restartStateInstance();
 
     // The mode count is part of the restart contract: a checkpoint written
     // with K_old modes cannot be continued with a different K, because the
@@ -318,7 +318,7 @@ bool FdmCore::readRestartStateStore()
     // Legacy fallback: modal state written into the case-root time directory by
     // older revisions (v1.4.0).  Same master-read/broadcast treatment.
     const fileName legacyDir =
-        this->time().globalPath() / this->time().timeName();
+        fdmMesh_.time().globalPath() / fdmMesh_.time().timeName();
 
     if (Pstream::master())
     {
@@ -364,7 +364,7 @@ bool FdmCore::readRestartStateStore()
         if (Pstream::master())
         {
             Info << "Loaded legacy restart modal state from time directory "
-                 << this->time().timeName() << endl;
+                 << fdmMesh_.time().timeName() << endl;
         }
     }
 
@@ -374,7 +374,7 @@ bool FdmCore::readRestartStateStore()
 void FdmCore::writeRestartStateStore() const
 {
     const fileName restartDir =
-        this->time().globalPath() / restartStateInstance();
+        fdmMesh_.time().globalPath() / restartStateInstance();
     mkDir(restartDir);
 
     auto writeGlobalField = [&](const word& name, const auto& field,
@@ -452,7 +452,7 @@ void FdmCore::readControls()
 {
     // Read dictionary
     IOdictionary dynamicMeshDict(
-        IOobject("dynamicMeshDict", this->time().constant(), *this,
+        IOobject("dynamicMeshDict", fdmMesh_.time().constant(), fdmMesh_,
             IOobject::MUST_READ_IF_MODIFIED, IOobject::NO_WRITE, false));
 
     if (!dynamicMeshDict.found(fdmTypeName() + "Coeffs"))
@@ -517,8 +517,6 @@ void FdmCore::readControls()
     fdmDict.readIfPresent("meshRefinementSupport", meshRefinementSupport_);
     fdmDict.readIfPresent(
         "refinementInterpTolerance", refinementInterpTolerance_);
-
-    readAmrControls(fdmDict, dynamicMeshDict);
 
     if (fdmDict.found("modalMass"))
     {
@@ -779,152 +777,6 @@ void FdmCore::readControls()
             << "Modal-extension entries are present, but "
             << "'modalExtensionEnabled' is false; structural displacement, "
             << "stress and strain recovery will not be performed." << endl;
-    }
-}
-
-void fastDynamicFvMesh::readAmrControls(
-    const dictionary& fdmDict,
-    const dictionary& dynamicMeshDict)
-{
-    fdmDict.readIfPresent("trackAmrTiming", trackAmrTimingEnabled_);
-    fdmDict.readIfPresent(
-        "refinementMappingDiagnostics", refinementMappingDiagnostics_);
-    scalar refinementFaceMapTolerance = 0.0;
-    const bool foundRefinementFaceMapTolerance = fdmDict.readIfPresent(
-        "refinementFaceMapTolerance", refinementFaceMapTolerance);
-    fdmDict.readIfPresent("refinementMinCellVolume", refinementMinCellVolume_);
-    fdmDict.readIfPresent("refinementMinEdgeLength", refinementMinEdgeLength_);
-    fdmDict.readIfPresent("amrLayerDiagnostics", amrLayerDiagnosticsEnabled_);
-    fdmDict.readIfPresent("amrLayerDiagnosticsZ", amrLayerDiagnosticsZ_);
-    fdmDict.readIfPresent(
-        "amrLayerDiagnosticsThickness", amrLayerDiagnosticsThickness_);
-    fdmDict.readIfPresent(
-        "amrLayerDiagnosticsNeighborDepth", amrLayerDiagnosticsNeighborDepth_);
-    fdmDict.readIfPresent(
-        "amrLayerDiagnosticsMaxRows", amrLayerDiagnosticsMaxRows_);
-    fdmDict.readIfPresent(
-        "amrLayerDiagnosticsFilePrefix", amrLayerDiagnosticsFilePrefix_);
-
-    if (dynamicMeshDict.found("dynamicRefineFvMeshCoeffs"))
-    {
-        const dictionary& refineDict =
-            dynamicMeshDict.subDict("dynamicRefineFvMeshCoeffs");
-        refineDict.readIfPresent(
-            "useGradIndicator", refinementUseGradIndicator_);
-        refineDict.readIfPresent(
-            "gradIndicatorField", refinementGradIndicatorField_);
-        refineDict.readIfPresent("gradIndicatorMagnitudeField",
-            refinementGradIndicatorMagnitudeField_);
-    }
-
-    if (runtimeRefinementEnabled_ && !meshRefinementSupport_ && Pstream::master())
-    {
-        WarningInFunction
-            << "dynamicRefineFvMeshCoeffs is present, but "
-            << "'meshRefinementSupport' is false in " << fdmTypeName()
-            << "Coeffs. Runtime topology changes can invalidate modal "
-            << "shape and FSI face caches; set meshRefinementSupport true "
-            << "for AMR-coupled fastDynamicFvMesh cases." << endl;
-    }
-
-    if (refinementFaceMapTolerance < 0)
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entry 'refinementFaceMapTolerance' must be >= 0 in "
-            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
-            << dynamicMeshDict.name() << exit(FatalIOError);
-    }
-    else if (foundRefinementFaceMapTolerance && Pstream::master())
-    {
-        WarningInFunction
-            << "Entry 'refinementFaceMapTolerance' is deprecated and ignored. "
-            << "Topology mapping is now fully driven by mapPolyMesh lineage."
-            << endl;
-    }
-
-    if (refinementMinCellVolume_ < 0)
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entry 'refinementMinCellVolume' must be >= 0 in "
-            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
-            << dynamicMeshDict.name() << exit(FatalIOError);
-    }
-
-    if (refinementMinEdgeLength_ < 0)
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entry 'refinementMinEdgeLength' must be >= 0 in "
-            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
-            << dynamicMeshDict.name() << exit(FatalIOError);
-    }
-
-    if (amrLayerDiagnosticsThickness_ < 0)
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entry 'amrLayerDiagnosticsThickness' must be >= 0 in "
-            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
-            << dynamicMeshDict.name() << exit(FatalIOError);
-    }
-
-    if (amrLayerDiagnosticsNeighborDepth_ < 0)
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entry 'amrLayerDiagnosticsNeighborDepth' must be >= 0 in "
-            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
-            << dynamicMeshDict.name() << exit(FatalIOError);
-    }
-
-    if (amrLayerDiagnosticsMaxRows_ < 0)
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entry 'amrLayerDiagnosticsMaxRows' must be >= 0 in "
-            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
-            << dynamicMeshDict.name() << exit(FatalIOError);
-    }
-
-    if (amrLayerDiagnosticsEnabled_ && amrLayerDiagnosticsFilePrefix_.empty())
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entry 'amrLayerDiagnosticsFilePrefix' cannot be empty when "
-            << "'amrLayerDiagnostics' is enabled in sub-dictionary '"
-            << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.name()
-            << exit(FatalIOError);
-    }
-
-    if (refinementUseGradIndicator_ && refinementGradIndicatorField_.empty())
-    {
-        FatalIOErrorInFunction(dynamicMeshDict)
-            << "Entry 'gradIndicatorField' cannot be empty when "
-            << "'useGradIndicator' is enabled in dynamicRefineFvMeshCoeffs of "
-            << dynamicMeshDict.name() << exit(FatalIOError);
-    }
-
-    if (Pstream::master() && runtimeRefinementEnabled_ &&
-        refinementUseGradIndicator_)
-    {
-        if (refinementGradIndicatorMagnitudeField_.empty())
-        {
-            Info << "Runtime AMR indicator uses cached |grad("
-                 << refinementGradIndicatorField_
-                 << ")| with dynamicRefineFvMesh thresholds." << endl;
-        }
-        else
-        {
-            Info << "Runtime AMR indicator uses registered field '"
-                 << refinementGradIndicatorMagnitudeField_
-                 << "' as |grad(" << refinementGradIndicatorField_
-                 << ")| with dynamicRefineFvMesh thresholds." << endl;
-        }
-    }
-
-    if (Pstream::master() && amrLayerDiagnosticsEnabled_)
-    {
-        Info << "Runtime AMR bottom-layer diagnostics enabled: z="
-             << amrLayerDiagnosticsZ_ << ", thickness="
-             << amrLayerDiagnosticsThickness_ << ", neighborDepth="
-             << amrLayerDiagnosticsNeighborDepth_ << ", maxRows="
-             << amrLayerDiagnosticsMaxRows_ << ", filePrefix='"
-             << amrLayerDiagnosticsFilePrefix_ << "'." << endl;
     }
 }
 
@@ -1236,24 +1088,6 @@ void FdmCore::readModeFiles(const fileName& modeDir,
         }
     }
 }
-bool FdmCore::writeObject
-(
-    IOstreamOption streamOpt,
-    const bool writeOnProc
-) const
-{
-    bool ok = dynamicRefineFvMesh::writeObject(streamOpt, writeOnProc);
-
-    if (ok && writeOnProc && meshRefinementSupport_)
-    {
-        ok = writeRefinedPointModeShapes() && ok;
-        ok = writeFsiFaceReferenceMap() && ok;
-    }
-
-    return ok;
-}
-
-
 bool FdmCore::writeRefinedPointModeShapes() const
 {
     if (!meshRefinementSupport_ || nMode_ <= 0)
@@ -1261,7 +1095,7 @@ bool FdmCore::writeRefinedPointModeShapes() const
         return true;
     }
 
-    const label nPoints = this->points().size();
+    const label nPoints = fdmMesh_.points().size();
 
     if (modeShapes_.size() != nMode_)
     {
@@ -1276,14 +1110,14 @@ bool FdmCore::writeRefinedPointModeShapes() const
         }
     }
 
-    const fileName timeDir = this->time().timeName();
-    const fileName dir = this->time().path()/timeDir/polyMesh::meshSubDir;
+    const fileName timeDir = fdmMesh_.time().timeName();
+    const fileName dir = fdmMesh_.time().path()/timeDir/polyMesh::meshSubDir;
 
     mkDir(dir);
 
     const fileName shapesFile = dir/"refinedPointModeShapes";
 
-    const labelList& pointLevel = meshCutter_.pointLevel();
+    const labelList& pointLevel = amrPointLevel();
 
     label nLevel = 0;
     forAll(pointLevel, pI)
@@ -1373,7 +1207,7 @@ label FdmCore::readRefinedPointModeShapes()
     }
 
     const fileName shapesFile =
-        this->time().path()/this->time().timeName()/polyMesh::meshSubDir
+        fdmMesh_.time().path()/fdmMesh_.time().timeName()/polyMesh::meshSubDir
       / "refinedPointModeShapes";
 
     if (!exists(shapesFile))
@@ -1428,12 +1262,12 @@ label FdmCore::readRefinedPointModeShapes()
         const label fileNMode = std::stol(tok[5]);
         const label nRefined = std::stol(tok[7]);
 
-        if (fileTime != this->time().timeName())
+        if (fileTime != fdmMesh_.time().timeName())
         {
             WarningInFunction
                 << "AMR refined-point mode-shape file " << shapesFile
                 << " was written for time " << fileTime
-                << " but this run starts from " << this->time().timeName()
+                << " but this run starts from " << fdmMesh_.time().timeName()
                 << "; ignoring it." << endl;
 
             return 0;
@@ -1450,8 +1284,8 @@ label FdmCore::readRefinedPointModeShapes()
 
         recordedRefinedNMode_ = fileNMode;
 
-        const label nPoints = this->points().size();
-        const labelList& pointLevel = meshCutter_.pointLevel();
+        const label nPoints = fdmMesh_.points().size();
+        const labelList& pointLevel = amrPointLevel();
 
         if (pointLevel.size() != nPoints)
         {
@@ -1538,7 +1372,7 @@ bool FdmCore::writeFsiReferenceProjection() const
         return true;
     }
 
-    const fileName dir = this->time().path()/this->time().constant();
+    const fileName dir = fdmMesh_.time().path()/fdmMesh_.time().constant();
 
     mkDir(dir);
 
@@ -1606,7 +1440,7 @@ bool FdmCore::writeFsiFaceReferenceMap() const
     }
 
     const fileName dir =
-        this->time().path()/this->time().timeName()/polyMesh::meshSubDir;
+        fdmMesh_.time().path()/fdmMesh_.time().timeName()/polyMesh::meshSubDir;
 
     mkDir(dir);
 
@@ -1684,7 +1518,7 @@ bool FdmCore::readFsiReferenceCache()
     {
         // ---- 1) invariant reference projection (written once, constant/) ----
         const fileName projFile =
-            this->time().path()/this->time().constant()/"fsiReferenceProjection";
+            fdmMesh_.time().path()/fdmMesh_.time().constant()/"fsiReferenceProjection";
 
         if (!exists(projFile))
         {
@@ -1712,7 +1546,7 @@ bool FdmCore::readFsiReferenceCache()
              || nMode != nMode_
             )
             {
-                if (this->time().value() > SMALL && nMode != nMode_)
+                if (fdmMesh_.time().value() > SMALL && nMode != nMode_)
                 {
                     FatalErrorInFunction
                         << "FSI reference projection " << projFile
@@ -1785,7 +1619,7 @@ bool FdmCore::readFsiReferenceCache()
 
         // ---- 2) current-face -> reference-face map for THIS checkpoint ----
         const fileName mapFile =
-            this->time().path()/this->time().timeName()/polyMesh::meshSubDir
+            fdmMesh_.time().path()/fdmMesh_.time().timeName()/polyMesh::meshSubDir
           / "fsiFaceReferenceMap";
 
         if (!exists(mapFile))
@@ -1825,7 +1659,7 @@ bool FdmCore::readFsiReferenceCache()
             }
         }
 
-        const polyBoundaryMesh& pbm = this->boundaryMesh();
+        const polyBoundaryMesh& pbm = fdmMesh_.boundaryMesh();
 
         fsiFaceToReferenceFaces_.setSize(fsiPatches_.size());
         fsiFaceToReferenceWeights_.setSize(fsiPatches_.size());

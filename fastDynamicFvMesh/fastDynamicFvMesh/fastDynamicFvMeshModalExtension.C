@@ -317,7 +317,7 @@ void FdmCore::calcStructuralModalForces()
     // is constant across the FSI sub-iterations of a time step: reuse the
     // values evaluated for this time index instead of recomputing and
     // broadcasting them every call.
-    const label timeIndex = this->time().timeIndex();
+    const label timeIndex = fdmMesh_.time().timeIndex();
     if (structuralForceTimeIndex_ == timeIndex)
     {
         return;
@@ -328,7 +328,7 @@ void FdmCore::calcStructuralModalForces()
 
     if (Pstream::master())
     {
-        const scalar t = this->time().value();
+        const scalar t = fdmMesh_.time().value();
 
         forAll(structuralForceNodeIDs_, forceI)
         {
@@ -771,7 +771,7 @@ void FdmCore::logStructuralLoadSummary()
     if (Pstream::master() && structuralForceEnabled_ && updateCount_ == 1 &&
         nMode_ > 0)
     {
-        Info << "Structural modal load summary at t=" << this->time().timeName()
+        Info << "Structural modal load summary at t=" << fdmMesh_.time().timeName()
              << ": mode0=" << structuralModeForce_[0]
              << ", signal=" << structuralForceSignal_ << endl;
     }
@@ -800,12 +800,12 @@ void FdmCore::writeModalExtensionOutputs()
         structModeStrain_.size() == nMode_ &&
         structModeStrain_[0].size() == nStructNodes*nComponents;
 
-    const fileName outputDir = this->time().globalPath() / "postProcessing" /
-        "fastDynamicFvMesh" / this->time().timeName();
+    const fileName outputDir = fdmMesh_.time().globalPath() / "postProcessing" /
+        "fastDynamicFvMesh" / fdmMesh_.time().timeName();
 
     mkDir(outputDir);
 
-    const scalar timeValue = this->time().value();
+    const scalar timeValue = fdmMesh_.time().value();
 
     writeStructuralSnapshot(
         outputDir / "StructDisp.csv", timeValue, nStructNodes, nMode_, 3,

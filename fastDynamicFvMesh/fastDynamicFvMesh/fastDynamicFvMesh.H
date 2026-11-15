@@ -18,6 +18,7 @@ Description
 #ifndef fastDynamicFvMesh_H
 #define fastDynamicFvMesh_H
 
+#include "dynamicRefineFvMesh.H"
 #include "fdmCore.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
@@ -29,7 +30,10 @@ namespace Foam
                        Class fastDynamicFvMesh Declaration
 \*---------------------------------------------------------------------------*/
 
-class fastDynamicFvMesh : public FdmCore
+class fastDynamicFvMesh
+:
+    public dynamicRefineFvMesh,
+    public FdmCore
 {
     // Protected Data (runtime AMR topology only)
 
@@ -202,6 +206,9 @@ class fastDynamicFvMesh : public FdmCore
     //- Hook override: runtime topology engine present and active
     virtual bool refinementTopologyActive() const;
 
+    //- Hook override: AMR point levels from the OpenFOAM refinement engine
+    virtual const labelList& amrPointLevel() const;
+
     //- Disallow default bitwise copy construct
     fastDynamicFvMesh(const fastDynamicFvMesh&);
 
@@ -225,8 +232,18 @@ public:
     //- Initialise all non-demand-driven data
     virtual bool init(const bool doInit);
 
+    //- Update topology, then the FDM core
+    virtual bool update();
+
     //- Update custom caches/shapes after topology changes
     virtual void updateMesh(const mapPolyMesh& mpm);
+
+    //- Write the mesh plus AMR checkpoint side files
+    virtual bool writeObject
+    (
+        IOstreamOption streamOpt,
+        const bool writeOnProc
+    ) const;
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

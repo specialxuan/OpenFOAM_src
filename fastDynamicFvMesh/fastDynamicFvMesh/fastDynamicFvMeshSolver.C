@@ -74,7 +74,7 @@ void FdmCore::solveStructuralDynamics(scalar dt)
             const scalar f =
                 (prescribedFrequency_ > 0) ? prescribedFrequency_ : modeFreq_[i];
             const scalar w = 2.0*constant::mathematical::pi*f;
-            const scalar t = this->time().value();
+            const scalar t = fdmMesh_.time().value();
             const scalar s = amp*Foam::sin(w*t + phi);
 
             modeState_[i] = vector(s, amp*w*Foam::cos(w*t + phi), -sqr(w)*s);

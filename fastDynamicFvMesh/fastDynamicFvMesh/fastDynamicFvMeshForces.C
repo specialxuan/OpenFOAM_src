@@ -45,28 +45,28 @@ void FdmCore::cacheModelPointers()
     typedef incompressible::turbulenceModel icoTurbModel;
     typedef compressible::turbulenceModel cmpTurbModel;
 
-    if (this->foundObject<icoTurbModel>(icoTurbModel::propertiesName))
+    if (fdmMesh_.foundObject<icoTurbModel>(icoTurbModel::propertiesName))
     {
         icoTurbPtr_ =
-            &this->lookupObject<icoTurbModel>(icoTurbModel::propertiesName);
+            &fdmMesh_.lookupObject<icoTurbModel>(icoTurbModel::propertiesName);
     }
 
-    if (this->foundObject<cmpTurbModel>(cmpTurbModel::propertiesName))
+    if (fdmMesh_.foundObject<cmpTurbModel>(cmpTurbModel::propertiesName))
     {
         cmpTurbPtr_ =
-            &this->lookupObject<cmpTurbModel>(cmpTurbModel::propertiesName);
+            &fdmMesh_.lookupObject<cmpTurbModel>(cmpTurbModel::propertiesName);
     }
 
-    if (this->foundObject<fluidThermo>(fluidThermo::dictName))
+    if (fdmMesh_.foundObject<fluidThermo>(fluidThermo::dictName))
     {
         fluidThermoPtr_ =
-            &this->lookupObject<fluidThermo>(fluidThermo::dictName);
+            &fdmMesh_.lookupObject<fluidThermo>(fluidThermo::dictName);
     }
 
-    if (this->foundObject<transportModel>("transportProperties"))
+    if (fdmMesh_.foundObject<transportModel>("transportProperties"))
     {
         laminarTransportPtr_ =
-            &this->lookupObject<transportModel>("transportProperties");
+            &fdmMesh_.lookupObject<transportModel>("transportProperties");
     }
 
     modelPointersCached_ = true;
@@ -85,15 +85,15 @@ void FdmCore::cacheModelPointers()
 tmp<scalarField> FdmCore::patchDensity(
     const label patchi, const scalar defaultRho) const
 {
-    if (this->foundObject<volScalarField>("rho"))
+    if (fdmMesh_.foundObject<volScalarField>("rho"))
     {
-        const auto& rhoField = this->lookupObject<volScalarField>("rho");
+        const auto& rhoField = fdmMesh_.lookupObject<volScalarField>("rho");
         return tmp<scalarField>(
             new scalarField(rhoField.boundaryField()[patchi]));
     }
 
     return tmp<scalarField>(
-        new scalarField(this->boundaryMesh()[patchi].size(), defaultRho));
+        new scalarField(fdmMesh_.boundaryMesh()[patchi].size(), defaultRho));
 }
 
 // devRhoReff(gradUp, patchi, defaultRho)
@@ -145,7 +145,7 @@ tmp<symmTensorField> FdmCore::devRhoReff(const tensorField& gradUp,
     else
     {
         IOdictionary transportProperties(
-            IOobject("transportProperties", this->time().constant(), *this,
+            IOobject("transportProperties", fdmMesh_.time().constant(), fdmMesh_,
                 IOobject::MUST_READ, IOobject::NO_WRITE));
 
         const dimensionedScalar nu("nu", dimViscosity, transportProperties);
@@ -188,7 +188,7 @@ void FdmCore::calcModalForces()
     modePressureForce_ = 0.0;
     modeShearForce_ = 0.0;
 
-    if (!this->foundObject<volScalarField>(pressureFieldName_))
+    if (!fdmMesh_.foundObject<volScalarField>(pressureFieldName_))
     {
         FatalErrorInFunction
             << "Required pressure field '" << pressureFieldName_
@@ -198,7 +198,7 @@ void FdmCore::calcModalForces()
     }
 
     const volScalarField& p =
-        this->lookupObject<volScalarField>(pressureFieldName_);
+        fdmMesh_.lookupObject<volScalarField>(pressureFieldName_);
     const dimensionSet kinematicPressureDims(dimPressure / dimDensity);
     const bool dimensionalPressure = (p.dimensions() == dimPressure);
     const bool kinematicPressure = (p.dimensions() == kinematicPressureDims);
@@ -217,7 +217,7 @@ void FdmCore::calcModalForces()
     if (kinematicPressure && defaultRho <= 0)
     {
         IOdictionary transportProperties(
-            IOobject("transportProperties", this->time().constant(), *this,
+            IOobject("transportProperties", fdmMesh_.time().constant(), fdmMesh_,
                 IOobject::MUST_READ, IOobject::NO_WRITE));
 
         if (transportProperties.found("rho"))
@@ -227,7 +227,7 @@ void FdmCore::calcModalForces()
     }
 
     if (kinematicPressure && defaultRho <= 0 &&
-        !this->foundObject<volScalarField>("rho"))
+        !fdmMesh_.foundObject<volScalarField>("rho"))
     {
         FatalErrorInFunction
             << "Pressure field '" << pressureFieldName_
@@ -240,9 +240,9 @@ void FdmCore::calcModalForces()
     tmp<volTensorField> tGradU;
     const volTensorField* gradUPtr = nullptr;
 
-    if (this->foundObject<volVectorField>("U"))
+    if (fdmMesh_.foundObject<volVectorField>("U"))
     {
-        const volVectorField& U = this->lookupObject<volVectorField>("U");
+        const volVectorField& U = fdmMesh_.lookupObject<volVectorField>("U");
         tGradU = fvc::grad(U);
         gradUPtr = &tGradU();
     }
@@ -256,7 +256,7 @@ void FdmCore::calcModalForces()
     // Density supplied as a registered 'rho' field may vary between calls;
     // a constant density (rhoRef_/transportProperties) is invariant for the
     // whole run, so its per-face pressure scale is computed only once.
-    const bool rhoFieldRegistered = this->foundObject<volScalarField>("rho");
+    const bool rhoFieldRegistered = fdmMesh_.foundObject<volScalarField>("rho");
 
     // Iterate over cached FSI patches
     forAll(fsiPatchIDs_, i)

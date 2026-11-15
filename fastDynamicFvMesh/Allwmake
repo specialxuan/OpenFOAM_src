@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Build the FDM core first, then the FDM-AMR/facade library.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+# FDM core (no AMR dependency)
+wmake libso fastDynamicFvMesh MakeCore
+
+# FDM-AMR facade (OpenFOAM type name: fastDynamicFvMesh)
+wmake libso

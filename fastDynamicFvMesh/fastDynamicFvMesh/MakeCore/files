@@ -1,0 +1,10 @@
+fdmCoreMain.C
+fastDynamicFvMeshUpdate.C
+fastDynamicFvMeshIO.C
+fastDynamicFvMeshModeMapping.C
+fastDynamicFvMeshForces.C
+fastDynamicFvMeshModalExtension.C
+fastDynamicFvMeshSolver.C
+fastDynamicFvMeshDiagnostics.C
+
+LIB = $(FOAM_USER_LIBBIN)/libfdmCore

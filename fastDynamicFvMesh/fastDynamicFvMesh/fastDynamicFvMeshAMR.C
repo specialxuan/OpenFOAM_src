@@ -651,4 +651,540 @@ void fastDynamicFvMesh::updateMesh(const mapPolyMesh& mpm)
     buildForceProjectionCaches(&mpm);
 }
 
+// * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
+
+void fastDynamicFvMesh::updateRefinementTopology()
+{
+    if (runtimeRefinementEnabled_)
+    {
+        if (!trackAmrTimingEnabled_)
+        {
+            dynamicRefineFvMesh::updateTopology();
+            writeAmrLayerDiagnosticsSummary();
+        }
+        else
+        {
+            const label nCellsBefore =
+                returnReduce(this->nCells(), sumOp<label>());
+            const label nPointsBefore =
+                returnReduce(this->nPoints(), sumOp<label>());
+            const scalar amrStartCpuTime = this->time().elapsedCpuTime();
+            const scalar amrStartClockTime = this->time().elapsedClockTime();
+
+            dynamicRefineFvMesh::updateTopology();
+            writeAmrLayerDiagnosticsSummary();
+
+            const scalar localCpu =
+                this->time().elapsedCpuTime() - amrStartCpuTime;
+            const scalar localClock =
+                this->time().elapsedClockTime() - amrStartClockTime;
+            const scalar maxCpu = returnReduce(localCpu, maxOp<scalar>());
+            const scalar maxClock = returnReduce(localClock, maxOp<scalar>());
+            const label nCellsAfter =
+                returnReduce(this->nCells(), sumOp<label>());
+            const label nPointsAfter =
+                returnReduce(this->nPoints(), sumOp<label>());
+
+            if (Pstream::master())
+            {
+                Info << "Runtime AMR timing at t=" << this->time().timeName()
+                     << " [max over ranks]: CPU=" << maxCpu
+                     << " s, Clock=" << maxClock << " s, cells "
+                     << nCellsBefore << " -> " << nCellsAfter << ", points "
+                     << nPointsBefore << " -> " << nPointsAfter << endl;
+            }
+        }
+    }
+}
+
+bool fastDynamicFvMesh::refinementTopologyActive() const
+{
+    return runtimeRefinementEnabled_;
+}
+
+const labelList& fastDynamicFvMesh::amrPointLevel() const
+{
+    return meshCutter_.pointLevel();
+}
+
+void fastDynamicFvMesh::readAmrControls(
+    const dictionary& fdmDict,
+    const dictionary& dynamicMeshDict)
+{
+    fdmDict.readIfPresent("trackAmrTiming", trackAmrTimingEnabled_);
+    fdmDict.readIfPresent(
+        "refinementMappingDiagnostics", refinementMappingDiagnostics_);
+    scalar refinementFaceMapTolerance = 0.0;
+    const bool foundRefinementFaceMapTolerance = fdmDict.readIfPresent(
+        "refinementFaceMapTolerance", refinementFaceMapTolerance);
+    fdmDict.readIfPresent("refinementMinCellVolume", refinementMinCellVolume_);
+    fdmDict.readIfPresent("refinementMinEdgeLength", refinementMinEdgeLength_);
+    fdmDict.readIfPresent("amrLayerDiagnostics", amrLayerDiagnosticsEnabled_);
+    fdmDict.readIfPresent("amrLayerDiagnosticsZ", amrLayerDiagnosticsZ_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsThickness", amrLayerDiagnosticsThickness_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsNeighborDepth", amrLayerDiagnosticsNeighborDepth_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsMaxRows", amrLayerDiagnosticsMaxRows_);
+    fdmDict.readIfPresent(
+        "amrLayerDiagnosticsFilePrefix", amrLayerDiagnosticsFilePrefix_);
+
+    if (dynamicMeshDict.found("dynamicRefineFvMeshCoeffs"))
+    {
+        const dictionary& refineDict =
+            dynamicMeshDict.subDict("dynamicRefineFvMeshCoeffs");
+        refineDict.readIfPresent(
+            "useGradIndicator", refinementUseGradIndicator_);
+        refineDict.readIfPresent(
+            "gradIndicatorField", refinementGradIndicatorField_);
+        refineDict.readIfPresent("gradIndicatorMagnitudeField",
+            refinementGradIndicatorMagnitudeField_);
+    }
+
+    if (runtimeRefinementEnabled_ && !meshRefinementSupport_ && Pstream::master())
+    {
+        WarningInFunction
+            << "dynamicRefineFvMeshCoeffs is present, but "
+            << "'meshRefinementSupport' is false in " << fdmTypeName()
+            << "Coeffs. Runtime topology changes can invalidate modal "
+            << "shape and FSI face caches; set meshRefinementSupport true "
+            << "for AMR-coupled fastDynamicFvMesh cases." << endl;
+    }
+
+    if (refinementFaceMapTolerance < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'refinementFaceMapTolerance' must be >= 0 in "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
+    }
+    else if (foundRefinementFaceMapTolerance && Pstream::master())
+    {
+        WarningInFunction
+            << "Entry 'refinementFaceMapTolerance' is deprecated and ignored. "
+            << "Topology mapping is now fully driven by mapPolyMesh lineage."
+            << endl;
+    }
+
+    if (refinementMinCellVolume_ < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'refinementMinCellVolume' must be >= 0 in "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
+    }
+
+    if (refinementMinEdgeLength_ < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'refinementMinEdgeLength' must be >= 0 in "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
+    }
+
+    if (amrLayerDiagnosticsThickness_ < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'amrLayerDiagnosticsThickness' must be >= 0 in "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
+    }
+
+    if (amrLayerDiagnosticsNeighborDepth_ < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'amrLayerDiagnosticsNeighborDepth' must be >= 0 in "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
+    }
+
+    if (amrLayerDiagnosticsMaxRows_ < 0)
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'amrLayerDiagnosticsMaxRows' must be >= 0 in "
+            << "sub-dictionary '" << fdmTypeName() << "Coeffs' of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
+    }
+
+    if (amrLayerDiagnosticsEnabled_ && amrLayerDiagnosticsFilePrefix_.empty())
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'amrLayerDiagnosticsFilePrefix' cannot be empty when "
+            << "'amrLayerDiagnostics' is enabled in sub-dictionary '"
+            << fdmTypeName() << "Coeffs' of " << dynamicMeshDict.name()
+            << exit(FatalIOError);
+    }
+
+    if (refinementUseGradIndicator_ && refinementGradIndicatorField_.empty())
+    {
+        FatalIOErrorInFunction(dynamicMeshDict)
+            << "Entry 'gradIndicatorField' cannot be empty when "
+            << "'useGradIndicator' is enabled in dynamicRefineFvMeshCoeffs of "
+            << dynamicMeshDict.name() << exit(FatalIOError);
+    }
+
+    if (Pstream::master() && runtimeRefinementEnabled_ &&
+        refinementUseGradIndicator_)
+    {
+        if (refinementGradIndicatorMagnitudeField_.empty())
+        {
+            Info << "Runtime AMR indicator uses cached |grad("
+                 << refinementGradIndicatorField_
+                 << ")| with dynamicRefineFvMesh thresholds." << endl;
+        }
+        else
+        {
+            Info << "Runtime AMR indicator uses registered field '"
+                 << refinementGradIndicatorMagnitudeField_
+                 << "' as |grad(" << refinementGradIndicatorField_
+                 << ")| with dynamicRefineFvMesh thresholds." << endl;
+        }
+    }
+
+    if (Pstream::master() && amrLayerDiagnosticsEnabled_)
+    {
+        Info << "Runtime AMR bottom-layer diagnostics enabled: z="
+             << amrLayerDiagnosticsZ_ << ", thickness="
+             << amrLayerDiagnosticsThickness_ << ", neighborDepth="
+             << amrLayerDiagnosticsNeighborDepth_ << ", maxRows="
+             << amrLayerDiagnosticsMaxRows_ << ", filePrefix='"
+             << amrLayerDiagnosticsFilePrefix_ << "'." << endl;
+    }
+}
+
+void fastDynamicFvMesh::logModeShapeMappingSummary(const label oldNPoints,
+    const label newNPoints, const bool anyRefinement,
+    const bool shrinkingOrEqualTopology, const label localDirectMapped,
+    const label localDeferredAddedPoints, const label localLineageMapped,
+    const label localEdgeInterpolated, const label localFaceInterpolated,
+    const label localCellInterpolated, const label localUnknown) const
+{
+    if (!refinementMappingDiagnostics_)
+    {
+        return;
+    }
+
+    const label globalOldNPoints = returnReduce(oldNPoints, sumOp<label>());
+    const label globalNewNPoints = returnReduce(newNPoints, sumOp<label>());
+    const label globalDirectMapped =
+        returnReduce(localDirectMapped, sumOp<label>());
+    const label globalDeferredAddedPoints =
+        returnReduce(localDeferredAddedPoints, sumOp<label>());
+    const label globalLineageMapped =
+        returnReduce(localLineageMapped, sumOp<label>());
+    const label globalEdgeInterpolated =
+        returnReduce(localEdgeInterpolated, sumOp<label>());
+    const label globalFaceInterpolated =
+        returnReduce(localFaceInterpolated, sumOp<label>());
+    const label globalCellInterpolated =
+        returnReduce(localCellInterpolated, sumOp<label>());
+    const label globalUnknown = returnReduce(localUnknown, sumOp<label>());
+
+    if (Pstream::master())
+    {
+        Info << "Mode-shape topology mapping diagnostics:" << nl
+             << "  topologyChange="
+             << (anyRefinement ? "refinement/mixed" : "unrefine/shrink")
+             << ", localTopology="
+             << (shrinkingOrEqualTopology ? "shrinkingOrEqual" : "growing")
+             << nl << "  points old/new=" << globalOldNPoints << "/"
+             << globalNewNPoints << nl
+             << "  directPointMap=" << globalDirectMapped
+             << ", deferredPointMapMasters=" << globalDeferredAddedPoints
+             << ", pointsFromPoints=" << globalLineageMapped << nl
+             << "  interpolated edge/face/cell=" << globalEdgeInterpolated
+             << "/" << globalFaceInterpolated << "/"
+             << globalCellInterpolated << nl
+             << "  finalUnknown=" << globalUnknown << endl;
+    }
+}
+
+void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
+{
+    if (!meshRefinementSupport_ || nMode_ <= 0 || modeShapes_.size() == 0)
+    {
+        return;
+    }
+
+    const label newNPoints = fdmMesh_.points().size();
+    const label oldNPoints = modeShapes_[0].size();
+    const bool shrinkingOrEqualTopology = (newNPoints <= oldNPoints);
+    const bool localPointCountChanged = (newNPoints != oldNPoints);
+    const bool anyPointCountChanged =
+        returnReduce(label(localPointCountChanged), sumOp<label>()) > 0;
+
+    if (!anyPointCountChanged)
+    {
+        return;
+    }
+
+    const bool anyRefinement =
+        returnReduce(label(newNPoints > oldNPoints), sumOp<label>()) > 0;
+
+    const labelList& pointMap = mpm.pointMap();
+    const labelList& reversePointMap = mpm.reversePointMap();
+
+    if (pointMap.size() != newNPoints)
+    {
+        FatalErrorInFunction << "pointMap size (" << pointMap.size()
+                             << ") does not match new mesh point count ("
+                             << newNPoints << ")." << exit(FatalError);
+    }
+
+    List<vectorField> oldModeShapes(modeShapes_);
+    modeShapes_.setSize(nMode_);
+
+    forAll(modeShapes_, modeI)
+    {
+        modeShapes_[modeI].setSize(newNPoints, vector::zero);
+    }
+
+    boolList knownMask(newNPoints, false);
+    label localDirectMapped = 0;
+    label localDeferredAddedPoints = 0;
+
+    for (label pointI = 0; pointI < newNPoints; ++pointI)
+    {
+        const label oldPoint = pointMap[pointI];
+        if (oldPoint < 0 || oldPoint >= oldNPoints)
+        {
+            continue;
+        }
+
+        if (anyRefinement)
+        {
+            if (oldPoint >= reversePointMap.size())
+            {
+                FatalErrorInFunction
+                    << "reversePointMap size (" << reversePointMap.size()
+                    << ") cannot address old point " << oldPoint << "."
+                    << exit(FatalError);
+            }
+
+            // During refinement, pointMap can assign newly-created points to
+            // a single master old point. Those entries must not be treated as
+            // fully mapped values; defer them to topology interpolation.
+            if (reversePointMap[oldPoint] != pointI)
+            {
+                ++localDeferredAddedPoints;
+                continue;
+            }
+        }
+
+        for (label modeI = 0; modeI < nMode_; ++modeI)
+        {
+            modeShapes_[modeI][pointI] = oldModeShapes[modeI][oldPoint];
+        }
+
+        knownMask[pointI] = true;
+        ++localDirectMapped;
+    }
+
+    const label globalDeferredAddedPoints =
+        returnReduce(localDeferredAddedPoints, sumOp<label>());
+    if (Pstream::master() && globalDeferredAddedPoints > 0)
+    {
+        Info << "Deferred " << globalDeferredAddedPoints
+             << " refinement-added points from pointMap master labels to "
+             << "topology interpolation." << endl;
+    }
+
+    // Prefer direct topology lineage for refinement-added points.
+    // mapPolyMesh stores source old points for new points in
+    // pointsFromPointsMap. Averaging source modal values preserves geometric
+    // continuity better than a generic nearest-corner search.
+    label localLineageMapped = 0;
+    const List<objectMap>& pointsFromPoints = mpm.pointsFromPointsMap();
+
+    forAll(pointsFromPoints, mapI)
+    {
+        const objectMap& pointMapEntry = pointsFromPoints[mapI];
+        const label newPoint = pointMapEntry.index();
+
+        if (newPoint < 0 || newPoint >= newNPoints || knownMask[newPoint])
+        {
+            continue;
+        }
+
+        const labelList& masterPoints = pointMapEntry.masterObjects();
+        if (masterPoints.size() == 0)
+        {
+            continue;
+        }
+
+        for (label modeI = 0; modeI < nMode_; ++modeI)
+        {
+            modeShapes_[modeI][newPoint] = vector::zero;
+        }
+
+        label validMasterCount = 0;
+        forAll(masterPoints, masterI)
+        {
+            const label oldPoint = masterPoints[masterI];
+            if (oldPoint < 0 || oldPoint >= oldNPoints)
+            {
+                continue;
+            }
+
+            ++validMasterCount;
+            for (label modeI = 0; modeI < nMode_; ++modeI)
+            {
+                modeShapes_[modeI][newPoint] += oldModeShapes[modeI][oldPoint];
+            }
+        }
+
+        if (validMasterCount == 0)
+        {
+            continue;
+        }
+
+        const scalar invMasterCount = 1.0 / scalar(validMasterCount);
+        for (label modeI = 0; modeI < nMode_; ++modeI)
+        {
+            modeShapes_[modeI][newPoint] *= invMasterCount;
+        }
+
+        knownMask[newPoint] = true;
+        ++localLineageMapped;
+    }
+
+    const label globalLineageMapped =
+        returnReduce(localLineageMapped, sumOp<label>());
+    if (Pstream::master() && globalLineageMapped > 0)
+    {
+        Info << "Topology lineage mapped " << globalLineageMapped
+             << " refinement-added points from mapPolyMesh::pointsFromPoints."
+             << endl;
+    }
+
+    syncMappedModeShapes(knownMask);
+
+    label localKnownAfterSync = 0;
+    forAll(knownMask, pointI)
+    {
+        if (knownMask[pointI])
+        {
+            ++localKnownAfterSync;
+        }
+    }
+
+    if (localKnownAfterSync == 0 && newNPoints > 0)
+    {
+        FatalErrorInFunction
+            << "No mapped old points found on processor " << Pstream::myProcNo()
+            << " while processing topology change; "
+            << "cannot interpolate modal shapes on refined mesh."
+            << exit(FatalError);
+    }
+
+    if (anyRefinement)
+    {
+        label globalKnownPrev =
+            returnReduce(localKnownAfterSync, sumOp<label>());
+        label localEdgeInterpolated = 0;
+        label localFaceInterpolated = 0;
+        label localCellInterpolated = 0;
+
+        for (label passI = 0; passI < 4; ++passI)
+        {
+            const boolList sourceKnownMask(knownMask);
+
+            if (!shrinkingOrEqualTopology)
+            {
+                localEdgeInterpolated += interpolateModeShapesFromKnown(
+                    knownMask, sourceKnownMask, 2, true, "edge midpoint");
+                localFaceInterpolated += interpolateModeShapesFromKnown(
+                    knownMask, sourceKnownMask, 4, false, "face midpoint");
+                localCellInterpolated += interpolateModeShapesFromKnown(
+                    knownMask, sourceKnownMask, 8, false, "cell midpoint");
+            }
+
+            syncMappedModeShapes(knownMask);
+
+            label localKnownNow = 0;
+            forAll(knownMask, pointI)
+            {
+                if (knownMask[pointI])
+                {
+                    ++localKnownNow;
+                }
+            }
+
+            const label globalKnownNow =
+                returnReduce(localKnownNow, sumOp<label>());
+
+            if (globalKnownNow <= globalKnownPrev)
+            {
+                break;
+            }
+
+            globalKnownPrev = globalKnownNow;
+        }
+
+        syncMappedModeShapes(knownMask);
+
+        label localUnknown = 0;
+        forAll(knownMask, pointI)
+        {
+            if (!knownMask[pointI])
+            {
+                ++localUnknown;
+            }
+        }
+
+        logModeShapeMappingSummary(oldNPoints, newNPoints, anyRefinement,
+            shrinkingOrEqualTopology, localDirectMapped,
+            localDeferredAddedPoints, localLineageMapped,
+            localEdgeInterpolated, localFaceInterpolated,
+            localCellInterpolated, localUnknown);
+
+        if (localUnknown > 0)
+        {
+            FatalErrorInFunction
+                << "Refinement interpolation failed for " << localUnknown
+                << " local points on processor " << Pstream::myProcNo()
+                << " points."
+                << " The 2/4/8 topology-corner rules could not classify all "
+                << "added points. Adjust refinement controls or "
+                << "refinementInterpTolerance." << exit(FatalError);
+        }
+
+        return;
+    }
+
+    syncMappedModeShapes(knownMask);
+
+    label localUnknown = 0;
+    forAll(knownMask, pointI)
+    {
+        if (!knownMask[pointI])
+        {
+            ++localUnknown;
+        }
+    }
+
+    logModeShapeMappingSummary(oldNPoints, newNPoints, anyRefinement,
+        shrinkingOrEqualTopology, localDirectMapped,
+        localDeferredAddedPoints, localLineageMapped, 0, 0, 0, localUnknown);
+
+    if (localUnknown > 0)
+    {
+        FatalErrorInFunction
+            << (shrinkingOrEqualTopology
+                       ? "Topology mapping failed for "
+                       : "Refinement interpolation failed for ")
+            << localUnknown << " local points on processor "
+            << Pstream::myProcNo() << " points."
+            << (shrinkingOrEqualTopology
+                       ? " Some surviving points were not mapped by pointMap."
+                       : " The 2/4/8 topology-corner rules could not classify "
+                         "all "
+                         "added points. Adjust refinement controls or "
+                         "refinementInterpTolerance.")
+            << exit(FatalError);
+    }
+}
+
+
 } // namespace Foam

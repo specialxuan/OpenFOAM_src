@@ -62,11 +62,11 @@ void FdmCore::readModeShapes()
     List<point> csvPoints;
     List<List<vector>> csvShapes;
     label nCsvNodes = 0;
-    fileName modeDir = this->time().path() / "mode";
+    fileName modeDir = fdmMesh_.time().path() / "mode";
 
     if (Pstream::parRun() && !exists(modeDir))
     {
-        modeDir = this->time().path().path() / "mode";
+        modeDir = fdmMesh_.time().path().path() / "mode";
     }
 
     readModeFiles(modeDir, csvPoints, csvShapes, nCsvNodes);
@@ -202,7 +202,7 @@ void FdmCore::readModeShapes()
     // Default to current mesh points. This is required on latestTime restarts
     // after runtime AMR because current point count can differ from
     // constant/polyMesh/points.
-    pointField mappingPoints(this->points());
+    pointField mappingPoints(fdmMesh_.points());
     pointField basePoints;
 
     // Try to read points from constant/polyMesh (or
@@ -211,8 +211,8 @@ void FdmCore::readModeShapes()
     // automatically if we use NO_WRITE.
 
     // We construct an IOobject to look for "points" in the constant instance.
-    IOobject ioPoints("points", this->time().constant(), polyMesh::meshSubDir,
-        *this, IOobject::MUST_READ, IOobject::NO_WRITE,
+    IOobject ioPoints("points", fdmMesh_.time().constant(), polyMesh::meshSubDir,
+        fdmMesh_, IOobject::MUST_READ, IOobject::NO_WRITE,
         false // register
     );
 
@@ -322,7 +322,7 @@ void FdmCore::readModeShapes()
     bool topologyOnlyForRefinedPoints = false;
     if (meshRefinementSupport_)
     {
-        const labelList& pointLevel = meshCutter_.pointLevel();
+        const labelList& pointLevel = amrPointLevel();
         if (pointLevel.size() != mappingPoints.size())
         {
             FatalErrorInFunction
@@ -626,7 +626,7 @@ void FdmCore::readModeShapes()
 
 void FdmCore::buildForceProjectionCaches(const mapPolyMesh* mpmPtr)
 {
-    const polyBoundaryMesh& pbm = this->boundaryMesh();
+    const polyBoundaryMesh& pbm = fdmMesh_.boundaryMesh();
 
     const List<List<labelList>> oldFaceToReferenceFaces(
         fsiFaceToReferenceFaces_);
@@ -1029,8 +1029,8 @@ void FdmCore::syncMappedModeShapes(boolList& mappedMask)
         }
     }
 
-    syncTools::syncPointList(*this, ownerProc, maxEqOp<label>(), label(-1));
-    syncTools::syncPointList(*this, mappedMask, orEqOp<bool>(), false);
+    syncTools::syncPointList(fdmMesh_, ownerProc, maxEqOp<label>(), label(-1));
+    syncTools::syncPointList(fdmMesh_, mappedMask, orEqOp<bool>(), false);
 
     for (label modeI = 0; modeI < nMode_; ++modeI)
     {
@@ -1045,7 +1045,7 @@ void FdmCore::syncMappedModeShapes(boolList& mappedMask)
         }
 
         syncTools::syncPointList(
-            *this, ownedValues, plusEqOp<vector>(), vector::zero);
+            fdmMesh_, ownedValues, plusEqOp<vector>(), vector::zero);
         modeShapes_[modeI].transfer(ownedValues);
     }
 }
@@ -1057,16 +1057,16 @@ void FdmCore::syncSharedPointPositions(pointField& pointValues) const
         return;
     }
 
-    if (pointValues.size() != this->points().size())
+    if (pointValues.size() != fdmMesh_.points().size())
     {
         FatalErrorInFunction << "pointValues size (" << pointValues.size()
                              << ") does not match mesh point count ("
-                             << this->points().size() << ")."
+                             << fdmMesh_.points().size() << ")."
                              << exit(FatalError);
     }
 
     List<label> ownerProc(pointValues.size(), Pstream::myProcNo());
-    syncTools::syncPointList(*this, ownerProc, maxEqOp<label>(), label(-1));
+    syncTools::syncPointList(fdmMesh_, ownerProc, maxEqOp<label>(), label(-1));
 
     pointField ownedValues(pointValues.size(), point::zero);
     const label myProc = Pstream::myProcNo();
@@ -1080,7 +1080,7 @@ void FdmCore::syncSharedPointPositions(pointField& pointValues) const
     }
 
     syncTools::syncPointPositions(
-        *this, ownedValues, plusEqOp<point>(), point::zero);
+        fdmMesh_, ownedValues, plusEqOp<point>(), point::zero);
     pointValues.transfer(ownedValues);
 }
 
@@ -1093,9 +1093,9 @@ label FdmCore::interpolateModeShapesFromKnown(boolList& knownMask,
         return 0;
     }
 
-    const pointField& pts = this->points();
-    const labelListList& pCells = this->pointCells();
-    const labelListList& cPoints = this->cellPoints();
+    const pointField& pts = fdmMesh_.points();
+    const labelListList& pCells = fdmMesh_.pointCells();
+    const labelListList& cPoints = fdmMesh_.cellPoints();
     label localInterpolated = 0;
 
     forAll(knownMask, pointI)
@@ -1318,7 +1318,7 @@ label FdmCore::applyRecordedRefinedModeShapes(boolList& mappedMask)
 
     if (recordedRefinedNMode_ != nMode_)
     {
-        if (this->time().value() > SMALL)
+        if (fdmMesh_.time().value() > SMALL)
         {
             FatalErrorInFunction
                 << "Recorded AMR refined-point mode shapes hold "
@@ -1373,340 +1373,6 @@ label FdmCore::applyRecordedRefinedModeShapes(boolList& mappedMask)
     }
 
     return localApplied;
-}
-
-
-void fastDynamicFvMesh::logModeShapeMappingSummary(const label oldNPoints,
-    const label newNPoints, const bool anyRefinement,
-    const bool shrinkingOrEqualTopology, const label localDirectMapped,
-    const label localDeferredAddedPoints, const label localLineageMapped,
-    const label localEdgeInterpolated, const label localFaceInterpolated,
-    const label localCellInterpolated, const label localUnknown) const
-{
-    if (!refinementMappingDiagnostics_)
-    {
-        return;
-    }
-
-    const label globalOldNPoints = returnReduce(oldNPoints, sumOp<label>());
-    const label globalNewNPoints = returnReduce(newNPoints, sumOp<label>());
-    const label globalDirectMapped =
-        returnReduce(localDirectMapped, sumOp<label>());
-    const label globalDeferredAddedPoints =
-        returnReduce(localDeferredAddedPoints, sumOp<label>());
-    const label globalLineageMapped =
-        returnReduce(localLineageMapped, sumOp<label>());
-    const label globalEdgeInterpolated =
-        returnReduce(localEdgeInterpolated, sumOp<label>());
-    const label globalFaceInterpolated =
-        returnReduce(localFaceInterpolated, sumOp<label>());
-    const label globalCellInterpolated =
-        returnReduce(localCellInterpolated, sumOp<label>());
-    const label globalUnknown = returnReduce(localUnknown, sumOp<label>());
-
-    if (Pstream::master())
-    {
-        Info << "Mode-shape topology mapping diagnostics:" << nl
-             << "  topologyChange="
-             << (anyRefinement ? "refinement/mixed" : "unrefine/shrink")
-             << ", localTopology="
-             << (shrinkingOrEqualTopology ? "shrinkingOrEqual" : "growing")
-             << nl << "  points old/new=" << globalOldNPoints << "/"
-             << globalNewNPoints << nl
-             << "  directPointMap=" << globalDirectMapped
-             << ", deferredPointMapMasters=" << globalDeferredAddedPoints
-             << ", pointsFromPoints=" << globalLineageMapped << nl
-             << "  interpolated edge/face/cell=" << globalEdgeInterpolated
-             << "/" << globalFaceInterpolated << "/"
-             << globalCellInterpolated << nl
-             << "  finalUnknown=" << globalUnknown << endl;
-    }
-}
-
-void fastDynamicFvMesh::ensureModeShapesForCurrentMesh(const mapPolyMesh& mpm)
-{
-    if (!meshRefinementSupport_ || nMode_ <= 0 || modeShapes_.size() == 0)
-    {
-        return;
-    }
-
-    const label newNPoints = this->points().size();
-    const label oldNPoints = modeShapes_[0].size();
-    const bool shrinkingOrEqualTopology = (newNPoints <= oldNPoints);
-    const bool localPointCountChanged = (newNPoints != oldNPoints);
-    const bool anyPointCountChanged =
-        returnReduce(label(localPointCountChanged), sumOp<label>()) > 0;
-
-    if (!anyPointCountChanged)
-    {
-        return;
-    }
-
-    const bool anyRefinement =
-        returnReduce(label(newNPoints > oldNPoints), sumOp<label>()) > 0;
-
-    const labelList& pointMap = mpm.pointMap();
-    const labelList& reversePointMap = mpm.reversePointMap();
-
-    if (pointMap.size() != newNPoints)
-    {
-        FatalErrorInFunction << "pointMap size (" << pointMap.size()
-                             << ") does not match new mesh point count ("
-                             << newNPoints << ")." << exit(FatalError);
-    }
-
-    List<vectorField> oldModeShapes(modeShapes_);
-    modeShapes_.setSize(nMode_);
-
-    forAll(modeShapes_, modeI)
-    {
-        modeShapes_[modeI].setSize(newNPoints, vector::zero);
-    }
-
-    boolList knownMask(newNPoints, false);
-    label localDirectMapped = 0;
-    label localDeferredAddedPoints = 0;
-
-    for (label pointI = 0; pointI < newNPoints; ++pointI)
-    {
-        const label oldPoint = pointMap[pointI];
-        if (oldPoint < 0 || oldPoint >= oldNPoints)
-        {
-            continue;
-        }
-
-        if (anyRefinement)
-        {
-            if (oldPoint >= reversePointMap.size())
-            {
-                FatalErrorInFunction
-                    << "reversePointMap size (" << reversePointMap.size()
-                    << ") cannot address old point " << oldPoint << "."
-                    << exit(FatalError);
-            }
-
-            // During refinement, pointMap can assign newly-created points to
-            // a single master old point. Those entries must not be treated as
-            // fully mapped values; defer them to topology interpolation.
-            if (reversePointMap[oldPoint] != pointI)
-            {
-                ++localDeferredAddedPoints;
-                continue;
-            }
-        }
-
-        for (label modeI = 0; modeI < nMode_; ++modeI)
-        {
-            modeShapes_[modeI][pointI] = oldModeShapes[modeI][oldPoint];
-        }
-
-        knownMask[pointI] = true;
-        ++localDirectMapped;
-    }
-
-    const label globalDeferredAddedPoints =
-        returnReduce(localDeferredAddedPoints, sumOp<label>());
-    if (Pstream::master() && globalDeferredAddedPoints > 0)
-    {
-        Info << "Deferred " << globalDeferredAddedPoints
-             << " refinement-added points from pointMap master labels to "
-             << "topology interpolation." << endl;
-    }
-
-    // Prefer direct topology lineage for refinement-added points.
-    // mapPolyMesh stores source old points for new points in
-    // pointsFromPointsMap. Averaging source modal values preserves geometric
-    // continuity better than a generic nearest-corner search.
-    label localLineageMapped = 0;
-    const List<objectMap>& pointsFromPoints = mpm.pointsFromPointsMap();
-
-    forAll(pointsFromPoints, mapI)
-    {
-        const objectMap& pointMapEntry = pointsFromPoints[mapI];
-        const label newPoint = pointMapEntry.index();
-
-        if (newPoint < 0 || newPoint >= newNPoints || knownMask[newPoint])
-        {
-            continue;
-        }
-
-        const labelList& masterPoints = pointMapEntry.masterObjects();
-        if (masterPoints.size() == 0)
-        {
-            continue;
-        }
-
-        for (label modeI = 0; modeI < nMode_; ++modeI)
-        {
-            modeShapes_[modeI][newPoint] = vector::zero;
-        }
-
-        label validMasterCount = 0;
-        forAll(masterPoints, masterI)
-        {
-            const label oldPoint = masterPoints[masterI];
-            if (oldPoint < 0 || oldPoint >= oldNPoints)
-            {
-                continue;
-            }
-
-            ++validMasterCount;
-            for (label modeI = 0; modeI < nMode_; ++modeI)
-            {
-                modeShapes_[modeI][newPoint] += oldModeShapes[modeI][oldPoint];
-            }
-        }
-
-        if (validMasterCount == 0)
-        {
-            continue;
-        }
-
-        const scalar invMasterCount = 1.0 / scalar(validMasterCount);
-        for (label modeI = 0; modeI < nMode_; ++modeI)
-        {
-            modeShapes_[modeI][newPoint] *= invMasterCount;
-        }
-
-        knownMask[newPoint] = true;
-        ++localLineageMapped;
-    }
-
-    const label globalLineageMapped =
-        returnReduce(localLineageMapped, sumOp<label>());
-    if (Pstream::master() && globalLineageMapped > 0)
-    {
-        Info << "Topology lineage mapped " << globalLineageMapped
-             << " refinement-added points from mapPolyMesh::pointsFromPoints."
-             << endl;
-    }
-
-    syncMappedModeShapes(knownMask);
-
-    label localKnownAfterSync = 0;
-    forAll(knownMask, pointI)
-    {
-        if (knownMask[pointI])
-        {
-            ++localKnownAfterSync;
-        }
-    }
-
-    if (localKnownAfterSync == 0 && newNPoints > 0)
-    {
-        FatalErrorInFunction
-            << "No mapped old points found on processor " << Pstream::myProcNo()
-            << " while processing topology change; "
-            << "cannot interpolate modal shapes on refined mesh."
-            << exit(FatalError);
-    }
-
-    if (anyRefinement)
-    {
-        label globalKnownPrev =
-            returnReduce(localKnownAfterSync, sumOp<label>());
-        label localEdgeInterpolated = 0;
-        label localFaceInterpolated = 0;
-        label localCellInterpolated = 0;
-
-        for (label passI = 0; passI < 4; ++passI)
-        {
-            const boolList sourceKnownMask(knownMask);
-
-            if (!shrinkingOrEqualTopology)
-            {
-                localEdgeInterpolated += interpolateModeShapesFromKnown(
-                    knownMask, sourceKnownMask, 2, true, "edge midpoint");
-                localFaceInterpolated += interpolateModeShapesFromKnown(
-                    knownMask, sourceKnownMask, 4, false, "face midpoint");
-                localCellInterpolated += interpolateModeShapesFromKnown(
-                    knownMask, sourceKnownMask, 8, false, "cell midpoint");
-            }
-
-            syncMappedModeShapes(knownMask);
-
-            label localKnownNow = 0;
-            forAll(knownMask, pointI)
-            {
-                if (knownMask[pointI])
-                {
-                    ++localKnownNow;
-                }
-            }
-
-            const label globalKnownNow =
-                returnReduce(localKnownNow, sumOp<label>());
-
-            if (globalKnownNow <= globalKnownPrev)
-            {
-                break;
-            }
-
-            globalKnownPrev = globalKnownNow;
-        }
-
-        syncMappedModeShapes(knownMask);
-
-        label localUnknown = 0;
-        forAll(knownMask, pointI)
-        {
-            if (!knownMask[pointI])
-            {
-                ++localUnknown;
-            }
-        }
-
-        logModeShapeMappingSummary(oldNPoints, newNPoints, anyRefinement,
-            shrinkingOrEqualTopology, localDirectMapped,
-            localDeferredAddedPoints, localLineageMapped,
-            localEdgeInterpolated, localFaceInterpolated,
-            localCellInterpolated, localUnknown);
-
-        if (localUnknown > 0)
-        {
-            FatalErrorInFunction
-                << "Refinement interpolation failed for " << localUnknown
-                << " local points on processor " << Pstream::myProcNo()
-                << " points."
-                << " The 2/4/8 topology-corner rules could not classify all "
-                << "added points. Adjust refinement controls or "
-                << "refinementInterpTolerance." << exit(FatalError);
-        }
-
-        return;
-    }
-
-    syncMappedModeShapes(knownMask);
-
-    label localUnknown = 0;
-    forAll(knownMask, pointI)
-    {
-        if (!knownMask[pointI])
-        {
-            ++localUnknown;
-        }
-    }
-
-    logModeShapeMappingSummary(oldNPoints, newNPoints, anyRefinement,
-        shrinkingOrEqualTopology, localDirectMapped,
-        localDeferredAddedPoints, localLineageMapped, 0, 0, 0, localUnknown);
-
-    if (localUnknown > 0)
-    {
-        FatalErrorInFunction
-            << (shrinkingOrEqualTopology
-                       ? "Topology mapping failed for "
-                       : "Refinement interpolation failed for ")
-            << localUnknown << " local points on processor "
-            << Pstream::myProcNo() << " points."
-            << (shrinkingOrEqualTopology
-                       ? " Some surviving points were not mapped by pointMap."
-                       : " The 2/4/8 topology-corner rules could not classify "
-                         "all "
-                         "added points. Adjust refinement controls or "
-                         "refinementInterpTolerance.")
-            << exit(FatalError);
-    }
 }
 
 

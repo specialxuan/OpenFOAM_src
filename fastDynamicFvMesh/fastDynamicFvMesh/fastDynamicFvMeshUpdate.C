@@ -290,15 +290,17 @@ void FdmCore::accountFluidCpuAtUpdateStart(
     }
 }
 
-bool FdmCore::beginUpdateStep(const label currentTimeIndex)
+bool FdmCore::isNewTimeStep(const label currentTimeIndex) const
 {
-    const bool firstIter = (currentTimeIndex != lastUpdateTimeIndex_);
+    return currentTimeIndex != lastUpdateTimeIndex_;
+}
 
-    if (firstIter)
-    {
-        updateRefinementTopology();
-    }
-
+bool FdmCore::beginUpdateStep
+(
+    const label currentTimeIndex,
+    const bool firstIter
+)
+{
     lastUpdateTimeIndex_ = currentTimeIndex;
 
     if (firstIter)
@@ -806,17 +808,17 @@ void FdmCore::resetCouplingAccelerationState(const bool newWindow)
 
 void FdmCore::publishFsiResidual()
 {
-    if (this->foundObject<uniformDimensionedScalarField>("fsiResidual"))
+    if (fdmMesh_.foundObject<uniformDimensionedScalarField>("fsiResidual"))
     {
         const_cast<uniformDimensionedScalarField&>(
-            this->lookupObject<uniformDimensionedScalarField>("fsiResidual"))
+            fdmMesh_.lookupObject<uniformDimensionedScalarField>("fsiResidual"))
             .value() = fsiResidual_;
     }
     else
     {
         uniformDimensionedScalarField* fsiResPtr =
             new uniformDimensionedScalarField(
-                IOobject("fsiResidual", this->time().constant(), *this,
+                IOobject("fsiResidual", fdmMesh_.time().constant(), fdmMesh_,
                     IOobject::NO_READ, IOobject::NO_WRITE),
                 dimless, fsiResidual_);
         fsiResPtr->store();
@@ -878,7 +880,7 @@ void FdmCore::solveAndMoveMesh(const scalar dt)
         solveStructuralDynamics(dt);
     }
 
-    pointField newPoints = this->points();
+    pointField newPoints = fdmMesh_.points();
 
     for (label m = 0; m < nMode_; ++m)
     {
@@ -924,7 +926,7 @@ void FdmCore::solveAndMoveMesh(const scalar dt)
     }
 
     syncSharedPointPositions(newPoints);
-    this->movePoints(newPoints);
+    fdmMesh_.movePoints(newPoints);
     writeDiagnostics();
 }
 
@@ -933,7 +935,7 @@ void FdmCore::accountMeshCpuAtUpdateEnd(
 {
     if (trackTimingEnabled_)
     {
-        const scalar updateEndCpuTime = this->time().elapsedCpuTime();
+        const scalar updateEndCpuTime = fdmMesh_.time().elapsedCpuTime();
         const scalar meshCpu = updateEndCpuTime - updateStartCpuTime;
         if (meshCpu > 0)
         {
@@ -948,7 +950,7 @@ void FdmCore::writeUpdateOutputs(const label currentTimeIndex)
     // Persist restart modal states in a dedicated channel under
     // constant/fsiRestart to avoid mixing restart metadata with reconstructed
     // field time directories.
-    if (!Pstream::master() || !this->time().writeTime())
+    if (!Pstream::master() || !fdmMesh_.time().writeTime())
     {
         return;
     }
@@ -967,7 +969,7 @@ void FdmCore::writeUpdateOutputs(const label currentTimeIndex)
 
         writeTimingReport();
         Info << "Wrote restart modal state files to " << restartStateInstance()
-             << " at t=" << this->time().timeName() << endl;
+             << " at t=" << fdmMesh_.time().timeName() << endl;
 
         writeModalExtensionOutputs();
     }
@@ -975,59 +977,7 @@ void FdmCore::writeUpdateOutputs(const label currentTimeIndex)
 
 bool FdmCore::updateReturnState()
 {
-    return refinementTopologyActive() || this->moving()
-        || this->topoChanging();
-}
-
-// * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
-
-void fastDynamicFvMesh::updateRefinementTopology()
-{
-    if (runtimeRefinementEnabled_)
-    {
-        if (!trackAmrTimingEnabled_)
-        {
-            dynamicRefineFvMesh::updateTopology();
-            writeAmrLayerDiagnosticsSummary();
-        }
-        else
-        {
-            const label nCellsBefore =
-                returnReduce(this->nCells(), sumOp<label>());
-            const label nPointsBefore =
-                returnReduce(this->nPoints(), sumOp<label>());
-            const scalar amrStartCpuTime = this->time().elapsedCpuTime();
-            const scalar amrStartClockTime = this->time().elapsedClockTime();
-
-            dynamicRefineFvMesh::updateTopology();
-            writeAmrLayerDiagnosticsSummary();
-
-            const scalar localCpu =
-                this->time().elapsedCpuTime() - amrStartCpuTime;
-            const scalar localClock =
-                this->time().elapsedClockTime() - amrStartClockTime;
-            const scalar maxCpu = returnReduce(localCpu, maxOp<scalar>());
-            const scalar maxClock = returnReduce(localClock, maxOp<scalar>());
-            const label nCellsAfter =
-                returnReduce(this->nCells(), sumOp<label>());
-            const label nPointsAfter =
-                returnReduce(this->nPoints(), sumOp<label>());
-
-            if (Pstream::master())
-            {
-                Info << "Runtime AMR timing at t=" << this->time().timeName()
-                     << " [max over ranks]: CPU=" << maxCpu
-                     << " s, Clock=" << maxClock << " s, cells "
-                     << nCellsBefore << " -> " << nCellsAfter << ", points "
-                     << nPointsBefore << " -> " << nPointsAfter << endl;
-            }
-        }
-    }
-}
-
-bool fastDynamicFvMesh::refinementTopologyActive() const
-{
-    return runtimeRefinementEnabled_;
+    return fdmMesh_.moving() || fdmMesh_.topoChanging();
 }
 
 } // End namespace Foam

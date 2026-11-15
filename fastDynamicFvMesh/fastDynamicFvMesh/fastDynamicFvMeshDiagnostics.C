@@ -48,12 +48,12 @@ void FdmCore::writeDiagnostics()
 
     if (!diagStream_.valid())
     {
-        fileName diagnosticsPath = this->time().path() / "modal_diagnostics.csv";
+        fileName diagnosticsPath = fdmMesh_.time().path() / "modal_diagnostics.csv";
 
         if (Pstream::parRun())
         {
             diagnosticsPath =
-                this->time().path().path() / "modal_diagnostics.csv";
+                fdmMesh_.time().path().path() / "modal_diagnostics.csv";
         }
 
         // Restart/continuation: inspect the existing header.  A non-empty
@@ -86,7 +86,7 @@ void FdmCore::writeDiagnostics()
         if (hasExistingHeader && existingColumns != expectedColumns)
         {
             const fileName backup =
-                diagnosticsPath + ".bak" + this->time().timeName();
+                diagnosticsPath + ".bak" + fdmMesh_.time().timeName();
 
             if (std::rename(diagnosticsPath.c_str(), backup.c_str()) != 0)
             {
@@ -167,7 +167,7 @@ void FdmCore::writeDiagnostics()
     }
 
     diagFile << std::setprecision(12);
-    diagFile << this->time().value();
+    diagFile << fdmMesh_.time().value();
 
     for (label i = 0; i < nMode_; ++i)
     {
@@ -232,7 +232,7 @@ void FdmCore::writeTimingReport()
     const scalar deltaMeshPct =
         deltaAll > VSMALL ? 100.0 * deltaMesh / deltaAll : 0.0;
 
-    Info << "FSI timing [CPU s] at t=" << this->time().timeName()
+    Info << "FSI timing [CPU s] at t=" << fdmMesh_.time().timeName()
          << "  step{fluid=" << deltaFluid << " (" << deltaFluidPct << "%)"
          << ", mesh=" << deltaMesh << " (" << deltaMeshPct << "%)"
          << ", total=" << deltaAll << "}" << "  cumulative{fluid=" << totalFluid

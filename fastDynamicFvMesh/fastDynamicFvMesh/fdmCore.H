@@ -13,7 +13,7 @@ Description
 #ifndef fdmCore_H // Prevent Multiple Inclusions
 #define fdmCore_H
 
-#include "dynamicRefineFvMesh.H"
+#include "dynamicMotionSolverListFvMesh.H"
 #include "fieldTypes.H"
 #include "uniformDimensionedFields.H"
 #include "IOField.H"
@@ -32,12 +32,15 @@ namespace Foam
 class mapPolyMesh;
 
 /*---------------------------------------------------------------------------*\
-                       Class fastDynamicFvMesh Declaration
+                       Class FdmCore Declaration
 \*---------------------------------------------------------------------------*/
 
-class FdmCore : public dynamicRefineFvMesh
+class FdmCore
 {
 protected:
+    //- Mesh this core operates on (the FDM/FDM-AMR runtime object)
+    dynamicMotionSolverListFvMesh& fdmMesh_;
+
     // Protected Data (available to the FDM-AMR facade)
 
     //- ===== Core fast-dynamic-mesh modal state and coupling controls =====
@@ -437,7 +440,11 @@ protected:
     void accountFluidCpuAtUpdateStart(const scalar updateStartCpuTime);
 
     //- Prepare per-time-step state and trigger runtime-AMR topology update
-    bool beginUpdateStep(const label currentTimeIndex);
+    bool beginUpdateStep
+    (
+        const label currentTimeIndex,
+        const bool firstIter
+    );
 
     //- Assemble fluid/structural modal forces, relax them, and publish residual
     void assembleAndRelaxModalForces(const bool firstIter);
@@ -526,7 +533,7 @@ public:
     // Constructors
 
     //- Construct from IOobject
-    explicit FdmCore(const IOobject& io);
+    FdmCore(const IOobject& io, dynamicMotionSolverListFvMesh& mesh);
 
     //- Destructor
     virtual ~FdmCore();
@@ -536,35 +543,17 @@ public:
     //- Historical runtime type name used for dictionary compatibility
     static const word& fdmTypeName();
 
-    //- Read controls, mode shapes and restart state after the concrete
-    //  dynamic-mesh base has been initialised
+    //- Read mode shapes and modal restart state (after readControls)
     void initialiseCoreState();
 
-    //- Hook: read optional runtime-AMR dictionary entries
-    virtual void readAmrControls
-    (
-        const dictionary& fdmDict,
-        const dictionary& dynamicMeshDict
-    ) {}
+    //- Per-point AMR refinement level (empty when no AMR engine is attached)
+    virtual const labelList& amrPointLevel() const;
 
-    //- Hook: perform optional runtime topology refinement for a new time step
-    virtual void updateRefinementTopology() {}
+    //- Is this a new physical time step (AMR hook runs before it)?
+    bool isNewTimeStep(const label currentTimeIndex) const;
 
-    //- Hook: does this mesh currently own a runtime topology engine?
-    virtual bool refinementTopologyActive() const { return false; }
-
-    //- Initialise all non-demand-driven data
-    virtual bool init(const bool doInit);
-
-    //- Update the mesh for both mesh motion and topology change
-    virtual bool update();
-
-    //- Write the mesh and, for refined meshes, the AMR point-parent lineage
-    virtual bool writeObject
-    (
-        IOstreamOption streamOpt,
-        const bool writeOnProc
-    ) const;
+    //- Update the FDM core for one outer iteration
+    bool updateFdm();
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
