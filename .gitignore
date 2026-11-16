@@ -17,3 +17,6 @@ opencode.log
 # local editor / agent config (not shared)
 .vscode/
 .opencode/
+# local aniso build products (not sources)
+**/localAnisoRefinement/*.o
+**/localAnisoRefinement/*.dep
